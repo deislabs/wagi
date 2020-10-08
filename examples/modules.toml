@@ -1,0 +1,7 @@
+[[module]]
+route = "/"
+module = "root.wasm"
+
+[[module]]
+route = "/foo"
+module = "foo.wasm"
