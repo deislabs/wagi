@@ -1,8 +1,16 @@
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use hyper::{http::uri::Scheme, Body, Method, Request, Response, Server, StatusCode};
 use serde::Deserialize;
+use std::collections::HashMap;
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
+
+/// This sets the version of CGI that WAGI adheres to.
+///
+/// At the point at which WAGI diverges from CGI, this value will be replaced with
+/// WAGI/1.0
+const WAGI_VERSION: &str = "CGI/1.1";
+const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 
 #[tokio::main]
 pub async fn main() {
@@ -125,6 +133,118 @@ impl Module {
             .unwrap_or_else(|| self.route.as_str() == fragment)
     }
 
+    fn build_headers(&self, req: &Request<Body>) -> HashMap<String, String> {
+        let mut headers = std::collections::HashMap::new();
+        let host = req
+            .headers()
+            .get("HOST")
+            .map(|val| val.to_str().unwrap_or("localhost"))
+            .unwrap_or("localhost")
+            .to_owned();
+
+        // CGI headers from RFC
+        // headers.insert("AUTH_TYPE", $token); // Not currently supported
+
+        // CONTENT_LENGTH (from the spec)
+        // The server MUST set this meta-variable if and only if the request is
+        // accompanied by a message-body entity.  The CONTENT_LENGTH value must
+        // reflect the length of the message-body after the server has removed
+        // any transfer-codings or content-codings.
+        //
+        // TODO: Fix this!
+        headers.insert("CONTENT_LENGTH".to_owned(), "0".to_owned());
+
+        // CONTENT_TYPE (from the spec)
+        // The server MUST set this meta-variable if an HTTP Content-Type field is present
+        // in the client request header.  If the server receives a request with an
+        // attached entity but no Content-Type header field, it MAY attempt to determine
+        // the correct content type, otherwise it should omit this meta-variable.
+        //
+        // Right now, we don't attempt to determine a media type if none is presented.
+        headers.insert(
+            "CONTENT_TYPE".to_owned(),
+            req.headers()
+                .get("CONTENT_TYPE")
+                .map(|c| c.to_str().unwrap_or(""))
+                .unwrap_or("")
+                .to_owned(),
+        );
+
+        // Since this is not in the specification, an X_ is prepended, per spec.
+        // NB: It is strange that there is not a way to do this already. The Display impl
+        // seems to only provide the path.
+        let uri = req.uri();
+        headers.insert(
+            "X_FULL_URL".to_owned(),
+            format!(
+                "{}://{}{}",
+                uri.scheme_str().unwrap_or("http"), // It is not clear if Hyper ever sets scheme.
+                uri.authority()
+                    .map(|a| a.as_str())
+                    .unwrap_or_else(|| host.as_str()),
+                uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("")
+            ),
+        );
+
+        headers.insert("GATEWAY_INTERFACE".to_owned(), WAGI_VERSION.to_owned());
+        headers.insert("X_MATCHED_ROUTE".to_owned(), self.route.to_owned()); // Specific to WAGI (not CGI)
+        headers.insert("PATH_INFO".to_owned(), req.uri().path().to_owned()); // TODO: Does this get trimmed?
+
+        // NOTE: The security model of WAGI means that we do not give the actual
+        // translated path on the host filesystem, as that is off limits to the runtime.
+        // Right now, this just returns the same as PATH_INFO, but we could attempt to
+        // map it to something if we know what that "something" is.
+        headers.insert("PATH_TRANSLATED".to_owned(), req.uri().path().to_owned());
+        headers.insert(
+            "QUERY_STRING".to_owned(),
+            req.uri().query().unwrap_or("").to_owned(),
+        );
+        headers.insert("REMOTE_ADDR".to_owned(), "127.0.0.1".to_owned()); // TODO: I guess we should get the real client address.
+        headers.insert("REMOTE_HOST".to_owned(), "localhost".to_owned()); // TODO: I guess we should get the real client host.
+        headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Is this still a thing? It is not even present on uri
+        headers.insert("REQUEST_METHOD".to_owned(), req.method().to_string());
+        headers.insert("SCRIPT_NAME".to_owned(), self.module.to_owned());
+
+        // From the spec: "the server would use the contents of the request's Host header
+        // field to select the correct virtual host."
+        headers.insert("SERVER_NAME".to_owned(), host);
+        headers.insert(
+            "SERVER_PORT".to_owned(),
+            req.uri()
+                .port()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "80".to_owned()),
+        );
+        headers.insert(
+            "SERVER_PROTOCOL".to_owned(),
+            req.uri()
+                .scheme()
+                .unwrap_or(&Scheme::HTTP)
+                .as_str()
+                .to_owned(),
+        );
+
+        headers.insert(
+            "SERVER_SOFTWARE".to_owned(),
+            SERVER_SOFTWARE_VERSION.to_owned(),
+        );
+
+        // Normalize incoming HTTP headers. The spec says:
+        // "The HTTP header field name is converted to upper case, has all
+        // occurrences of "-" replaced with "_" and has "HTTP_" prepended to
+        // give the meta-variable name."
+        req.headers().iter().for_each(|header| {
+            let key = format!(
+                "HTTP_{}",
+                header.0.as_str().to_uppercase().replace("-", "_")
+            );
+            let val = header.1.to_str().unwrap_or("CORRUPT VALUE").to_owned();
+            headers.insert(key, val);
+        });
+
+        headers
+    }
+
     // Load and execute the WASM module.
     //
     // Typically, the higher-level execute() method should be used instead, as that handles
@@ -138,23 +258,17 @@ impl Module {
         let store = Store::default();
         let mut linker = Linker::new(&store);
 
-        // Normalize headers
-        let mut headers = std::collections::HashMap::new();
-        req.headers().iter().for_each(|header| {
-            // TODO: Need to figure out what a Hyper HeaderValue is
-            // TODO: Normalize headers into env vars, following rules in CGI spec
-            //let key = header.0.to_string().to_upper();
-            headers.insert(header.0.to_string(), "some value".to_owned());
-        });
+        let headers = self.build_headers(req);
 
-        // TODO: STDIN should be attached to the Request's Body
+        // TODO: The request's incoming Body should be mapped into WASM's STDIN
         //let stdin = std::io::stdin();
 
-        // TODO: STDOUT should be attached to something that eventually produces they hyper::Body
+        // TODO: STDOUT should be attached to something that eventually produces a hyper::Body
         //let stdout = std::io::stdout();
 
-        // TODO: The spec does not say what to do with STDERR. Currently, we will attach
-        // to wherever logs go.
+        // TODO: The spec does not say what to do with STDERR.
+        // See specifically section 6.1 of RFC 3875.
+        // Currently, we will attach to wherever logs go.
 
         // TODO: Add support for Module.file to preopen.
 
