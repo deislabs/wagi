@@ -2,6 +2,11 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{http::uri::Scheme, Body, Method, Request, Response, Server, StatusCode};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
+use std::sync::{Arc, RwLock};
+use wasi_common::virtfs::{pipe::WritePipe, *};
+use wasi_common::Handle;
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 
@@ -265,7 +270,9 @@ impl Module {
 
         // TODO: STDOUT should be attached to something that eventually produces a hyper::Body
         //let stdout = std::io::stdout();
-
+        let stdout_buf: Vec<u8> = vec![];
+        let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
+        let stdout = WritePipe::from_shared(stdout_mutex.clone());
         // TODO: The spec does not say what to do with STDERR.
         // See specifically section 6.1 of RFC 3875.
         // Currently, we will attach to wherever logs go.
@@ -276,6 +283,7 @@ impl Module {
             .args(vec![req.uri().path()]) // TODO: Query params go in args. Read spec.
             .envs(headers)
             .inherit_stdio() // TODO: this should be replaced
+            .stdout(stdout)
             .build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
@@ -290,6 +298,8 @@ impl Module {
         // Okay, once we get here, all the information we need to send back in the response
         // should be written to the STDOUT buffer. We fetch that, format it, and send
         // it back. In the process, we might need to alter the status code of the result.
+        //let mut real_stdout = std::io::stdout();
+        //real_stdout.write_all(stdout_mutex.read().unwrap().as_slice())?;
 
         // TODO: So technically a CGI gateway processor MUST parse the resulting headers
         // and rewrite some (while removing others). This should be fairly trivial to do,
@@ -299,10 +309,10 @@ impl Module {
         // The headers should then be added to the response headers, and the body should
         // be passed back untouched.
 
-        Ok(Response::new(Body::from(format!(
-            "executed module {}",
-            self.module
-        ))))
+        // This is really ridiculous. There should be a better way of converting to a Body.
+        let out = stdout_mutex.read().unwrap();
+        let body = Body::from(Vec::from(out.as_slice()));
+        Ok(Response::new(body))
     }
 }
 

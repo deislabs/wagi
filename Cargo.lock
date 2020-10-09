@@ -1478,6 +1478,7 @@ dependencies = [
  "serde",
  "tokio",
  "toml",
+ "wasi-common",
  "wasmtime",
  "wasmtime-wasi",
 ]
