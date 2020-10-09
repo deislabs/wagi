@@ -38,7 +38,11 @@ async fn route(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
 /// Load the configuration TOML and find a module that matches
 fn find_wasm_module(uri_path: &str) -> Result<Module, anyhow::Error> {
     let config = load_modules_toml()?;
-    let found = config.module.iter().filter(|m| m.route == uri_path).last();
+    let found = config
+        .module
+        .iter()
+        .filter(|m| m.match_route(uri_path))
+        .last();
     if found.is_none() {
         return Err(anyhow::anyhow!("module not found: {}", uri_path));
     }
@@ -71,6 +75,20 @@ impl Module {
     /// Execute the WASM module in a WAGI
     fn execute(&self) -> Response<Body> {
         Response::new(Body::from(format!("module: {}", self.module)))
+    }
+    /// Check whether the given fragment matches the route in this module.
+    ///
+    /// A route matches if
+    ///   - the module route is a literal path, and the fragment is an exact match
+    ///   - the module route ends with '/...' and the portion before that is an exact
+    ///     match with the start of the fragment (e.g. /foo/... matches /foo/bar/foo)
+    ///
+    /// Note that the route /foo/... matches the URI path /foo.
+    fn match_route(&self, fragment: &str) -> bool {
+        self.route
+            .strip_suffix("/...")
+            .map(|i| fragment.starts_with(i))
+            .unwrap_or_else(|| self.route.as_str() == fragment)
     }
 }
 

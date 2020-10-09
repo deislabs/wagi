@@ -5,3 +5,7 @@ module = "root.wasm"
 [[module]]
 route = "/foo"
 module = "foo.wasm"
+
+[[module]]
+route = "/bar/..."
+module = "bar.wasm"
