@@ -9,3 +9,11 @@ module = "foo.wasm"
 [[module]]
 route = "/bar/..."
 module = "bar.wasm"
+
+[[module]]
+route = "/hello"
+module = "/Users/technosophos/Code/Rust/hello_wagi/target/wasm32-wasi/release/hello_wagi.wasm"
+
+[[module]]
+route = "/env"
+module = "/Users/technosophos/Code/Rust/env_wagi/target/wasm32-wasi/release/env_wagi.wasm"

@@ -1,5 +1,9 @@
 # WAGI: Web Assembly Gateway Interface
 
+**WARNING:** This is experimental code put together on a whim.
+It is not considered production-grade by its developers, neither is it "supported" software.
+This is a project we wrote to demonstrate another way to use WASI.
+
 Like fashion, all technologies eventually make a comeback.
 WAGI (pronounced "waggy") is an implementation of CGI for WebAssembly and WASI.
 
@@ -52,3 +56,7 @@ Each WAGI can be accompanied by a `wagi.toml`, which contains configuration for 
 - WAGIs do _not_ have unrestricted access to the underlying OS or filesystem.
     * If you want to give a WAGI access to a portion of the filesystem, you must configure the WAGI's `wagi.toml` file
     * WAGIs cannot make outbound network connections
+
+It should be noted that while the daemon (the WAGI server) runs constantly, both the `modules.toml` and the `.wasm` file are loaded for each request, much as they were for CGI.
+In the future, the WAGI server may cache the WASM modules to speed loading.
+But in the near term, we are less concerned with performance and more concerned with debugging.
