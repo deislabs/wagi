@@ -48,7 +48,25 @@ See the "Differences" section below.
 
 ## Configuring the WAGI Server
 
-Each WAGI can be accompanied by a `wagi.toml`, which contains configuration for that WAGI.
+The WAGI server uses a `modules.toml` file to point to the WAGI modules that can be executed.
+(A WAGI module is just a WASM+WASI module that prints its output correctly.)
+
+Here is an example `modules.toml`:
+
+```toml
+[[module]]
+route = "/"
+module = "/absolute/path/to/root.wasm"
+
+[[module]]
+route = "/foo"
+module = "/path/to/foo.wasm"
+
+[[module]]
+# The "/..." suffix means this will match /bar and its subpaths, like /bar/a/b/c
+route = "/bar/..."
+module = "/path/to/bar.wasm"
+```
 
 
 ## Writing WAGI Modules
@@ -66,7 +84,20 @@ function main() {
 }
 ```
 
-TODO: Insert links to the env and hello world example repositories when those repositories are pushed.
+Here is the above written in Rust:
+
+```
+fn main() {
+    println!("Content-Type: text/plain\n");
+    println!("hello world");
+}
+```
+
+In Rust, you can compile the above with `cargo build --target wasm32-wasi --release` and have a WAGI module ready to use! 
+
+### Examples and Demos
+
+- [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
 
 ## Differences from old CGI
 

@@ -311,6 +311,7 @@ impl Module {
 
         // This is really ridiculous. There should be a better way of converting to a Body.
         let out = stdout_mutex.read().unwrap();
+
         let body = Body::from(Vec::from(out.as_slice()));
         Ok(Response::new(body))
     }
