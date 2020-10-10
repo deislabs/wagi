@@ -1,12 +1,9 @@
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{http::uri::Scheme, Body, Method, Request, Response, Server, StatusCode};
+use hyper::{http::uri::Scheme, Body, Request, Response, Server, StatusCode};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Seek, SeekFrom, Write};
 use std::sync::{Arc, RwLock};
-use wasi_common::virtfs::{pipe::WritePipe, *};
-use wasi_common::Handle;
+use wasi_common::virtfs::pipe::WritePipe;
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 
@@ -268,8 +265,6 @@ impl Module {
         // TODO: The request's incoming Body should be mapped into WASM's STDIN
         //let stdin = std::io::stdin();
 
-        // TODO: STDOUT should be attached to something that eventually produces a hyper::Body
-        //let stdout = std::io::stdout();
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
@@ -301,19 +296,11 @@ impl Module {
         //let mut real_stdout = std::io::stdout();
         //real_stdout.write_all(stdout_mutex.read().unwrap().as_slice())?;
 
-        // TODO: So technically a CGI gateway processor MUST parse the resulting headers
-        // and rewrite some (while removing others). This should be fairly trivial to do.
-        //
-        // The headers should then be added to the response headers, and the body should
-        // be passed back untouched.
-
-        // This is really ridiculous. There should be a better way of converting to a Body.
-        let out = stdout_mutex.read().unwrap();
-
         // This is a little janky, but basically we are looping through the output once,
         // looking for the double-newline that distinguishes the headers from the body.
         // The headers can then be parsed separately, while the body can be sent back
         // to the client.
+        let out = stdout_mutex.read().unwrap();
         let mut last = 0;
         let mut scan_headers = true;
         let mut buffer: Vec<u8> = Vec::new();
@@ -329,17 +316,35 @@ impl Module {
             buffer.push(*i)
         });
 
-        // TODO: Here we need to parse the headers, can for certain known-valid ones,
+        let mut res = Response::new(Body::from(buffer));
+
+        // TODO: Here we need to parse the headers, scan for certain known-valid ones,
         // and add then to the response.
-        println!("{}", String::from_utf8(out_headers).unwrap());
+        // XXX: Does the spec allow for unknown headers to be passed to the HTTP headers?
+        //println!("{}", String::from_utf8(out_headers).unwrap());
+        //let mut res_headers = *res.headers_mut();
+        parse_cgi_headers(String::from_utf8(out_headers)?)
+            .iter()
+            .for_each(|h| {
+                use hyper::header::CONTENT_TYPE;
+                match h.0.to_lowercase().as_str() {
+                    "content-type" => {
+                        res.headers_mut().insert(CONTENT_TYPE, h.1.parse().unwrap());
+                    }
+                    "status" => {
+                        // This one overrides the status code on HTTP.
+                    }
+                    "location" => {
+                        // This should result in a redirect
+                    }
+                    _ => println!("Dropping unknown CGI header {}", h.0),
+                }
+            });
 
-        // TODO: according to the spec, if a Content-Type header is not sent, we should
-        // return a 500. That is pretty heavy-handed, but with good reason: guessing this
-        // would be a bad idea.
+        // TODO: according to the spec, a CGI script must return either a content-type
+        // or a location header. Failure to return one of these is a 500 error.
 
-        // TODO: Must set the Content-Length header to the length of the buffer
-
-        Ok(Response::new(Body::from(buffer)))
+        Ok(res)
     }
 }
 
@@ -348,4 +353,17 @@ fn not_found() -> Response<Body> {
     let mut not_found = Response::default();
     *not_found.status_mut() = StatusCode::NOT_FOUND;
     not_found
+}
+
+fn parse_cgi_headers(headers: String) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    headers.trim().split('\n').for_each(|h| {
+        let parts: Vec<&str> = h.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            println!("corrupt header: {}", h);
+            return;
+        }
+        map.insert(parts[0].trim().to_owned(), parts[1].trim().to_owned());
+    });
+    map
 }
