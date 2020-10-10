@@ -99,13 +99,15 @@ In Rust, you can compile the above with `cargo build --target wasm32-wasi --rele
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
 
-## Differences from old CGI
+## Differences from CGI 1.1
 
 - We use UTF-8 instead of ASCII.
 - WAGIs are not handled as "processes", they are executed internally with multi-threading.
 - WAGIs do _not_ have unrestricted access to the underlying OS or filesystem.
     * If you want to give a WAGI access to a portion of the filesystem, you must configure the WAGI's `wagi.toml` file
     * WAGIs cannot make outbound network connections
+    * Some CGI env vars are rewritten to remove local FS information
+- WAGIs have a few extra CGI environment variables, prefixed with `X_`.
 
 It should be noted that while the daemon (the WAGI server) runs constantly, both the `modules.toml` and the `.wasm` file are loaded for each request, much as they were for CGI.
 In the future, the WAGI server may cache the WASM modules to speed loading.

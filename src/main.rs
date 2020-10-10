@@ -283,7 +283,7 @@ impl Module {
             .args(vec![req.uri().path()]) // TODO: Query params go in args. Read spec.
             .envs(headers)
             .inherit_stdio() // TODO: this should be replaced
-            .stdout(stdout)
+            .stdout(stdout) // STDOUT is sent to a Vec<u8>
             .build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
@@ -302,9 +302,7 @@ impl Module {
         //real_stdout.write_all(stdout_mutex.read().unwrap().as_slice())?;
 
         // TODO: So technically a CGI gateway processor MUST parse the resulting headers
-        // and rewrite some (while removing others). This should be fairly trivial to do,
-        // and it might even be possible to do with the `h2` library, which may have a method
-        // for parsing the raw body of an HTTP request.
+        // and rewrite some (while removing others). This should be fairly trivial to do.
         //
         // The headers should then be added to the response headers, and the body should
         // be passed back untouched.
@@ -312,8 +310,36 @@ impl Module {
         // This is really ridiculous. There should be a better way of converting to a Body.
         let out = stdout_mutex.read().unwrap();
 
-        let body = Body::from(Vec::from(out.as_slice()));
-        Ok(Response::new(body))
+        // This is a little janky, but basically we are looping through the output once,
+        // looking for the double-newline that distinguishes the headers from the body.
+        // The headers can then be parsed separately, while the body can be sent back
+        // to the client.
+        let mut last = 0;
+        let mut scan_headers = true;
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut out_headers: Vec<u8> = Vec::new();
+        out.iter().for_each(|i| {
+            if scan_headers && *i == 10 && last == 10 {
+                out_headers.append(&mut buffer);
+                buffer = Vec::new();
+                scan_headers = false;
+                return; // Consume the linefeed
+            }
+            last = *i;
+            buffer.push(*i)
+        });
+
+        // TODO: Here we need to parse the headers, can for certain known-valid ones,
+        // and add then to the response.
+        println!("{}", String::from_utf8(out_headers).unwrap());
+
+        // TODO: according to the spec, if a Content-Type header is not sent, we should
+        // return a 500. That is pretty heavy-handed, but with good reason: guessing this
+        // would be a bad idea.
+
+        // TODO: Must set the Content-Length header to the length of the buffer
+
+        Ok(Response::new(Body::from(buffer)))
     }
 }
 
