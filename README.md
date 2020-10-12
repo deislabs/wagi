@@ -69,7 +69,15 @@ module = "/path/to/bar.wasm"
 # You can also put static environment variables in the TOML file
 environment.TEST_NAME = "test value" 
 ```
+### TOML fields
 
+- Top-level fields
+  - Currently none
+- The `[[module]]` list: Each module starts with a `[[module]]` header. Inside of a module, the following fields are available:
+  - `route`: The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
+  - `module`: The absolute path to the module on the file system
+  - `environment`: A list of string/string environment variable pairs.
+  - `repository`: RESERVED
 
 ## Writing WAGI Modules
 

@@ -1,9 +1,9 @@
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{http::uri::Scheme, Body, Request, Response, Server, StatusCode};
+use hyper::{http::request::Parts, http::uri::Scheme, Body, Request, Response, Server, StatusCode};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use wasi_common::virtfs::pipe::WritePipe;
+use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 
@@ -49,7 +49,7 @@ async fn route(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     match uri_path {
         "/healthz" => Ok(Response::new(Body::from("OK"))),
         _ => match find_wasm_module(uri_path) {
-            Ok(module) => Ok(module.execute(&req)),
+            Ok(module) => Ok(module.execute(req).await),
             Err(e) => {
                 eprintln!("error: {}", e);
                 Ok(not_found())
@@ -110,8 +110,15 @@ pub struct Module {
 
 impl Module {
     /// Execute the WASM module in a WAGI
-    fn execute(&self, req: &Request<Body>) -> Response<Body> {
-        match self.run_wasm(req) {
+    async fn execute(&self, req: Request<Body>) -> Response<Body> {
+        // Read the parts in here
+        let (parts, body) = req.into_parts();
+        let data = hyper::body::to_bytes(body)
+            .await
+            .unwrap_or_default()
+            .to_vec();
+
+        match self.run_wasm(&parts, data) {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("error running WASM module: {}", e);
@@ -137,11 +144,13 @@ impl Module {
             .unwrap_or_else(|| self.route.as_str() == fragment)
     }
 
-    fn build_headers(&self, req: &Request<Body>) -> HashMap<String, String> {
+    fn build_headers(&self, req: &Parts) -> HashMap<String, String> {
+        // Note that we put these first so that there is no chance that they overwrite
+        // the built-in vars.
         let mut headers = self.environment.clone().unwrap_or_default();
 
         let host = req
-            .headers()
+            .headers
             .get("HOST")
             .map(|val| val.to_str().unwrap_or("localhost"))
             .unwrap_or("localhost")
@@ -168,7 +177,7 @@ impl Module {
         // Right now, we don't attempt to determine a media type if none is presented.
         headers.insert(
             "CONTENT_TYPE".to_owned(),
-            req.headers()
+            req.headers
                 .get("CONTENT_TYPE")
                 .map(|c| c.to_str().unwrap_or(""))
                 .unwrap_or("")
@@ -178,7 +187,7 @@ impl Module {
         // Since this is not in the specification, an X_ is prepended, per spec.
         // NB: It is strange that there is not a way to do this already. The Display impl
         // seems to only provide the path.
-        let uri = req.uri();
+        let uri = req.uri.clone();
         headers.insert(
             "X_FULL_URL".to_owned(),
             format!(
@@ -193,21 +202,21 @@ impl Module {
 
         headers.insert("GATEWAY_INTERFACE".to_owned(), WAGI_VERSION.to_owned());
         headers.insert("X_MATCHED_ROUTE".to_owned(), self.route.to_owned()); // Specific to WAGI (not CGI)
-        headers.insert("PATH_INFO".to_owned(), req.uri().path().to_owned()); // TODO: Does this get trimmed?
+        headers.insert("PATH_INFO".to_owned(), req.uri.path().to_owned()); // TODO: Does this get trimmed?
 
         // NOTE: The security model of WAGI means that we do not give the actual
         // translated path on the host filesystem, as that is off limits to the runtime.
         // Right now, this just returns the same as PATH_INFO, but we could attempt to
         // map it to something if we know what that "something" is.
-        headers.insert("PATH_TRANSLATED".to_owned(), req.uri().path().to_owned());
+        headers.insert("PATH_TRANSLATED".to_owned(), req.uri.path().to_owned());
         headers.insert(
             "QUERY_STRING".to_owned(),
-            req.uri().query().unwrap_or("").to_owned(),
+            req.uri.query().unwrap_or("").to_owned(),
         );
         headers.insert("REMOTE_ADDR".to_owned(), "127.0.0.1".to_owned()); // TODO: I guess we should get the real client address.
         headers.insert("REMOTE_HOST".to_owned(), "localhost".to_owned()); // TODO: I guess we should get the real client host.
         headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Is this still a thing? It is not even present on uri
-        headers.insert("REQUEST_METHOD".to_owned(), req.method().to_string());
+        headers.insert("REQUEST_METHOD".to_owned(), req.method.to_string());
         headers.insert("SCRIPT_NAME".to_owned(), self.module.to_owned());
 
         // From the spec: "the server would use the contents of the request's Host header
@@ -215,14 +224,14 @@ impl Module {
         headers.insert("SERVER_NAME".to_owned(), host);
         headers.insert(
             "SERVER_PORT".to_owned(),
-            req.uri()
+            req.uri
                 .port()
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "80".to_owned()),
         );
         headers.insert(
             "SERVER_PROTOCOL".to_owned(),
-            req.uri()
+            req.uri
                 .scheme()
                 .unwrap_or(&Scheme::HTTP)
                 .as_str()
@@ -238,7 +247,7 @@ impl Module {
         // "The HTTP header field name is converted to upper case, has all
         // occurrences of "-" replaced with "_" and has "HTTP_" prepended to
         // give the meta-variable name."
-        req.headers().iter().for_each(|header| {
+        req.headers.iter().for_each(|header| {
             let key = format!(
                 "HTTP_{}",
                 header.0.as_str().to_uppercase().replace("-", "_")
@@ -259,14 +268,16 @@ impl Module {
     // Note that on occasion, this module COULD return an Ok() with a response body that
     // contains an HTTP error. This can occur, for example, if the WASM module sets
     // the status code on its own.
-    fn run_wasm(&self, req: &Request<Body>) -> Result<Response<Body>, anyhow::Error> {
+    fn run_wasm(&self, req: &Parts, body: Vec<u8>) -> Result<Response<Body>, anyhow::Error> {
         let store = Store::default();
         let mut linker = Linker::new(&store);
+        let uri_path = req.uri.path();
 
         let headers = self.build_headers(req);
 
         // TODO: The request's incoming Body should be mapped into WASM's STDIN
         //let stdin = std::io::stdin();
+        let stdin = ReadPipe::from(body);
 
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
@@ -278,10 +289,11 @@ impl Module {
         // TODO: Add support for Module.file to preopen.
 
         let ctx = WasiCtxBuilder::new()
-            .args(vec![req.uri().path()]) // TODO: Query params go in args. Read spec.
+            .args(vec![uri_path]) // TODO: Query params go in args. Read spec.
             .envs(headers)
-            .inherit_stdio() // TODO: this should be replaced
+            .inherit_stderr() // STDERR goes to the console of the server
             .stdout(stdout) // STDOUT is sent to a Vec<u8>
+            .stdin(stdin)
             .build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
