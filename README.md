@@ -66,6 +66,8 @@ module = "/path/to/foo.wasm"
 # The "/..." suffix means this will match /bar and its subpaths, like /bar/a/b/c
 route = "/bar/..."
 module = "/path/to/bar.wasm"
+# You can also put static environment variables in the TOML file
+environment.TEST_NAME = "test value" 
 ```
 
 

@@ -104,6 +104,8 @@ pub struct Module {
     /// Files should be absolute paths. They will be pre-opened immediately before the
     /// they are loaded into the WASM module.
     pub files: Option<Vec<String>>,
+    // Set additional environment variables
+    pub environment: Option<HashMap<String, String>>,
 }
 
 impl Module {
@@ -136,7 +138,8 @@ impl Module {
     }
 
     fn build_headers(&self, req: &Request<Body>) -> HashMap<String, String> {
-        let mut headers = std::collections::HashMap::new();
+        let mut headers = self.environment.clone().unwrap_or_default();
+
         let host = req
             .headers()
             .get("HOST")
