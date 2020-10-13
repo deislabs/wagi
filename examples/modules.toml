@@ -17,4 +17,5 @@ module = "/Users/technosophos/Code/Rust/hello_wagi/target/wasm32-wasi/release/he
 [[module]]
 route = "/env"
 module = "/Users/technosophos/Code/Rust/env_wagi/target/wasm32-wasi/release/env_wagi.wasm"
+volumes = { "/" = "./" }
 environment.TEST_NAME = "test value"

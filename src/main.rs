@@ -1,5 +1,8 @@
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{http::request::Parts, http::uri::Scheme, Body, Request, Response, Server, StatusCode};
+use hyper::{
+    http::header::HeaderValue, http::request::Parts, http::uri::Scheme, Body, Request, Response,
+    Server, StatusCode,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -100,10 +103,11 @@ pub struct Module {
     /// This should be an absolute path. It must point to a WASM+WASI 32-bit program
     /// with the read bit set.
     pub module: String,
-    /// Files on the local filesystem that can be opened by this module
-    /// Files should be absolute paths. They will be pre-opened immediately before the
-    /// they are loaded into the WASM module.
-    pub files: Option<Vec<String>>,
+    /// Directories on the local filesystem that can be opened by this module
+    // The key (left value) is the name of the directory INSIDE the WASM. The value is
+    // the location OUTSIDE the WASM. Two inside locations can map to the same outside
+    // location.
+    pub volumes: Option<HashMap<String, String>>,
     // Set additional environment variables
     pub environment: Option<HashMap<String, String>>,
 }
@@ -293,17 +297,31 @@ impl Module {
         let mut args = vec![uri_path];
         req.uri
             .query()
-            .map(|q| q.split("&").for_each(|item| args.push(item)));
+            .map(|q| q.split('&').for_each(|item| args.push(item)))
+            .take();
 
-        // TODO: Add support for Module.file to preopen.
-
-        let ctx = WasiCtxBuilder::new()
+        let mut builder = WasiCtxBuilder::new();
+        builder
             .args(args)
             .envs(headers)
             .inherit_stderr() // STDERR goes to the console of the server
             .stdout(stdout) // STDOUT is sent to a Vec<u8>, which becomes the Body later
-            .stdin(stdin)
-            .build()?;
+            .stdin(stdin);
+
+        // Map all of the volumes.
+        if let Some(dirs) = self.volumes.as_ref() {
+            for (guest, host) in dirs.iter() {
+                // Try to open the dir or log an error.
+                match std::fs::File::open(host) {
+                    Ok(dir) => {
+                        builder.preopened_dir(dir, guest);
+                    }
+                    Err(e) => eprintln!("Error opening {} -> {}: {}", host, guest, e),
+                }
+            }
+        }
+
+        let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
 
@@ -345,18 +363,23 @@ impl Module {
         parse_cgi_headers(String::from_utf8(out_headers)?)
             .iter()
             .for_each(|h| {
-                use hyper::header::CONTENT_TYPE;
+                use hyper::header::{CONTENT_TYPE, LOCATION};
                 match h.0.to_lowercase().as_str() {
                     "content-type" => {
                         sufficient_response = true;
                         res.headers_mut().insert(CONTENT_TYPE, h.1.parse().unwrap());
                     }
                     "status" => {
-                        // TODO: This one overrides the status code on HTTP.
+                        if let Ok(status) = h.1.parse::<hyper::StatusCode>() {
+                            println!("Setting status to {}", status);
+                            *res.status_mut() = status;
+                        }
                     }
                     "location" => {
-                        // sufficient_response = true;
-                        // TODO: This should result in a redirect
+                        sufficient_response = true;
+                        res.headers_mut()
+                            .insert(LOCATION, HeaderValue::from_str(h.1).unwrap());
+                        *res.status_mut() = StatusCode::from_u16(307).unwrap();
                     }
                     _ => println!("Dropping unknown CGI header {}", h.0),
                 }
@@ -384,7 +407,7 @@ fn not_found() -> Response<Body> {
 /// Create an HTTP 500 response
 fn internal_error(msg: &str) -> Response<Body> {
     println!("HTTP 500 error: {}", msg);
-    let mut res = Response::default();
+    let mut res = Response::new(Body::from(msg.to_owned()));
     *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     res
 }
