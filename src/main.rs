@@ -1,7 +1,9 @@
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{
-    http::header::HeaderValue, http::request::Parts, http::uri::Scheme, Body, Request, Response,
-    Server, StatusCode,
+    http::header::{HeaderName, HeaderValue},
+    http::request::Parts,
+    http::uri::Scheme,
+    Body, Request, Response, Server, StatusCode,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -379,9 +381,19 @@ impl Module {
                         sufficient_response = true;
                         res.headers_mut()
                             .insert(LOCATION, HeaderValue::from_str(h.1).unwrap());
-                        *res.status_mut() = StatusCode::from_u16(307).unwrap();
+                        *res.status_mut() = StatusCode::from_u16(302).unwrap();
                     }
-                    _ => println!("Dropping unknown CGI header {}", h.0),
+                    _ => {
+                        // If the header can be parsed into a valid HTTP header, it is
+                        // added to the headers. Otherwise it is ignored.
+                        match HeaderName::from_lowercase(h.0.as_str().to_lowercase().as_bytes()) {
+                            Ok(hdr) => {
+                                res.headers_mut()
+                                    .insert(hdr, HeaderValue::from_str(h.1).unwrap());
+                            }
+                            Err(e) => eprintln!("Invalid header name '{}': {}", h.0.as_str(), e),
+                        }
+                    }
                 }
             });
 
