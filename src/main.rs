@@ -365,7 +365,9 @@ impl Module {
         // According to the spec, a CGI script must return either a content-type
         // or a location header. Failure to return one of these is a 500 error.
         if !sufficient_response {
-            return Ok(internal_error());
+            return Ok(internal_error(
+                "Exactly one of 'location' or 'content-type' must be specified",
+            ));
         }
 
         Ok(res)
@@ -379,7 +381,9 @@ fn not_found() -> Response<Body> {
     not_found
 }
 
-fn internal_error() -> Response<Body> {
+/// Create an HTTP 500 response
+fn internal_error(msg: &str) -> Response<Body> {
+    println!("HTTP 500 error: {}", msg);
     let mut res = Response::default();
     *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     res
