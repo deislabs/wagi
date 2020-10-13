@@ -144,9 +144,10 @@ impl Module {
             .unwrap_or_else(|| self.route.as_str() == fragment)
     }
 
-    fn build_headers(&self, req: &Parts) -> HashMap<String, String> {
+    fn build_headers(&self, req: &Parts, content_length: usize) -> HashMap<String, String> {
         // Note that we put these first so that there is no chance that they overwrite
-        // the built-in vars.
+        // the built-in vars. IMPORTANT: This is also why some values have empty strings
+        // deliberately set (as opposed to omiting the pair altogether).
         let mut headers = self.environment.clone().unwrap_or_default();
 
         let host = req
@@ -157,16 +158,14 @@ impl Module {
             .to_owned();
 
         // CGI headers from RFC
-        // headers.insert("AUTH_TYPE", $token); // Not currently supported
+        headers.insert("AUTH_TYPE".to_owned(), "".to_owned()); // Not currently supported
 
         // CONTENT_LENGTH (from the spec)
         // The server MUST set this meta-variable if and only if the request is
         // accompanied by a message-body entity.  The CONTENT_LENGTH value must
         // reflect the length of the message-body after the server has removed
         // any transfer-codings or content-codings.
-        //
-        // TODO: Fix this!
-        headers.insert("CONTENT_LENGTH".to_owned(), "0".to_owned());
+        headers.insert("CONTENT_LENGTH".to_owned(), format!("{}", content_length));
 
         // CONTENT_TYPE (from the spec)
         // The server MUST set this meta-variable if an HTTP Content-Type field is present
@@ -175,6 +174,10 @@ impl Module {
         // the correct content type, otherwise it should omit this meta-variable.
         //
         // Right now, we don't attempt to determine a media type if none is presented.
+        //
+        // The spec seems to indicate that if CONTENT_LENGTH > 0, this may be set
+        // to "application/octet-stream" if no type is otherwise set. Not sure that is
+        // a good idea.
         headers.insert(
             "CONTENT_TYPE".to_owned(),
             req.headers
@@ -213,12 +216,11 @@ impl Module {
             "QUERY_STRING".to_owned(),
             req.uri.query().unwrap_or("").to_owned(),
         );
-        headers.insert("REMOTE_ADDR".to_owned(), "127.0.0.1".to_owned()); // TODO: I guess we should get the real client address.
-        headers.insert("REMOTE_HOST".to_owned(), "localhost".to_owned()); // TODO: I guess we should get the real client host.
-        headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Is this still a thing? It is not even present on uri
+        headers.insert("REMOTE_ADDR".to_owned(), "127.0.0.1".to_owned()); // TODO: Where can we get the client IP?
+        headers.insert("REMOTE_HOST".to_owned(), "localhost".to_owned()); // TODO: Where can we get the client host?
+        headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Parse this out of uri.authority?
         headers.insert("REQUEST_METHOD".to_owned(), req.method.to_string());
         headers.insert("SCRIPT_NAME".to_owned(), self.module.to_owned());
-
         // From the spec: "the server would use the contents of the request's Host header
         // field to select the correct virtual host."
         headers.insert("SERVER_NAME".to_owned(), host);
@@ -252,6 +254,10 @@ impl Module {
                 "HTTP_{}",
                 header.0.as_str().to_uppercase().replace("-", "_")
             );
+            // Per spec 4.1.18, skip some headers
+            if key == "HTTP_AUHTORIZATION" || key == "HTTP_CONNECTION" {
+                return;
+            }
             let val = header.1.to_str().unwrap_or("CORRUPT VALUE").to_owned();
             headers.insert(key, val);
         });
@@ -273,26 +279,29 @@ impl Module {
         let mut linker = Linker::new(&store);
         let uri_path = req.uri.path();
 
-        let headers = self.build_headers(req);
+        let headers = self.build_headers(req, body.len());
 
-        // TODO: The request's incoming Body should be mapped into WASM's STDIN
-        //let stdin = std::io::stdin();
         let stdin = ReadPipe::from(body);
 
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
-        // TODO: The spec does not say what to do with STDERR.
-        // See specifically section 6.1 of RFC 3875.
+        // The spec does not say what to do with STDERR.
+        // See specifically sections 4.2 and 6.1 of RFC 3875.
         // Currently, we will attach to wherever logs go.
+
+        let mut args = vec![uri_path];
+        req.uri
+            .query()
+            .map(|q| q.split("&").for_each(|item| args.push(item)));
 
         // TODO: Add support for Module.file to preopen.
 
         let ctx = WasiCtxBuilder::new()
-            .args(vec![uri_path]) // TODO: Query params go in args. Read spec.
+            .args(args)
             .envs(headers)
             .inherit_stderr() // STDERR goes to the console of the server
-            .stdout(stdout) // STDOUT is sent to a Vec<u8>
+            .stdout(stdout) // STDOUT is sent to a Vec<u8>, which becomes the Body later
             .stdin(stdin)
             .build()?;
         let wasi = Wasi::new(&store, ctx);
@@ -308,9 +317,7 @@ impl Module {
         // Okay, once we get here, all the information we need to send back in the response
         // should be written to the STDOUT buffer. We fetch that, format it, and send
         // it back. In the process, we might need to alter the status code of the result.
-        //let mut real_stdout = std::io::stdout();
-        //real_stdout.write_all(stdout_mutex.read().unwrap().as_slice())?;
-
+        //
         // This is a little janky, but basically we are looping through the output once,
         // looking for the double-newline that distinguishes the headers from the body.
         // The headers can then be parsed separately, while the body can be sent back
@@ -333,31 +340,33 @@ impl Module {
 
         let mut res = Response::new(Body::from(buffer));
 
-        // TODO: Here we need to parse the headers, scan for certain known-valid ones,
-        // and add then to the response.
         // XXX: Does the spec allow for unknown headers to be passed to the HTTP headers?
-        //println!("{}", String::from_utf8(out_headers).unwrap());
-        //let mut res_headers = *res.headers_mut();
+        let mut sufficient_response = false;
         parse_cgi_headers(String::from_utf8(out_headers)?)
             .iter()
             .for_each(|h| {
                 use hyper::header::CONTENT_TYPE;
                 match h.0.to_lowercase().as_str() {
                     "content-type" => {
+                        sufficient_response = true;
                         res.headers_mut().insert(CONTENT_TYPE, h.1.parse().unwrap());
                     }
                     "status" => {
-                        // This one overrides the status code on HTTP.
+                        // TODO: This one overrides the status code on HTTP.
                     }
                     "location" => {
-                        // This should result in a redirect
+                        // sufficient_response = true;
+                        // TODO: This should result in a redirect
                     }
                     _ => println!("Dropping unknown CGI header {}", h.0),
                 }
             });
 
-        // TODO: according to the spec, a CGI script must return either a content-type
+        // According to the spec, a CGI script must return either a content-type
         // or a location header. Failure to return one of these is a 500 error.
+        if !sufficient_response {
+            return Ok(internal_error());
+        }
 
         Ok(res)
     }
@@ -368,6 +377,12 @@ fn not_found() -> Response<Body> {
     let mut not_found = Response::default();
     *not_found.status_mut() = StatusCode::NOT_FOUND;
     not_found
+}
+
+fn internal_error() -> Response<Body> {
+    let mut res = Response::default();
+    *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    res
 }
 
 fn parse_cgi_headers(headers: String) -> HashMap<String, String> {
