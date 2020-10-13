@@ -67,6 +67,7 @@ See the "Differences" section below for the differences.
 ### Examples and Demos
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
+- [hello-wagi-as](https://github.com/deislabs/hello-wagi-as): AssemblyScript example using environment variables and query params.
 
 ## Configuring the WAGI Server
 
