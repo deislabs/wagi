@@ -122,6 +122,7 @@ In Rust, you can compile the above with `cargo build --target wasm32-wasi --rele
     * This will set the status code to `302 Found` (per 6.2.4 of the CGI specification)
     * If `status` is returned AFTER `location`, it will override the status code
 - WAGI does NOT support NPH (Non-Parsed Header) mode
+- The value of `args` is NOT escaped for borne-style shells (See section 7.2 of CGI spec)
 
 It should be noted that while the daemon (the WAGI server) runs constantly, both the `modules.toml` and the `.wasm` file are loaded for each request, much as they were for CGI.
 In the future, the WAGI server may cache the WASM modules to speed loading.
