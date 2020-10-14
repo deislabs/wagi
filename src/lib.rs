@@ -1,12 +1,12 @@
-use hyper::service::{make_service_fn, service_fn};
 use hyper::{
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
     http::uri::Scheme,
-    Body, Request, Response, Server, StatusCode,
+    Body, Request, Response, StatusCode,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
@@ -19,56 +19,68 @@ use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 const WAGI_VERSION: &str = "CGI/1.1";
 const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 
-/// Route the request to the correct handler
-///
-/// Some routes are built in (like healthz), while others are dynamically
-/// dispatched.
-pub async fn route(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    // TODO: THis should be refactored into a Router that loads the TOML file
-    // (optionally only at startup) and then routes directly. Right now, each
-    // request is causing the TOML file to be read and parsed anew. This is great
-    // for debugging (since we can edit the TOML without restarting), but it does
-    // incur a performance penalty.
-    //
-    // Additionally, we could implement an LRU to cache WASM modules. This would
-    // greatly reduce the amount of load time per request. But this would come with two
-    // drawbacks: (a) it would be different than CGI, and (b) it would involve a cache
-    // clear during debugging, which could be a bit annoying.
-
-    let uri_path = req.uri().path();
-    match uri_path {
-        "/healthz" => Ok(Response::new(Body::from("OK"))),
-        _ => match find_wasm_module(uri_path) {
-            Ok(module) => Ok(module.execute(req).await),
-            Err(e) => {
-                eprintln!("error: {}", e);
-                Ok(not_found())
-            }
-        },
-    }
+pub struct Router {
+    pub config_path: String,
 }
 
-/// Load the configuration TOML and find a module that matches
-fn find_wasm_module(uri_path: &str) -> Result<Module, anyhow::Error> {
-    let config = load_modules_toml()?;
-    let found = config
-        .module
-        .iter()
-        .filter(|m| m.match_route(uri_path))
-        .last();
-    if found.is_none() {
-        return Err(anyhow::anyhow!("module not found: {}", uri_path));
+impl Router {
+    /// Route the request to the correct handler
+    ///
+    /// Some routes are built in (like healthz), while others are dynamically
+    /// dispatched.
+    pub async fn route(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+        // TODO: THis should be refactored into a Router that loads the TOML file
+        // (optionally only at startup) and then routes directly. Right now, each
+        // request is causing the TOML file to be read and parsed anew. This is great
+        // for debugging (since we can edit the TOML without restarting), but it does
+        // incur a performance penalty.
+        //
+        // Additionally, we could implement an LRU to cache WASM modules. This would
+        // greatly reduce the amount of load time per request. But this would come with two
+        // drawbacks: (a) it would be different than CGI, and (b) it would involve a cache
+        // clear during debugging, which could be a bit annoying.
+
+        let uri_path = req.uri().path();
+        match uri_path {
+            "/healthz" => Ok(Response::new(Body::from("OK"))),
+            _ => match self.find_wasm_module(uri_path) {
+                Ok(module) => Ok(module.execute(req).await),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    Ok(not_found())
+                }
+            },
+        }
+    }
+    /// Load the configuration TOML and find a module that matches
+    fn find_wasm_module(&self, uri_path: &str) -> Result<Module, anyhow::Error> {
+        let config = self.load_modules_toml()?;
+        let found = config
+            .module
+            .iter()
+            .filter(|m| m.match_route(uri_path))
+            .last();
+        if found.is_none() {
+            return Err(anyhow::anyhow!("module not found: {}", uri_path));
+        }
+
+        let found_mod = (*found.unwrap()).clone();
+        Ok(found_mod)
     }
 
-    let found_mod = (*found.unwrap()).clone();
-    Ok(found_mod)
-}
+    /// Load the configuration TOML
+    fn load_modules_toml(&self) -> Result<ModuleConfig, anyhow::Error> {
+        if !Path::new(self.config_path.as_str()).is_file() {
+            return Err(anyhow::anyhow!(
+                "no modules configuration file found at {}",
+                self.config_path
+            ));
+        }
 
-/// Load the configuration TOML
-fn load_modules_toml() -> Result<ModuleConfig, anyhow::Error> {
-    let data = std::fs::read_to_string("./examples/modules.toml")?;
-    let modules: ModuleConfig = toml::from_str(data.as_str())?;
-    Ok(modules)
+        let data = std::fs::read_to_string(self.config_path.as_str())?;
+        let modules: ModuleConfig = toml::from_str(data.as_str())?;
+        Ok(modules)
+    }
 }
 
 /// The configuration for all modules in a WAGI site

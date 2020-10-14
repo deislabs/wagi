@@ -1,29 +1,9 @@
 [[module]]
+# Example executing a Web Assembly Text file
 route = "/"
-module = "root.wasm"
+module = "examples/hello.wat"
 
 [[module]]
-route = "/foo"
-module = "foo.wasm"
-
-[[module]]
-route = "/bar/..."
-module = "bar.wasm"
-
-[[module]]
-route = "/hello"
-module = "/Users/technosophos/Code/Rust/hello_wagi/target/wasm32-wasi/release/hello_wagi.wasm"
-
-[[module]]
-route = "/env"
-module = "/Users/technosophos/Code/Rust/env_wagi/target/wasm32-wasi/release/env_wagi.wasm"
-volumes = { "/" = "/Users/technosophos/Code/Rust/env_wagi" }
-environment.TEST_NAME = "test value"
-
-[[module]]
-route = "/as-hello"
-module = "/Users/technosophos/Code/AssemblyScript/hello-wagi/build/optimized.wasm"
-
-[[module]]
-route = "/as-env"
-module = "/Users/technosophos/Code/AssemblyScript/env-bug/build/optimized.wasm"
+# Example running a WASM file.
+route = "/hello/..."
+module = "examples/hello.wasm"

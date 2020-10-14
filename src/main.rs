@@ -1,6 +1,6 @@
 use hyper::service::{make_service_fn, service_fn};
-use hyper::Server;
-use wagi::route;
+use hyper::{Body, Request, Response, Server};
+use wagi::Router;
 
 #[tokio::main]
 pub async fn main() {
@@ -15,4 +15,12 @@ pub async fn main() {
     if let Err(e) = srv.await {
         eprintln!("server error: {}", e);
     }
+}
+
+async fn route(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    let router = &Router {
+        config_path: std::env::args().nth(1).unwrap_or("modules.toml".to_owned()),
+    };
+
+    router.route(req).await
 }

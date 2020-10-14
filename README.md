@@ -57,17 +57,47 @@ In the future, as WASI matures, we will relax the restrictions on outbound netwo
 
 ## Getting Started
 
-To run the WAGI server, use `cargo run`.
+To run the WAGI server, use `cargo run path/to/modules.toml`.
 You can also `cargo build` WAGI and run it as a static binary.
 
-If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
-While this is not an exact implementation, it is very close.
-See the "Differences" section below for the differences.
+Once you are running WAGI, you can test it out with your browser or `curl`. By default,
+WAGI runs on `localhost:3000`:
+
+```console
+$ curl http://localhost:3000/hello/world
+hello world
+```
+
+To get a look at the HTTP request and response, use the `-v` flag on `curl`:
+
+```
+$ curl -v http://localhost:3000/hello/world
+*   Trying 127.0.0.1...
+* TCP_NODELAY set
+* Connected to localhost (127.0.0.1) port 3000 (#0)
+> GET /hello/world HTTP/1.1
+> Host: localhost:3000
+> User-Agent: curl/7.64.1
+> Accept: */*
+>
+< HTTP/1.1 200 OK
+< content-type: text/plain
+< content-length: 12
+< date: Wed, 14 Oct 2020 22:00:59 GMT
+<
+hello world
+* Connection #0 to host localhost left intact
+* Closing connection 0
+```
 
 ### Examples and Demos
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
 - [hello-wagi-as](https://github.com/deislabs/hello-wagi-as): AssemblyScript example using environment variables and query params.
+
+If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
+While this is not an exact implementation, it is very close.
+See the "Differences" section below for the differences.
 
 ## Configuring the WAGI Server
 
@@ -93,6 +123,11 @@ module = "/path/to/bar.wasm"
 volumes = {"/path/inside/wasm": "/path/on/host"}
 # You can also put static environment variables in the TOML file
 environment.TEST_NAME = "test value" 
+
+[[module]]
+# You can also execute a WAT file directly
+route = "/hello"
+module = "/path/to/hello.wat"
 ```
 ### TOML fields
 
