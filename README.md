@@ -57,11 +57,11 @@ In the future, as WASI matures, we will relax the restrictions on outbound netwo
 
 ## Getting Started
 
-To run the WAGI server, use `cargo run path/to/modules.toml`.
+To run the WAGI server, use `cargo run -- --config path/to/modules.toml`.
 You can also `cargo build` WAGI and run it as a static binary.
 
 Once you are running WAGI, you can test it out with your browser or `curl`. By default,
-WAGI runs on `localhost:3000`:
+WAGI runs on `localhost:3000`: You can override this with `--listen`/`-l`.
 
 ```console
 $ curl http://localhost:3000/hello/world
