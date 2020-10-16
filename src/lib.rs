@@ -20,7 +20,8 @@ const WAGI_VERSION: &str = "CGI/1.1";
 const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 
 pub struct Router {
-    pub config_path: String,
+    //pub config_path: String,
+    module_config: ModuleConfig,
 }
 
 impl Router {
@@ -54,8 +55,9 @@ impl Router {
     }
     /// Load the configuration TOML and find a module that matches
     fn find_wasm_module(&self, uri_path: &str) -> Result<Module, anyhow::Error> {
-        let config = self.load_modules_toml()?;
-        let found = config
+        //let config = self.module_config; //self.load_modules_toml()?;
+        let found = self
+            .module_config
             .module
             .iter()
             .filter(|m| m.match_route(uri_path))
@@ -68,7 +70,8 @@ impl Router {
         Ok(found_mod)
     }
 
-    /// Load the configuration TOML
+    // Load the configuration TOML
+    /*
     fn load_modules_toml(&self) -> Result<ModuleConfig, anyhow::Error> {
         if !Path::new(self.config_path.as_str()).is_file() {
             return Err(anyhow::anyhow!(
@@ -81,12 +84,13 @@ impl Router {
         let modules: ModuleConfig = toml::from_str(data.as_str())?;
         Ok(modules)
     }
+    */
 }
 
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Deserialize)]
-struct ModuleConfig {
-    module: Vec<Module>,
+pub struct ModuleConfig {
+    pub module: Vec<Module>,
 }
 
 /// Description of a single WAGI module
@@ -432,4 +436,18 @@ fn parse_cgi_headers(headers: String) -> HashMap<String, String> {
         map.insert(parts[0].trim().to_owned(), parts[1].trim().to_owned());
     });
     map
+}
+
+/// Load the configuration TOML
+pub fn load_modules_toml(filename: &str) -> Result<ModuleConfig, anyhow::Error> {
+    if !Path::new(filename).is_file() {
+        return Err(anyhow::anyhow!(
+            "no modules configuration file found at {}",
+            filename
+        ));
+    }
+
+    let data = std::fs::read_to_string(filename)?;
+    let modules: ModuleConfig = toml::from_str(data.as_str())?;
+    Ok(modules)
 }
