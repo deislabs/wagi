@@ -1,7 +1,7 @@
 use clap::{App, Arg};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use wagi::Router;
 
 #[tokio::main]
@@ -36,14 +36,18 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .parse()
         .unwrap();
 
-    let config = wagi::load_modules_toml(matches.value_of("config").unwrap_or("modules.toml"))?;
+    let config = Arc::new(Mutex::new(wagi::load_modules_toml(
+        matches.value_of("config").unwrap_or("modules.toml"),
+    )?));
 
-    let cc = config.clone();
-    let mk_svc = make_service_fn(move |_conn| async {
-        Ok::<_, std::convert::Infallible>(service_fn(move |req| {
-            let modules_toml = cc.clone(); //"examples/modules.toml";
-            route(req, &modules_toml.clone())
-        }))
+    let mk_svc = make_service_fn(move |_conn| {
+        let config = config.clone();
+        async move {
+            Ok::<_, std::convert::Infallible>(service_fn(move |req| {
+                let modules_toml = config.lock().unwrap();
+                route(req, modules_toml.clone())
+            }))
+        }
     });
 
     let srv = Server::bind(&addr).serve(mk_svc);
@@ -56,11 +60,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
 async fn route(
     req: Request<Body>,
-    config: &wagi::ModuleConfig,
+    config: wagi::ModuleConfig,
 ) -> Result<Response<Body>, hyper::Error> {
     let router = &Router {
         //config_path: config, //std::env::args().nth(1).unwrap_or("modules.toml".to_owned()),
-        module_config: config.clone(),
+        module_config: config,
     };
 
     router.route(req).await

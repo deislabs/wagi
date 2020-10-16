@@ -21,7 +21,7 @@ const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 
 pub struct Router {
     //pub config_path: String,
-    module_config: ModuleConfig,
+    pub module_config: ModuleConfig,
 }
 
 impl Router {
@@ -69,22 +69,6 @@ impl Router {
         let found_mod = (*found.unwrap()).clone();
         Ok(found_mod)
     }
-
-    // Load the configuration TOML
-    /*
-    fn load_modules_toml(&self) -> Result<ModuleConfig, anyhow::Error> {
-        if !Path::new(self.config_path.as_str()).is_file() {
-            return Err(anyhow::anyhow!(
-                "no modules configuration file found at {}",
-                self.config_path
-            ));
-        }
-
-        let data = std::fs::read_to_string(self.config_path.as_str())?;
-        let modules: ModuleConfig = toml::from_str(data.as_str())?;
-        Ok(modules)
-    }
-    */
 }
 
 /// The configuration for all modules in a WAGI site
