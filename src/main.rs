@@ -36,6 +36,9 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .parse()
         .unwrap();
 
+    // We only parse the config file once, then we share it across all threads on the
+    // service. This is faster than reloading the config on each request, but it does
+    // mean the server has to be restarted to reload config.
     let config = Arc::new(Mutex::new(wagi::load_modules_toml(
         matches.value_of("config").unwrap_or("modules.toml"),
     )?));
@@ -63,7 +66,6 @@ async fn route(
     config: wagi::ModuleConfig,
 ) -> Result<Response<Body>, hyper::Error> {
     let router = &Router {
-        //config_path: config, //std::env::args().nth(1).unwrap_or("modules.toml".to_owned()),
         module_config: config,
     };
 
