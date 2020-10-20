@@ -5,9 +5,9 @@ use hyper::{
     Body, Request, Response, StatusCode,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+use std::{collections::HashMap, net::SocketAddr};
 use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
@@ -29,7 +29,11 @@ impl Router {
     ///
     /// Some routes are built in (like healthz), while others are dynamically
     /// dispatched.
-    pub async fn route(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    pub async fn route(
+        &self,
+        req: Request<Body>,
+        client_addr: SocketAddr,
+    ) -> Result<Response<Body>, hyper::Error> {
         // TODO: THis should be refactored into a Router that loads the TOML file
         // (optionally only at startup) and then routes directly. Right now, each
         // request is causing the TOML file to be read and parsed anew. This is great
@@ -45,7 +49,7 @@ impl Router {
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
             _ => match self.find_wasm_module(uri_path) {
-                Ok(module) => Ok(module.execute(req).await),
+                Ok(module) => Ok(module.execute(req, client_addr).await),
                 Err(e) => {
                     eprintln!("error: {}", e);
                     Ok(not_found())
@@ -101,7 +105,7 @@ pub struct Module {
 
 impl Module {
     /// Execute the WASM module in a WAGI
-    async fn execute(&self, req: Request<Body>) -> Response<Body> {
+    async fn execute(&self, req: Request<Body>, client_addr: SocketAddr) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
         let data = hyper::body::to_bytes(body)
@@ -109,7 +113,7 @@ impl Module {
             .unwrap_or_default()
             .to_vec();
 
-        match self.run_wasm(&parts, data) {
+        match self.run_wasm(&parts, data, client_addr) {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("error running WASM module: {}", e);
@@ -135,7 +139,12 @@ impl Module {
             .unwrap_or_else(|| self.route.as_str() == fragment)
     }
 
-    fn build_headers(&self, req: &Parts, content_length: usize) -> HashMap<String, String> {
+    fn build_headers(
+        &self,
+        req: &Parts,
+        content_length: usize,
+        client_addr: SocketAddr,
+    ) -> HashMap<String, String> {
         // Note that we put these first so that there is no chance that they overwrite
         // the built-in vars. IMPORTANT: This is also why some values have empty strings
         // deliberately set (as opposed to omiting the pair altogether).
@@ -207,8 +216,9 @@ impl Module {
             "QUERY_STRING".to_owned(),
             req.uri.query().unwrap_or("").to_owned(),
         );
-        headers.insert("REMOTE_ADDR".to_owned(), "127.0.0.1".to_owned()); // TODO: Where can we get the client IP?
-        headers.insert("REMOTE_HOST".to_owned(), "localhost".to_owned()); // TODO: Where can we get the client host?
+
+        headers.insert("REMOTE_ADDR".to_owned(), client_addr.ip().to_string());
+        headers.insert("REMOTE_HOST".to_owned(), client_addr.ip().to_string()); // The server MAY substitute it with REMOTE_ADDR
         headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Parse this out of uri.authority?
         headers.insert("REQUEST_METHOD".to_owned(), req.method.to_string());
         headers.insert("SCRIPT_NAME".to_owned(), self.module.to_owned());
@@ -265,12 +275,17 @@ impl Module {
     // Note that on occasion, this module COULD return an Ok() with a response body that
     // contains an HTTP error. This can occur, for example, if the WASM module sets
     // the status code on its own.
-    fn run_wasm(&self, req: &Parts, body: Vec<u8>) -> Result<Response<Body>, anyhow::Error> {
+    fn run_wasm(
+        &self,
+        req: &Parts,
+        body: Vec<u8>,
+        client_addr: SocketAddr,
+    ) -> Result<Response<Body>, anyhow::Error> {
         let store = Store::default();
         let mut linker = Linker::new(&store);
         let uri_path = req.uri.path();
 
-        let headers = self.build_headers(req, body.len());
+        let headers = self.build_headers(req, body.len(), client_addr);
 
         let stdin = ReadPipe::from(body);
 
