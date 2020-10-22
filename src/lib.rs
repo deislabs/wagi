@@ -20,7 +20,6 @@ const WAGI_VERSION: &str = "CGI/1.1";
 const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 
 pub struct Router {
-    //pub config_path: String,
     pub module_config: ModuleConfig,
 }
 
@@ -34,11 +33,7 @@ impl Router {
         req: Request<Body>,
         client_addr: SocketAddr,
     ) -> Result<Response<Body>, hyper::Error> {
-        // TODO: THis should be refactored into a Router that loads the TOML file
-        // (optionally only at startup) and then routes directly. Right now, each
-        // request is causing the TOML file to be read and parsed anew. This is great
-        // for debugging (since we can edit the TOML without restarting), but it does
-        // incur a performance penalty.
+        // TODO: Improve the loading. See issue #3
         //
         // Additionally, we could implement an LRU to cache WASM modules. This would
         // greatly reduce the amount of load time per request. But this would come with two
@@ -59,7 +54,6 @@ impl Router {
     }
     /// Load the configuration TOML and find a module that matches
     fn find_wasm_module(&self, uri_path: &str) -> Result<Module, anyhow::Error> {
-        //let config = self.module_config; //self.load_modules_toml()?;
         let found = self
             .module_config
             .module
