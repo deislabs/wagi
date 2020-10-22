@@ -1,7 +1,13 @@
 use clap::{App, Arg};
-use hyper::service::{make_service_fn, service_fn};
+use hyper::{
+    server::conn::AddrStream,
+    service::{make_service_fn, service_fn},
+};
 use hyper::{Body, Request, Response, Server};
-use std::sync::{Arc, Mutex};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 use wagi::Router;
 
 #[tokio::main]
@@ -43,12 +49,14 @@ pub async fn main() -> Result<(), anyhow::Error> {
         matches.value_of("config").unwrap_or("modules.toml"),
     )?));
 
-    let mk_svc = make_service_fn(move |_conn| {
+    let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let config = config.clone();
+        let addr = conn.remote_addr();
+
         async move {
             Ok::<_, std::convert::Infallible>(service_fn(move |req| {
                 let modules_toml = config.lock().unwrap();
-                route(req, modules_toml.clone())
+                route(req, modules_toml.clone(), addr.clone())
             }))
         }
     });
@@ -64,10 +72,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
 async fn route(
     req: Request<Body>,
     config: wagi::ModuleConfig,
+    client_addr: SocketAddr,
 ) -> Result<Response<Body>, hyper::Error> {
     let router = &Router {
         module_config: config,
     };
 
-    router.route(req).await
+    router.route(req, client_addr).await
 }
