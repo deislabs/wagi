@@ -197,3 +197,37 @@ For more, check out the AssemblyScript WASI [docs](https://wasmbyexample.dev/exa
 It should be noted that while the daemon (the WAGI server) runs constantly, both the `modules.toml` and the `.wasm` file are loaded for each request, much as they were for CGI.
 In the future, the WAGI server may cache the WASM modules to speed loading.
 But in the near term, we are less concerned with performance and more concerned with debugging.
+
+## Contributing
+
+We hang out in the [#krustlet](https://kubernetes.slack.com/messages/krustlet) channel of the [Kubernetes Slack](https://kubernetes.slack.com).
+If WAGI gains popularity, we'll create a dedicated channel (probably on a more fitting Slack server).
+
+WAGI is experimental, and we welcome contributions to improve the project.
+In fact, we're delighted that you're even reading this section of the docs!
+
+For bug fixes:
+
+- Please, pretty please, file issues for anything you find. This is a new project, and we are SURE there are some bugs to work out.
+- If you want to write some code, feel free to open PRs to fix issues. You may want to drop a comment on the issue to let us know you're working on it (so we don't duplicate effort).
+
+For refactors and tests:
+
+- We welcome any changes to improve performance, clean up code, add tests, etc.
+- For style/idiom guidelines, we follow the same conventions as [Krustlet](https://github.com/deislabs/krustlet)
+
+For features:
+
+- If there is already an issue for that feature, please let us know in the comments if you plan on working on it.
+- If you have a new idea, file an issue describing it, and we will happily discuss it.
+
+Since this is an experimental repository, we might be a little slow to answer.
+
+## Code of Conduct
+
+This project has adopted the [Microsoft Open Source Code of
+Conduct](https://opensource.microsoft.com/codeofconduct/).
+
+For more information see the [Code of Conduct
+FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact
+[opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
