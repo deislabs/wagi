@@ -1,4 +1,4 @@
-# WAGI: Web Assembly Gateway Interface
+# WAGI: WebAssembly Gateway Interface
 
 _WAGI is the easiest way to get started doing cloud-side WASM web apps._
 
