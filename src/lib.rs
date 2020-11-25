@@ -56,7 +56,7 @@ impl Router {
     fn find_wasm_module(&self, uri_path: &str) -> Result<Module, anyhow::Error> {
         let found = self
             .module_config
-            .module
+            .modules
             .iter()
             .filter(|m| m.match_route(uri_path))
             .last();
@@ -72,7 +72,7 @@ impl Router {
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Deserialize)]
 pub struct ModuleConfig {
-    pub module: Vec<Module>,
+    pub modules: Vec<Module>,
 }
 
 /// Description of a single WAGI module
