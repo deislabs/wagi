@@ -1,9 +1,9 @@
-[[module]]
+[[modules]]
 # Example executing a Web Assembly Text file
 route = "/"
 module = "examples/hello.wat"
 
-[[module]]
+[[modules]]
 # Example running a WASM file.
 route = "/hello/..."
 module = "examples/hello.wasm"
