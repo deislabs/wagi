@@ -107,15 +107,15 @@ The WAGI server uses a `modules.toml` file to point to the WAGI modules that can
 Here is an example `modules.toml`:
 
 ```toml
-[[module]]
+[[modules]]
 route = "/"
 module = "/absolute/path/to/root.wasm"
 
-[[module]]
+[[modules]]
 route = "/foo"
 module = "/path/to/foo.wasm"
 
-[[module]]
+[[modules]]
 # The "/..." suffix means this will match /bar and its subpaths, like /bar/a/b/c
 route = "/bar/..."
 module = "/path/to/bar.wasm"
@@ -124,7 +124,7 @@ volumes = {"/path/inside/wasm": "/path/on/host"}
 # You can also put static environment variables in the TOML file
 environment.TEST_NAME = "test value" 
 
-[[module]]
+[[modules]]
 # You can also execute a WAT file directly
 route = "/hello"
 module = "/path/to/hello.wat"
@@ -133,7 +133,7 @@ module = "/path/to/hello.wat"
 
 - Top-level fields
   - Currently none
-- The `[[module]]` list: Each module starts with a `[[module]]` header. Inside of a module, the following fields are available:
+- The `[[modules]]` list: Each module starts with a `[[modules]]` header. Inside of a module, the following fields are available:
   - `route`: The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
   - `module`: The absolute path to the module on the file system
   - `environment`: A list of string/string environment variable pairs.
