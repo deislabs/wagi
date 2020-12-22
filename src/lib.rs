@@ -72,6 +72,8 @@ impl Router {
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Deserialize)]
 pub struct ModuleConfig {
+    /// this line de-serializes [[module]] as modules
+    #[serde(rename = "module")]
     pub modules: Vec<Module>,
 }
 
