@@ -1,0 +1,7 @@
+[cache]
+enabled = true
+directory = "<absolute-path-to-a-cache-directory>"
+# optional
+# see more details at https://docs.wasmtime.dev/cli-cache.html
+cleanup-interval = "1d"
+files-total-size-soft-limit = "10Gi"
