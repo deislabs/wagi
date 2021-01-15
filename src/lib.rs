@@ -5,13 +5,12 @@ use hyper::{
     Body, Request, Response, StatusCode,
 };
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::{collections::HashMap, net::SocketAddr};
+use std::{path::Path, time::Instant};
 use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
-
 /// This sets the version of CGI that WAGI adheres to.
 ///
 /// At the point at which WAGI diverges from CGI, this value will be replaced with
@@ -21,6 +20,7 @@ const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 
 pub struct Router {
     pub module_config: ModuleConfig,
+    pub cache_config_path: String,
 }
 
 impl Router {
@@ -44,7 +44,9 @@ impl Router {
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
             _ => match self.find_wasm_module(uri_path) {
-                Ok(module) => Ok(module.execute(req, client_addr).await),
+                Ok(module) => Ok(module
+                    .execute(req, client_addr, self.cache_config_path.clone())
+                    .await),
                 Err(e) => {
                     eprintln!("error: {}", e);
                     Ok(not_found())
@@ -101,7 +103,12 @@ pub struct Module {
 
 impl Module {
     /// Execute the WASM module in a WAGI
-    async fn execute(&self, req: Request<Body>, client_addr: SocketAddr) -> Response<Body> {
+    async fn execute(
+        &self,
+        req: Request<Body>,
+        client_addr: SocketAddr,
+        cache_config_path: String,
+    ) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
         let data = hyper::body::to_bytes(body)
@@ -109,7 +116,7 @@ impl Module {
             .unwrap_or_default()
             .to_vec();
 
-        match self.run_wasm(&parts, data, client_addr) {
+        match self.run_wasm(&parts, data, client_addr, cache_config_path) {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("error running WASM module: {}", e);
@@ -276,8 +283,19 @@ impl Module {
         req: &Parts,
         body: Vec<u8>,
         client_addr: SocketAddr,
+        cache_config_path: String,
     ) -> Result<Response<Body>, anyhow::Error> {
-        let store = Store::default();
+        let start_time = Instant::now();
+        let store = match std::fs::canonicalize(cache_config_path) {
+            Ok(p) => {
+                let mut engine_config = Config::default();
+                engine_config.cache_config_load(p)?;
+                let engine = Engine::new(&engine_config);
+                Store::new(&engine)
+            }
+            Err(_) => Store::default(),
+        };
+
         let mut linker = Linker::new(&store);
         let uri_path = req.uri.path();
 
@@ -325,6 +343,13 @@ impl Module {
 
         let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
         let instance = linker.instantiate(&module)?;
+
+        let duration = start_time.elapsed();
+        println!(
+            "instantiation time for module {}: {:#?}",
+            self.module.as_str(),
+            duration
+        );
 
         // Typically, the function we execute for WASI is "_start".
         let start = instance.get_func("_start").unwrap().get0::<()>()?;

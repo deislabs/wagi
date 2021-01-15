@@ -90,6 +90,23 @@ hello world
 * Closing connection 0
 ```
 
+To enable the [Wasmtime cache](https://docs.wasmtime.dev/cli-cache.html), which caches the result of the compilation
+of a WebAssembly module, resulting in improved instantiation times for modules, you must create a `cache.toml` file
+with the following structure, and point the WAGI binary to it:
+
+```toml
+[cache]
+enabled = true
+directory = "<absolute-path-to-a-cache-directory>"
+# optional
+# see more details at https://docs.wasmtime.dev/cli-cache.html
+cleanup-interval = "1d"
+files-total-size-soft-limit = "10Gi"
+```
+
+To start WAGI with caching enabled, `cargo run -- --config path/to/modules.toml --cache path/to/cache.toml`.
+The WAGI CLI now prints the module instantiation time, so you can choose whether caching helps for your modules.
+
 ### Examples and Demos
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
@@ -129,6 +146,7 @@ environment.TEST_NAME = "test value"
 route = "/hello"
 module = "/path/to/hello.wat"
 ```
+
 ### TOML fields
 
 - Top-level fields
@@ -212,13 +230,13 @@ X_FULL_URL="http://localhost:3000/envwasm"
 - We use UTF-8 instead of ASCII.
 - WAGIs are not handled as "processes", they are executed internally with multi-threading.
 - WAGIs do _not_ have unrestricted access to the underlying OS or filesystem.
-    * If you want to give a WAGI access to a portion of the filesystem, you must configure the WAGI's `wagi.toml` file
-    * WAGIs cannot make outbound network connections
-    * Some CGI env vars are rewritten to remove local FS information
+  * If you want to give a WAGI access to a portion of the filesystem, you must configure the WAGI's `wagi.toml` file
+  * WAGIs cannot make outbound network connections
+  * Some CGI env vars are rewritten to remove local FS information
 - WAGIs have a few extra CGI environment variables, prefixed with `X_`.
 - A `location` header from a WAGI must return a full URL, not a path. (CGI supports both)
-    * This will set the status code to `302 Found` (per 6.2.4 of the CGI specification)
-    * If `status` is returned AFTER `location`, it will override the status code
+  * This will set the status code to `302 Found` (per 6.2.4 of the CGI specification)
+  * If `status` is returned AFTER `location`, it will override the status code
 - WAGI does NOT support NPH (Non-Parsed Header) mode
 - The value of `args` is NOT escaped for borne-style shells (See section 7.2 of CGI spec)
 

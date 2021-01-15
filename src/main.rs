@@ -25,6 +25,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("cache")
+                .long("cache")
+                .value_name("CACHE_TOML")
+                .help("the path to the cache.toml configuration file")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("listen")
                 .short("l")
                 .long("listen")
@@ -34,7 +41,6 @@ pub async fn main() -> Result<(), anyhow::Error> {
         )
         .get_matches();
 
-    //let config = matches.value_of("config").unwrap_or("modules.toml");
     println!("=> Starting server");
     let addr = matches
         .value_of("listen")
@@ -49,14 +55,22 @@ pub async fn main() -> Result<(), anyhow::Error> {
         matches.value_of("config").unwrap_or("modules.toml"),
     )?));
 
+    // We have to pass a cache file configuration path to a Wasmtime engine.
+    let cache_config_path = String::from(matches.value_of("cache").unwrap_or("cache.toml"));
+
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let config = config.clone();
         let addr = conn.remote_addr();
-
+        let cache_config_path = cache_config_path.clone();
         async move {
             Ok::<_, std::convert::Infallible>(service_fn(move |req| {
                 let modules_toml = config.lock().unwrap();
-                route(req, modules_toml.clone(), addr.clone())
+                route(
+                    req,
+                    modules_toml.clone(),
+                    cache_config_path.clone(),
+                    addr.clone(),
+                )
             }))
         }
     });
@@ -72,10 +86,12 @@ pub async fn main() -> Result<(), anyhow::Error> {
 async fn route(
     req: Request<Body>,
     config: wagi::ModuleConfig,
+    cache_config_path: String,
     client_addr: SocketAddr,
 ) -> Result<Response<Body>, hyper::Error> {
     let router = &Router {
         module_config: config,
+        cache_config_path,
     };
 
     router.route(req, client_addr).await
