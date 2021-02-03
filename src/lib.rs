@@ -99,6 +99,9 @@ pub struct Module {
     pub volumes: Option<HashMap<String, String>>,
     // Set additional environment variables
     pub environment: Option<HashMap<String, String>>,
+    // The name of the function that is the entrypoint for executing the module.
+    // The default is `_start`.
+    pub entrypoint: Option<String>,
 }
 
 impl Module {
@@ -352,7 +355,18 @@ impl Module {
         );
 
         // Typically, the function we execute for WASI is "_start".
-        let start = instance.get_func("_start").unwrap().get0::<()>()?;
+        let entrypoint = self.entrypoint.clone().unwrap_or("_start".to_owned());
+
+        let start = instance
+            .get_func(entrypoint.as_str())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No such function '{}' in {}",
+                    entrypoint.clone(),
+                    self.module
+                )
+            })?
+            .get0::<()>()?;
         start()?;
 
         // Okay, once we get here, all the information we need to send back in the response

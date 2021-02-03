@@ -145,6 +145,20 @@ environment.TEST_NAME = "test value"
 # You can also execute a WAT file directly
 route = "/hello"
 module = "/path/to/hello.wat"
+
+
+# You can declare custom handler methods as 'entrypoints' to the module.
+# Here we have two module entries that use the same module, but call into
+# different entrypoints.
+[[module]]
+route = "/entrypoint/hello"
+module = "/path/to/bar.wasm"
+entrypoint = "hello"  # Executes the `hello()` function in the module (instead of `_start`)
+
+[[module]]
+route = "/entrypoint/goodbye"
+module = "/path/to/bar.wasm"
+entrypoint = "goodbye  # Executes the `goodbye()` function in the module (instead of `_start`)
 ```
 
 ### TOML fields
@@ -156,6 +170,7 @@ module = "/path/to/hello.wat"
   - `module`: The absolute path to the module on the file system
   - `environment`: A list of string/string environment variable pairs.
   - `repository`: RESERVED
+  - `entrypoint` (default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
 
 ## Writing WAGI Modules
 
