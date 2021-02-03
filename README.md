@@ -151,12 +151,12 @@ module = "/path/to/hello.wat"
 # Here we have two module entries that use the same module, but call into
 # different entrypoints.
 [[module]]
-route = "/entrypont/hello"
+route = "/entrypoint/hello"
 module = "/path/to/bar.wasm"
 entrypoint = "hello"  # Executes the `hello()` function in the module (instead of `_start`)
 
 [[module]]
-route = "/entrypont/goodbye"
+route = "/entrypoint/goodbye"
 module = "/path/to/bar.wasm"
 entrypoint = "goodbye  # Executes the `goodbye()` function in the module (instead of `_start`)
 ```
