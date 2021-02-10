@@ -48,15 +48,16 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .parse()
         .unwrap();
 
+    // We have to pass a cache file configuration path to a Wasmtime engine.
+    let cache_config_path = String::from(matches.value_of("cache").unwrap_or("cache.toml"));
+
     // We only parse the config file once, then we share it across all threads on the
     // service. This is faster than reloading the config on each request, but it does
     // mean the server has to be restarted to reload config.
     let config = Arc::new(Mutex::new(wagi::load_modules_toml(
         matches.value_of("config").unwrap_or("modules.toml"),
+        cache_config_path.clone(),
     )?));
-
-    // We have to pass a cache file configuration path to a Wasmtime engine.
-    let cache_config_path = String::from(matches.value_of("cache").unwrap_or("cache.toml"));
 
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let config = config.clone();

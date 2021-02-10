@@ -212,7 +212,7 @@ Console.log("hello world");
 Note that the AssemblyScript compiler generates the function body wrapper for you.
 For more, check out the AssemblyScript WASI [docs](https://wasmbyexample.dev/examples/wasi-hello-world/wasi-hello-world.assemblyscript.en-us.html).
 
-## The Enviornment Variables
+## The Environment Variables
 
 These are the environment variables set on WAGI requests:
 
@@ -239,6 +239,89 @@ GATEWAY_INTERFACE="CGI/1.1"
 REMOTE_USER=""
 X_FULL_URL="http://localhost:3000/envwasm"
 ```
+
+### Advanced: Declaring (Sub-)Routes in the Module
+
+Some modules may be able to handle more than one URI request. For example, we could imagine
+a module that can answer both a `/hello` route and a `/goodbye` route.
+
+WAGI provides a method for a module to _declare its own subroutes_. By implementing a
+callable `_routes()` function on your module, you can create a module that will map
+routes to custom handler functions.
+
+Here is an example in Rust:
+
+```rust
+fn main() {
+    println!("Content-Type: text/plain\n\n Hello from main()");
+}
+
+// Use no_mangle so we can call this from WAGI or other external tools.
+#[no_mangle]
+/// A provider function that can be called directly
+pub fn hello() {
+    println!("Content-Type: text/plain\n\n Hello")
+}
+
+#[no_mangle]
+/// Another provider function that can be called directly.
+pub fn goodbye() {
+    println!("Content-Type: text/plain\n\n Goodbye")
+}
+
+// This maps a few routes:
+// '/hello' will result in the `hello()` function being called.
+// '/goodbye' and all subpaths of '/goodbye' will call the `goodbye()` function.
+//
+// Note that when compiled, the `main` function is named `_start()`. So if you want
+// to map to that function, it is `/main _start`.
+#[no_mangle]
+pub fn _routes() {
+    println!("/hello hello");
+    println!("/goodbye/... goodbye");
+    println!("/main _start");
+}
+```
+([Source](https://github.com/technosophos/hello-wagi))
+
+Here's the `modules.toml` for this feature:
+
+```toml
+[[module]]
+route = "/example"
+module = "/PATH/TO/hello_wagi.wasm"
+```
+
+When the `_routes()` function is called, the route in `modules.toml` will be prepended to each route printed by `_routes`.
+So the following routes will be registered:
+
+- `/example`, which will execute `main()`
+- `/example/hello`, which will execute `hello()`
+- `/example/goodbye/...`, which will execute `goodbye()`
+- `/example/main`, which will also execute `main()` (because `_start` is automatically mapped to `main()`)
+
+When it comes to handling wildcards (`/...`), the precedence rule for this feature is that
+the _last_ match is the one that will be executed.
+
+Say your module's route table looks like this:
+
+```
+/one/... one
+/one/two/... two
+/one/two/three/... three
+```
+
+If a request is processed for `/example/one/two/three/four`, then function `three` will be called.
+But if we reversed the order above:
+
+```
+/one/two/three/... three
+/one/two/... two
+/one/... one
+```
+
+Then a request for `/example/one/two/three/four` would match `/one/...` last, and so would execute
+the `one()` handler function.
 
 ## Differences from CGI 1.1
 
