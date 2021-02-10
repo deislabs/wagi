@@ -23,7 +23,6 @@ const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
 struct RouteEntry {
     path: String,
     entrypoint: String,
-    match_subpath: bool,
 }
 
 pub struct Router {
@@ -51,7 +50,7 @@ impl Router {
         let uri_path = req.uri().path();
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.find_wasm_module(uri_path) {
+            _ => match self.module_config.handler_for_path(uri_path) {
                 Ok(h) => Ok(h
                     .module
                     .execute(
@@ -68,10 +67,6 @@ impl Router {
             },
         }
     }
-    /// Load the configuration TOML and find a module that matches
-    fn find_wasm_module(&self, uri_path: &str) -> Result<Handler, anyhow::Error> {
-        self.module_config.handler_for_path(uri_path)
-    }
 }
 
 /// The configuration for all modules in a WAGI site
@@ -81,7 +76,9 @@ pub struct ModuleConfig {
     #[serde(rename = "module")]
     pub modules: Vec<Module>,
 
-    /// Lazy cache of routes.
+    /// Cache of routes.
+    ///
+    /// This is built by calling `build_registry`.
     #[serde(skip)]
     route_cache: Option<Vec<Handler>>,
 }
@@ -108,6 +105,11 @@ impl ModuleConfig {
             }
         });
 
+        if !failed_modules.is_empty() {
+            let msg = failed_modules.join(", ");
+            return Err(anyhow::anyhow!("Not all routes could be built: {}", msg));
+        }
+
         self.route_cache = Some(routes);
         Ok(())
     }
@@ -115,7 +117,7 @@ impl ModuleConfig {
     fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
-                // The important detail here is that strip_suffic returns None if the suffix
+                // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
                 if r.path
                     .strip_suffix("/...")
@@ -202,24 +204,6 @@ impl Module {
             }
         }
     }
-    /// Check whether the given fragment matches the route in this module.
-    ///
-    /// A route matches if
-    ///   - the module route is a literal path, and the fragment is an exact match
-    ///   - the module route ends with '/...' and the portion before that is an exact
-    ///     match with the start of the fragment (e.g. /foo/... matches /foo/bar/foo)
-    ///
-    /// Note that the route /foo/... matches the URI path /foo.
-    //
-    // This will return the name of the entrypointn to call if the match is found, or an
-    // error if no matching route is found.
-    /*fn match_route(
-        &mut self,
-        fragment: &str,
-        cache_config_path: String,
-    ) -> Result<String, anyhow::Error> {
-        Err(anyhow::anyhow!("No match found"))
-    }*/
 
     /// Examine the given module to see if it has any routes.
     ///
@@ -233,11 +217,9 @@ impl Module {
             .unwrap_or(self.route.as_str());
         let mut routes = vec![];
 
-        // TODO: can we get rid of match_subpath?
         routes.push(RouteEntry {
             path: self.route.to_owned(), // We don't use prefix because prefix has been normalized.
             entrypoint: self.entrypoint.clone().unwrap_or("_start".to_string()),
-            match_subpath: self.route.starts_with("/..."),
         });
 
         let store = match std::fs::canonicalize(cache_config_path) {
@@ -295,7 +277,6 @@ impl Module {
                 routes.push(RouteEntry {
                     path: format!("{}{}", prefix, key),
                     entrypoint: val,
-                    match_subpath: key.starts_with("/..."),
                 });
             }
         });
