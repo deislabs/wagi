@@ -5,6 +5,7 @@ use hyper::{
     Body, Request, Response, StatusCode,
 };
 use serde::Deserialize;
+use std::io::BufRead;
 use std::sync::{Arc, RwLock};
 use std::{collections::HashMap, net::SocketAddr};
 use std::{path::Path, time::Instant};
@@ -17,6 +18,12 @@ use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 /// WAGI/1.0
 const WAGI_VERSION: &str = "CGI/1.1";
 const SERVER_SOFTWARE_VERSION: &str = "WAGI/1";
+
+#[derive(Clone)]
+struct RouteEntry {
+    path: String,
+    entrypoint: String,
+}
 
 pub struct Router {
     pub module_config: ModuleConfig,
@@ -43,9 +50,15 @@ impl Router {
         let uri_path = req.uri().path();
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.find_wasm_module(uri_path) {
-                Ok(module) => Ok(module
-                    .execute(req, client_addr, self.cache_config_path.clone())
+            _ => match self.module_config.handler_for_path(uri_path) {
+                Ok(h) => Ok(h
+                    .module
+                    .execute(
+                        h.entrypoint.as_str(),
+                        req,
+                        client_addr,
+                        self.cache_config_path.clone(),
+                    )
                     .await),
                 Err(e) => {
                     eprintln!("error: {}", e);
@@ -53,21 +66,6 @@ impl Router {
                 }
             },
         }
-    }
-    /// Load the configuration TOML and find a module that matches
-    fn find_wasm_module(&self, uri_path: &str) -> Result<Module, anyhow::Error> {
-        let found = self
-            .module_config
-            .modules
-            .iter()
-            .filter(|m| m.match_route(uri_path))
-            .last();
-        if found.is_none() {
-            return Err(anyhow::anyhow!("module not found: {}", uri_path));
-        }
-
-        let found_mod = (*found.unwrap()).clone();
-        Ok(found_mod)
     }
 }
 
@@ -77,10 +75,85 @@ pub struct ModuleConfig {
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]
     pub modules: Vec<Module>,
+
+    /// Cache of routes.
+    ///
+    /// This is built by calling `build_registry`.
+    #[serde(skip)]
+    route_cache: Option<Vec<Handler>>,
+}
+
+impl ModuleConfig {
+    fn build_registry(&mut self, cache_config_path: String) -> anyhow::Result<()> {
+        let mut routes = vec![];
+
+        let mut failed_modules: Vec<String> = Vec::new();
+
+        self.modules.iter().for_each(|m| {
+            match m.load_routes(cache_config_path.clone()) {
+                Err(e) => {
+                    // FIXME: I think we could do something better here.
+                    failed_modules.push(e.to_string())
+                }
+                Ok(subroutes) => subroutes.iter().for_each(|entry| {
+                    routes.push(Handler {
+                        path: entry.path.clone(),
+                        entrypoint: entry.entrypoint.clone(),
+                        module: m.clone(),
+                    })
+                }),
+            }
+        });
+
+        if !failed_modules.is_empty() {
+            let msg = failed_modules.join(", ");
+            return Err(anyhow::anyhow!("Not all routes could be built: {}", msg));
+        }
+
+        self.route_cache = Some(routes);
+        Ok(())
+    }
+
+    fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
+        if let Some(routes) = self.route_cache.as_ref() {
+            for r in routes {
+                // The important detail here is that strip_suffix returns None if the suffix
+                // does not exist. So ONLY paths that end with /... are substring-matched.
+                if r.path
+                    .strip_suffix("/...")
+                    .map(|i| {
+                        println!("Comparing {} to {}", uri_fragment.clone(), r.path.as_str());
+                        uri_fragment.starts_with(i)
+                    })
+                    .unwrap_or_else(|| r.path == uri_fragment)
+                {
+                    return Ok(r.clone());
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("No handler for {}", uri_fragment))
+    }
+}
+
+/// A handler contains all of the information necessary to execute the correct function on a module.
+#[derive(Clone, Debug)]
+pub struct Handler {
+    /// A reference to the module for this handler.
+    module: Module,
+    /// The function that should be called to handle this path.
+    entrypoint: String,
+    /// The path pattern that this handler answers.
+    ///
+    // For example, an exact path `/foo/bar` may be returned, as may a wildcard path such as `/foo/...`
+    //
+    // This path is the _fully constructed_ path. That is, if a module config declares its path as `/base`,
+    // and the module registers the path `/foo/...`, the value of this would be `/base/foo/...`.
+    path: String,
 }
 
 /// Description of a single WAGI module
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Module {
     /// The route, begining with a leading slash.
     ///
@@ -93,14 +166,14 @@ pub struct Module {
     /// with the read bit set.
     pub module: String,
     /// Directories on the local filesystem that can be opened by this module
-    // The key (left value) is the name of the directory INSIDE the WASM. The value is
-    // the location OUTSIDE the WASM. Two inside locations can map to the same outside
-    // location.
+    /// The key (left value) is the name of the directory INSIDE the WASM. The value is
+    /// the location OUTSIDE the WASM. Two inside locations can map to the same outside
+    /// location.
     pub volumes: Option<HashMap<String, String>>,
-    // Set additional environment variables
+    /// Set additional environment variables
     pub environment: Option<HashMap<String, String>>,
-    // The name of the function that is the entrypoint for executing the module.
-    // The default is `_start`.
+    /// The name of the function that is the entrypoint for executing the module.
+    /// The default is `_start`.
     pub entrypoint: Option<String>,
 }
 
@@ -108,6 +181,7 @@ impl Module {
     /// Execute the WASM module in a WAGI
     async fn execute(
         &self,
+        entrypoint: &str,
         req: Request<Body>,
         client_addr: SocketAddr,
         cache_config_path: String,
@@ -119,7 +193,7 @@ impl Module {
             .unwrap_or_default()
             .to_vec();
 
-        match self.run_wasm(&parts, data, client_addr, cache_config_path) {
+        match self.run_wasm(entrypoint, &parts, data, client_addr, cache_config_path) {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("error running WASM module: {}", e);
@@ -130,19 +204,92 @@ impl Module {
             }
         }
     }
-    /// Check whether the given fragment matches the route in this module.
+
+    /// Examine the given module to see if it has any routes.
     ///
-    /// A route matches if
-    ///   - the module route is a literal path, and the fragment is an exact match
-    ///   - the module route ends with '/...' and the portion before that is an exact
-    ///     match with the start of the fragment (e.g. /foo/... matches /foo/bar/foo)
-    ///
-    /// Note that the route /foo/... matches the URI path /foo.
-    fn match_route(&self, fragment: &str) -> bool {
-        self.route
+    /// If it has any routes, add them to the vector and return it.
+    fn load_routes(&self, cache_config_path: String) -> Result<Vec<RouteEntry>, anyhow::Error> {
+        let start_time = Instant::now();
+
+        let prefix = self
+            .route
             .strip_suffix("/...")
-            .map(|i| fragment.starts_with(i))
-            .unwrap_or_else(|| self.route.as_str() == fragment)
+            .unwrap_or(self.route.as_str());
+        let mut routes = vec![];
+
+        routes.push(RouteEntry {
+            path: self.route.to_owned(), // We don't use prefix because prefix has been normalized.
+            entrypoint: self.entrypoint.clone().unwrap_or("_start".to_string()),
+        });
+
+        let store = match std::fs::canonicalize(cache_config_path) {
+            Ok(p) => {
+                let mut engine_config = Config::default();
+                engine_config.cache_config_load(p)?;
+                let engine = Engine::new(&engine_config);
+                Store::new(&engine)
+            }
+            Err(_) => Store::default(),
+        };
+        let mut linker = Linker::new(&store);
+        let stdout_buf: Vec<u8> = vec![];
+        let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
+        let stdout = WritePipe::from_shared(stdout_mutex.clone());
+        let mut builder = WasiCtxBuilder::new();
+        builder
+            .inherit_stderr() // STDERR goes to the console of the server
+            .stdout(stdout);
+
+        let ctx = builder.build()?;
+        let wasi = Wasi::new(&store, ctx);
+        wasi.add_to_linker(&mut linker)?;
+
+        let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
+        let instance = linker.instantiate(&module)?;
+
+        let duration = start_time.elapsed();
+        println!(
+            "(load_routes) instantiation time for module {}: {:#?}",
+            self.module.as_str(),
+            duration
+        );
+
+        match instance.get_func("_routes") {
+            Some(func) => {
+                let start = func.get0::<()>()?;
+                start()?;
+            }
+            None => return Ok(routes),
+        }
+
+        let out = stdout_mutex.read().unwrap();
+        out.lines().for_each(|line_result| {
+            if let Ok(line) = line_result {
+                // Split line into parts
+                let parts: Vec<&str> = line.trim().split_whitespace().collect();
+
+                if parts.len() == 0 {
+                    return;
+                }
+
+                let key = parts.get(0).unwrap_or(&"/").to_string();
+                let val = parts.get(1).unwrap_or(&"_start").to_string();
+                routes.push(RouteEntry {
+                    path: format!("{}{}", prefix, key),
+                    entrypoint: val,
+                });
+            }
+        });
+        // We reverse the routes so that the top-level routes are evaluated last.
+        // This gives a predictable order for traversing routes. Because the base path
+        // is the last one evaluated, if the base path is /..., it will match when no
+        // other more specific route lasts.
+        //
+        // Additionally, when Wasm authors create their _routes() callback, they can
+        // organize their outputs to match according to their own precedence merely by
+        // putting the higher precedence routes at the end of the output.
+        routes.reverse();
+        Ok(routes)
     }
 
     fn build_headers(
@@ -283,13 +430,14 @@ impl Module {
     // the status code on its own.
     fn run_wasm(
         &self,
+        entrypoint: &str,
         req: &Parts,
         body: Vec<u8>,
         client_addr: SocketAddr,
         cache_config_path: String,
     ) -> Result<Response<Body>, anyhow::Error> {
         let start_time = Instant::now();
-        let store = match std::fs::canonicalize(cache_config_path) {
+        let store = match std::fs::canonicalize(cache_config_path.clone()) {
             Ok(p) => {
                 let mut engine_config = Config::default();
                 engine_config.cache_config_load(p)?;
@@ -354,11 +502,9 @@ impl Module {
             duration
         );
 
-        // Typically, the function we execute for WASI is "_start".
-        let entrypoint = self.entrypoint.clone().unwrap_or("_start".to_owned());
-
+        // This shouldn't error out, because we already know there is a match.
         let start = instance
-            .get_func(entrypoint.as_str())
+            .get_func(entrypoint)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "No such function '{}' in {}",
@@ -473,7 +619,10 @@ fn parse_cgi_headers(headers: String) -> HashMap<String, String> {
 }
 
 /// Load the configuration TOML
-pub fn load_modules_toml(filename: &str) -> Result<ModuleConfig, anyhow::Error> {
+pub fn load_modules_toml(
+    filename: &str,
+    cache_config_path: String,
+) -> Result<ModuleConfig, anyhow::Error> {
     if !Path::new(filename).is_file() {
         return Err(anyhow::anyhow!(
             "no modules configuration file found at {}",
@@ -482,6 +631,111 @@ pub fn load_modules_toml(filename: &str) -> Result<ModuleConfig, anyhow::Error> 
     }
 
     let data = std::fs::read_to_string(filename)?;
-    let modules: ModuleConfig = toml::from_str(data.as_str())?;
+    let mut modules: ModuleConfig = toml::from_str(data.as_str())?;
+
+    modules.build_registry(cache_config_path)?;
+
     Ok(modules)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::ModuleConfig;
+
+    use super::Module;
+    use std::io::Write;
+
+    const ROUTES_WAT: &str = r#"
+    (module
+        (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+        (memory 1)
+        (export "memory" (memory 0))
+
+        (data (i32.const 8) "/one one\n/two/... two\n")
+
+        (func $main (export "_routes")
+            (i32.store (i32.const 0) (i32.const 8))
+            (i32.store (i32.const 4) (i32.const 22))
+
+            (call $fd_write
+                (i32.const 1)
+                (i32.const 0)
+                (i32.const 1)
+                (i32.const 20)
+            )
+            drop
+        )
+    )
+    "#;
+
+    #[test]
+    fn load_routes_from_wasm() {
+        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
+        write!(tf, "{}", ROUTES_WAT).expect("wrote WAT to disk");
+        let watfile = tf.path();
+
+        // HEY RADU! IS THIS OKAY FOR A TEST?
+        let cache = "cache.toml".to_string();
+
+        let module = Module {
+            route: "/base".to_string(),
+            module: watfile.to_string_lossy().to_string(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+        };
+
+        // We should be able to mount the same wasm at a separate route.
+        let module2 = Module {
+            route: "/another/...".to_string(),
+            module: watfile.to_string_lossy().to_string(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+        };
+
+        let mut mc = ModuleConfig {
+            modules: vec![module.clone(), module2.clone()],
+            route_cache: None,
+        };
+
+        mc.build_registry(cache).expect("registry build cleanly");
+
+        println!("{:#?}", mc.route_cache);
+
+        // Three routes for each module.
+        assert_eq!(6, mc.route_cache.as_ref().expect("routes are set").len());
+
+        let modpath = module.module.clone();
+
+        // Base route is from the config file
+        let base = mc
+            .handler_for_path("/base")
+            .expect("Should get a /base route");
+        assert_eq!("_start", base.entrypoint);
+        assert_eq!(modpath, base.module.module);
+
+        // Route one is from the module's _routes()
+        let one = mc
+            .handler_for_path("/base/one")
+            .expect("Should get the /base/one route");
+
+        assert_eq!("one", one.entrypoint);
+        assert_eq!(modpath, one.module.module);
+
+        // Route two is a wildcard.
+        let two = mc
+            .handler_for_path("/base/two/three")
+            .expect("Should get the /base/two/... route");
+
+        assert_eq!("two", two.entrypoint);
+        assert_eq!(modpath, two.module.module);
+
+        // This should fail
+        assert!(mc.handler_for_path("/base/no/such/path").is_err());
+
+        // This should pass
+        mc.handler_for_path("/another/path")
+            .expect("The generic handler should have been returned for this");
+    }
 }
