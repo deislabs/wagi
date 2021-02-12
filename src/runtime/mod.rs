@@ -15,7 +15,7 @@ use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 
-use crate::httputil::*;
+use crate::http_util::*;
 use crate::version::*;
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.

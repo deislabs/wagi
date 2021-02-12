@@ -1,4 +1,4 @@
-use crate::httputil::*;
+use crate::http_util::*;
 use crate::runtime::*;
 
 use hyper::{Body, Request, Response};
@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::Path;
 
-mod httputil;
+mod http_util;
 pub mod runtime;
 pub mod version;
 
