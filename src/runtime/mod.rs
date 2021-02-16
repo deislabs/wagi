@@ -1,6 +1,7 @@
 //! The tools for executing WAGI modules, and managing the lifecycle of a request.
 
 use hyper::{
+    header::HOST,
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
     http::uri::Scheme,
@@ -39,6 +40,7 @@ pub struct Handler {
     // This path is the _fully constructed_ path. That is, if a module config declares its path as `/base`,
     // and the module registers the path `/foo/...`, the value of this would be `/base/foo/...`.
     pub path: String,
+    pub host: Option<String>,
 }
 
 impl Handler {
@@ -48,6 +50,7 @@ impl Handler {
             path: entry.path.clone(),
             entrypoint: entry.entrypoint.clone(),
             module: module.clone(),
+            host: module.host.clone(),
         }
     }
 }
@@ -75,6 +78,8 @@ pub struct Module {
     /// The name of the function that is the entrypoint for executing the module.
     /// The default is `_start`.
     pub entrypoint: Option<String>,
+    /// The name of the host.
+    pub host: Option<String>,
 }
 
 impl Module {
@@ -206,7 +211,7 @@ impl Module {
 
         let host = req
             .headers
-            .get("HOST")
+            .get(HOST)
             .map(|val| val.to_str().unwrap_or("localhost"))
             .unwrap_or("localhost")
             .to_owned();
@@ -536,6 +541,7 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
+            host: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -545,6 +551,7 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
+            host: None,
         };
 
         let mut mc = ModuleConfig {
@@ -563,14 +570,14 @@ mod test {
 
         // Base route is from the config file
         let base = mc
-            .handler_for_path("/base")
+            .handler_for_host_path("", "/base")
             .expect("Should get a /base route");
         assert_eq!("_start", base.entrypoint);
         assert_eq!(modpath, base.module.module);
 
         // Route one is from the module's _routes()
         let one = mc
-            .handler_for_path("/base/one")
+            .handler_for_host_path("example.com", "/base/one")
             .expect("Should get the /base/one route");
 
         assert_eq!("one", one.entrypoint);
@@ -578,17 +585,17 @@ mod test {
 
         // Route two is a wildcard.
         let two = mc
-            .handler_for_path("/base/two/three")
+            .handler_for_host_path("localhost", "/base/two/three")
             .expect("Should get the /base/two/... route");
 
         assert_eq!("two", two.entrypoint);
         assert_eq!(modpath, two.module.module);
 
         // This should fail
-        assert!(mc.handler_for_path("/base/no/such/path").is_err());
+        assert!(mc.handler_for_host_path("", "/base/no/such/path").is_err());
 
         // This should pass
-        mc.handler_for_path("/another/path")
+        mc.handler_for_host_path("example.com", "/another/path")
             .expect("The generic handler should have been returned for this");
     }
 }

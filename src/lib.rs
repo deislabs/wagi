@@ -1,7 +1,7 @@
 use crate::http_util::*;
 use crate::runtime::*;
 
-use hyper::{Body, Request, Response};
+use hyper::{header::HOST, Body, Request, Response};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -34,9 +34,14 @@ impl Router {
         // clear during debugging, which could be a bit annoying.
 
         let uri_path = req.uri().path();
+        let host = req
+            .headers()
+            .get(HOST)
+            .map(|val| val.to_str().unwrap_or(""))
+            .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.module_config.handler_for_path(uri_path) {
+            _ => match self.module_config.handler_for_host_path(host, uri_path) {
                 Ok(h) => Ok(h
                     .module
                     .execute(
@@ -118,9 +123,20 @@ impl ModuleConfig {
     }
 
     /// Given a URI fragment, find the handler that can execute this.
-    fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
+    fn handler_for_host_path(
+        &self,
+        host: &str,
+        uri_fragment: &str,
+    ) -> Result<Handler, anyhow::Error> {
+        println!("host: {}", host);
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
+                // If a route has a host, the host must mach the request's HOST header.
+                if let Some(h) = r.host.as_ref() {
+                    if h != host {
+                        continue;
+                    }
+                }
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
                 if r.path
