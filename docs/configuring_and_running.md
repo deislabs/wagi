@@ -39,6 +39,7 @@ In a nutshell, these are the fields that `modules.toml` supports.
   - `environment`: A list of string/string environment variable pairs.
   - `repository`: RESERVED for future use
   - `entrypoint` (default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
+  - `host`: The hostname for this app. If set, the only clients that send this name in the `HOST` http header will be directed to this handler.
 
 Here is a brief example of a `modules.toml` file that declares two routes:
 
@@ -142,6 +143,49 @@ route = "/entrypoint/goodbye"
 module = "/path/to/bar.wasm"
 entrypoint = "goodbye  # Executes the `goodbye()` function in the module (instead of `_start`)
 ```
+
+### Host Mapping
+
+HTTP applications often support "virtual hosting" in which one HTTP server can listen for multiple hostnames, and then use the hostname to direct traffic to the correct handler.
+WAGI supports this with the `host` directive:
+
+```toml
+# With no `entrypoint`, this will invoke `_start()`
+[[module]]
+route = "/"
+module = "/path/to/hello.wasm"
+host = "example.com"
+
+[[module]]
+route = "/"
+module = "/path/to/goodbye.wasm"
+host = "another.example.com"
+```
+
+The above shows two modules that each declare that they listen for the route `/`.
+However, they declare different `host` directives.
+WAGI will differentiate between these two requests based on the `Host` header in the incoming HTTP requests.
+
+If a client requests `https://example.com/`, WAGI will execute the `hello.wasm` module.
+If the client requests `https://another.example.com`, WAGI will execute the `goodbye.wasm` module.
+If no matching host is found, WAGI will serve an error.
+
+To provide a default host, simply omit the `host` field or declare it to be the empty string:
+
+```toml
+# With no `entrypoint`, this will invoke `_start()`
+[[module]]
+route = "/"
+module = "/path/to/hello.wasm"
+host = "example.com"
+
+// This is the default host:
+[[module]]
+route = "/"
+module = "/path/to/goodbye.wasm"
+```
+
+Currently, there is no support for "wildcard" domain names. That is, you cannot specify `*.example.com` to match any domain that ends with `.example.com`.
 
 ### A Large Example
 
