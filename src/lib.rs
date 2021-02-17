@@ -14,6 +14,7 @@ pub mod version;
 pub struct Router {
     pub module_config: ModuleConfig,
     pub cache_config_path: String,
+    pub default_host: String,
 }
 
 impl Router {
@@ -41,7 +42,10 @@ impl Router {
             .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.module_config.handler_for_host_path(host, uri_path) {
+            _ => match self
+                .module_config
+                .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
+            {
                 Ok(h) => Ok(h
                     .module
                     .execute(
@@ -131,11 +135,14 @@ impl ModuleConfig {
         println!("host: {}", host);
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
-                // If a route has a host, the host must mach the request's HOST header.
-                if let Some(h) = r.host.as_ref() {
-                    if h != host {
-                        continue;
-                    }
+                match r.host.as_ref() {
+                    // Host doesn't match. Skip.
+                    Some(h) if h != host => continue,
+                    // This is not the default domain. Skip.
+                    // TODO: This should be whatever the system thinks is the default host.
+                    None if "localhost" != host => continue,
+                    // Something matched, so continue our checks.
+                    _ => {}
                 }
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
@@ -153,5 +160,56 @@ impl ModuleConfig {
         }
 
         Err(anyhow::anyhow!("No handler for {}", uri_fragment))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::runtime::Module;
+    use super::ModuleConfig;
+    #[test]
+    fn handler_should_respect_host() {
+        let cache = "cache.toml".to_string();
+
+        let module = Module {
+            route: "/".to_string(),
+            module: "examples/hello.wat".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: None,
+        };
+
+        // We should be able to mount the same wasm at a separate route.
+        let module2 = Module {
+            route: "/".to_string(),
+            module: "examples/hello.wasm".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: Some("example.com".to_owned()),
+        };
+
+        let mut mc = ModuleConfig {
+            modules: vec![module.clone(), module2.clone()],
+            route_cache: None,
+        };
+
+        mc.build_registry(cache).expect("registry build cleanly");
+
+        // This should match a default handler
+        let foo = mc
+            .handler_for_host_path("localhost", "/")
+            .expect("foo.example.com handler found");
+        assert!(foo.host.is_none());
+
+        // This should match a handler with host example.com
+        let foo = mc
+            .handler_for_host_path("example.com", "/")
+            .expect("example.com handler found");
+        assert!(foo.host.is_some());
+
+        // This should not match any handlers
+        assert!(mc.handler_for_host_path("foo.example.com", "/").is_err());
     }
 }
