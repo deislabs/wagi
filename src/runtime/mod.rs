@@ -570,14 +570,14 @@ mod test {
 
         // Base route is from the config file
         let base = mc
-            .handler_for_host_path("", "/base")
+            .handler_for_host_path("localhost", "/base")
             .expect("Should get a /base route");
         assert_eq!("_start", base.entrypoint);
         assert_eq!(modpath, base.module.module);
 
         // Route one is from the module's _routes()
         let one = mc
-            .handler_for_host_path("example.com", "/base/one")
+            .handler_for_host_path("localhost", "/base/one")
             .expect("Should get the /base/one route");
 
         assert_eq!("one", one.entrypoint);
@@ -592,10 +592,12 @@ mod test {
         assert_eq!(modpath, two.module.module);
 
         // This should fail
-        assert!(mc.handler_for_host_path("", "/base/no/such/path").is_err());
+        assert!(mc
+            .handler_for_host_path("localhost", "/base/no/such/path")
+            .is_err());
 
         // This should pass
-        mc.handler_for_host_path("example.com", "/another/path")
+        mc.handler_for_host_path("localhost", "/another/path")
             .expect("The generic handler should have been returned for this");
     }
 }
