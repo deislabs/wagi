@@ -557,6 +557,7 @@ mod test {
         let mut mc = ModuleConfig {
             modules: vec![module.clone(), module2.clone()],
             route_cache: None,
+            default_host: None,
         };
 
         mc.build_registry(cache).expect("registry build cleanly");
@@ -599,5 +600,39 @@ mod test {
         // This should pass
         mc.handler_for_host_path("localhost", "/another/path")
             .expect("The generic handler should have been returned for this");
+    }
+
+    #[test]
+    fn should_override_default_domain() {
+        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
+        write!(tf, "{}", ROUTES_WAT).expect("wrote WAT to disk");
+        let watfile = tf.path();
+
+        // HEY RADU! IS THIS OKAY FOR A TEST?
+        let cache = "cache.toml".to_string();
+
+        let module = Module {
+            route: "/base".to_string(),
+            module: watfile.to_string_lossy().to_string(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: None,
+        };
+
+        let mut mc = ModuleConfig {
+            modules: vec![module.clone()],
+            route_cache: None,
+            default_host: Some("localhost.localdomain".to_owned()),
+        };
+
+        mc.build_registry(cache).expect("registry build cleanly");
+
+        // This should fail b/c default domain is localhost.localdomain
+        assert!(mc.handler_for_host_path("localhost", "/base").is_err());
+
+        assert!(mc
+            .handler_for_host_path("localhost.localdomain", "/base")
+            .is_ok())
     }
 }

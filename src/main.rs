@@ -93,7 +93,6 @@ async fn route(
     let router = &Router {
         module_config: config,
         cache_config_path,
-        default_host: "localhost".to_owned(),
     };
 
     router.route(req, client_addr).await

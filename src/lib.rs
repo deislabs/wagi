@@ -14,7 +14,6 @@ pub mod version;
 pub struct Router {
     pub module_config: ModuleConfig,
     pub cache_config_path: String,
-    pub default_host: String,
 }
 
 impl Router {
@@ -87,6 +86,17 @@ pub fn load_modules_toml(
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Deserialize)]
 pub struct ModuleConfig {
+    /// The default hostname to use if none is supplied.
+    ///
+    /// If this is not set, the default hostname is `localhost`.
+    ///
+    /// Incoming HTTP requests MUST match a hostn name, or else they will not be processed.
+    /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
+    /// host name specified in this paramter or match the `host` field on the module
+    /// that matches this request's path.
+    #[serde(rename = "defaultHost")]
+    default_host: Option<String>,
+
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]
     pub modules: Vec<crate::runtime::Module>,
@@ -132,15 +142,19 @@ impl ModuleConfig {
         host: &str,
         uri_fragment: &str,
     ) -> Result<Handler, anyhow::Error> {
-        println!("host: {}", host);
+        let default_host = self
+            .default_host
+            .clone()
+            .unwrap_or_else(|| "localhost".to_owned());
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
+                // The request must match either the `host` of an entry or the `default_host`
+                // for this server.
                 match r.host.as_ref() {
                     // Host doesn't match. Skip.
                     Some(h) if h != host => continue,
                     // This is not the default domain. Skip.
-                    // TODO: This should be whatever the system thinks is the default host.
-                    None if "localhost" != host => continue,
+                    None if default_host != host => continue,
                     // Something matched, so continue our checks.
                     _ => {}
                 }
@@ -165,6 +179,7 @@ impl ModuleConfig {
 
 #[cfg(test)]
 mod test {
+
     use super::runtime::Module;
     use super::ModuleConfig;
     #[test]
@@ -193,6 +208,7 @@ mod test {
         let mut mc = ModuleConfig {
             modules: vec![module.clone(), module2.clone()],
             route_cache: None,
+            default_host: None,
         };
 
         mc.build_registry(cache).expect("registry build cleanly");
