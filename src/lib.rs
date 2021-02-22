@@ -90,7 +90,7 @@ pub struct ModuleConfig {
     ///
     /// If this is not set, the default hostname is `localhost`.
     ///
-    /// Incoming HTTP requests MUST match a hostn name, or else they will not be processed.
+    /// Incoming HTTP requests MUST match a host name, or else they will not be processed.
     /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
     /// host name specified in this paramter or match the `host` field on the module
     /// that matches this request's path.
