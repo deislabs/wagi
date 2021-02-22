@@ -8,3 +8,8 @@ build:
 .PHONY: run
 run:
 	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -c $(MODULES_TOML)
+
+.PHONY: test
+test:
+	cargo test
+
