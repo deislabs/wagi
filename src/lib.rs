@@ -1,7 +1,7 @@
 use crate::http_util::*;
 use crate::runtime::*;
 
-use hyper::{Body, Request, Response};
+use hyper::{header::HOST, Body, Request, Response};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -34,9 +34,17 @@ impl Router {
         // clear during debugging, which could be a bit annoying.
 
         let uri_path = req.uri().path();
+        let host = req
+            .headers()
+            .get(HOST)
+            .map(|val| val.to_str().unwrap_or(""))
+            .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.module_config.handler_for_path(uri_path) {
+            _ => match self
+                .module_config
+                .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
+            {
                 Ok(h) => Ok(h
                     .module
                     .execute(
@@ -78,6 +86,17 @@ pub fn load_modules_toml(
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Deserialize)]
 pub struct ModuleConfig {
+    /// The default hostname to use if none is supplied.
+    ///
+    /// If this is not set, the default hostname is `localhost`.
+    ///
+    /// Incoming HTTP requests MUST match a host name, or else they will not be processed.
+    /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
+    /// host name specified in this paramter or match the `host` field on the module
+    /// that matches this request's path.
+    #[serde(rename = "defaultHost")]
+    default_host: Option<String>,
+
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]
     pub modules: Vec<crate::runtime::Module>,
@@ -118,9 +137,27 @@ impl ModuleConfig {
     }
 
     /// Given a URI fragment, find the handler that can execute this.
-    fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
+    fn handler_for_host_path(
+        &self,
+        host: &str,
+        uri_fragment: &str,
+    ) -> Result<Handler, anyhow::Error> {
+        let default_host = self
+            .default_host
+            .clone()
+            .unwrap_or_else(|| "localhost".to_owned());
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
+                // The request must match either the `host` of an entry or the `default_host`
+                // for this server.
+                match r.host.as_ref() {
+                    // Host doesn't match. Skip.
+                    Some(h) if h != host => continue,
+                    // This is not the default domain. Skip.
+                    None if default_host != host => continue,
+                    // Something matched, so continue our checks.
+                    _ => {}
+                }
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
                 if r.path
@@ -137,5 +174,58 @@ impl ModuleConfig {
         }
 
         Err(anyhow::anyhow!("No handler for {}", uri_fragment))
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::runtime::Module;
+    use super::ModuleConfig;
+    #[test]
+    fn handler_should_respect_host() {
+        let cache = "cache.toml".to_string();
+
+        let module = Module {
+            route: "/".to_string(),
+            module: "examples/hello.wat".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: None,
+        };
+
+        // We should be able to mount the same wasm at a separate route.
+        let module2 = Module {
+            route: "/".to_string(),
+            module: "examples/hello.wasm".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: Some("example.com".to_owned()),
+        };
+
+        let mut mc = ModuleConfig {
+            modules: vec![module.clone(), module2.clone()],
+            route_cache: None,
+            default_host: None,
+        };
+
+        mc.build_registry(cache).expect("registry build cleanly");
+
+        // This should match a default handler
+        let foo = mc
+            .handler_for_host_path("localhost", "/")
+            .expect("foo.example.com handler found");
+        assert!(foo.host.is_none());
+
+        // This should match a handler with host example.com
+        let foo = mc
+            .handler_for_host_path("example.com", "/")
+            .expect("example.com handler found");
+        assert!(foo.host.is_some());
+
+        // This should not match any handlers
+        assert!(mc.handler_for_host_path("foo.example.com", "/").is_err());
     }
 }
