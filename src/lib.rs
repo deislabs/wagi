@@ -55,7 +55,7 @@ impl Router {
                     )
                     .await),
                 Err(e) => {
-                    eprintln!("error: {}", e);
+                    log::error!("error: {}", e);
                     Ok(not_found())
                 }
             },
@@ -163,7 +163,7 @@ impl ModuleConfig {
                 if r.path
                     .strip_suffix("/...")
                     .map(|i| {
-                        println!("Comparing {} to {}", uri_fragment.clone(), r.path.as_str());
+                        log::info!("Comparing {} to {}", uri_fragment.clone(), r.path.as_str());
                         uri_fragment.starts_with(i)
                     })
                     .unwrap_or_else(|| r.path == uri_fragment)
