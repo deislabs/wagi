@@ -8,10 +8,10 @@ use hyper::{
     Body, Request, Response, StatusCode,
 };
 use serde::Deserialize;
-use std::io::BufRead;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
+use std::{io::BufRead, str::FromStr};
 use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
@@ -149,7 +149,7 @@ impl Module {
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
 
-        let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
+        let module = self.load_module(&store)?;
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
@@ -493,6 +493,22 @@ impl Module {
         }
 
         Ok(res)
+    }
+
+    /// Determine the source of the module, and read it from that source.
+    ///
+    /// Modules can be stored locally, or they can be stored in external sources like
+    /// Bindle. WAGI determines the source by looking at the URI of the module.
+    ///
+    /// - If `file:` is specified, or no schema is specified, this loads from the local filesystem
+    /// - If bindle:` is specified, then this loads from Bindle using a local cache.
+    fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
+        let uri = hyper::Uri::from_str(self.module.as_str())?;
+        match uri.scheme_str() {
+            // That famous American folk artist, Bruce Schemestring
+            Some(s) => anyhow::bail!("Ain't got here yet"),
+            None => wasmtime::Module::from_file(store.engine(), self.module.as_str()),
+        }
     }
 }
 
