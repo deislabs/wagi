@@ -12,7 +12,7 @@ pub(crate) fn not_found() -> Response<Body> {
 
 /// Create an HTTP 500 response
 pub(crate) fn internal_error(msg: &str) -> Response<Body> {
-    println!("HTTP 500 error: {}", msg);
+    log::error!("HTTP 500 error: {}", msg);
     let mut res = Response::new(Body::from(msg.to_owned()));
     *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     res
@@ -23,7 +23,7 @@ pub(crate) fn parse_cgi_headers(headers: String) -> HashMap<String, String> {
     headers.trim().split('\n').for_each(|h| {
         let parts: Vec<&str> = h.splitn(2, ':').collect();
         if parts.len() != 2 {
-            println!("corrupt header: {}", h);
+            log::warn!("corrupt header: {}", h);
             return;
         }
         map.insert(parts[0].trim().to_owned(), parts[1].trim().to_owned());

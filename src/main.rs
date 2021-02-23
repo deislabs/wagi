@@ -4,6 +4,7 @@ use hyper::{
     service::{make_service_fn, service_fn},
 };
 use hyper::{Body, Request, Response, Server};
+use log::*;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -12,6 +13,7 @@ use wagi::Router;
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
+    env_logger::init();
     let matches = App::new("WAGI Server")
         .version("0.1.0")
         .author("DeisLabs")
@@ -41,12 +43,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
         )
         .get_matches();
 
-    println!("=> Starting server");
-    let addr = matches
+    let addr: SocketAddr = matches
         .value_of("listen")
         .unwrap_or("127.0.0.1:3000")
         .parse()
         .unwrap();
+
+    info!("=> Starting server on {}", addr.to_string());
 
     // We have to pass a cache file configuration path to a Wasmtime engine.
     let cache_config_path = String::from(matches.value_of("cache").unwrap_or("cache.toml"));
@@ -79,7 +82,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let srv = Server::bind(&addr).serve(mk_svc);
 
     if let Err(e) = srv.await {
-        eprintln!("server error: {}", e);
+        error!("server error: {}", e);
     }
     Ok(())
 }

@@ -101,7 +101,7 @@ impl Module {
         match self.run_wasm(entrypoint, &parts, data, client_addr, cache_config_path) {
             Ok(res) => res,
             Err(e) => {
-                eprintln!("error running WASM module: {}", e);
+                log::error!("error running WASM module: {}", e);
                 // A 500 error makes sense here
                 let mut srv_err = Response::default();
                 *srv_err.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
@@ -153,7 +153,7 @@ impl Module {
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
-        println!(
+        log::info!(
             "(load_routes) instantiation time for module {}: {:#?}",
             self.module.as_str(),
             duration
@@ -389,7 +389,7 @@ impl Module {
                     Ok(dir) => {
                         builder.preopened_dir(dir, guest);
                     }
-                    Err(e) => eprintln!("Error opening {} -> {}: {}", host, guest, e),
+                    Err(e) => log::error!("Error opening {} -> {}: {}", host, guest, e),
                 }
             }
         }
@@ -402,7 +402,7 @@ impl Module {
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
-        println!(
+        log::info!(
             "instantiation time for module {}: {:#?}",
             self.module.as_str(),
             duration
@@ -460,7 +460,7 @@ impl Module {
                     }
                     "status" => {
                         if let Ok(status) = h.1.parse::<hyper::StatusCode>() {
-                            println!("Setting status to {}", status);
+                            log::info!("Setting status to {}", status);
                             *res.status_mut() = status;
                         }
                     }
@@ -478,7 +478,7 @@ impl Module {
                                 res.headers_mut()
                                     .insert(hdr, HeaderValue::from_str(h.1).unwrap());
                             }
-                            Err(e) => eprintln!("Invalid header name '{}': {}", h.0.as_str(), e),
+                            Err(e) => log::error!("Invalid header name '{}': {}", h.0.as_str(), e),
                         }
                     }
                 }
@@ -562,7 +562,7 @@ mod test {
 
         mc.build_registry(cache).expect("registry build cleanly");
 
-        println!("{:#?}", mc.route_cache);
+        log::debug!("{:#?}", mc.route_cache);
 
         // Three routes for each module.
         assert_eq!(6, mc.route_cache.as_ref().expect("routes are set").len());
