@@ -58,11 +58,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let addr = conn.remote_addr();
         let r = router.clone();
-        async move {
-            Ok::<_, std::convert::Infallible>(service_fn(
-                move |req| async move { r.route(req, addr) },
-            ))
-        }
+        async move { Ok::<_, std::convert::Infallible>(service_fn(move |req| r.route(req, addr))) }
     });
 
     let srv = Server::bind(&addr).serve(mk_svc);
