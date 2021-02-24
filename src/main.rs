@@ -68,19 +68,3 @@ pub async fn main() -> Result<(), anyhow::Error> {
     }
     Ok(())
 }
-
-/*
-async fn route(
-    req: Request<Body>,
-    config: wagi::ModuleConfig,
-    cache_config_path: String,
-    client_addr: SocketAddr,
-) -> Result<Response<Body>, hyper::Error> {
-    let router = &Router {
-        module_config: config,
-        cache_config_path,
-    };
-
-    router.route(req, client_addr).await
-}
-*/

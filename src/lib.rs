@@ -55,6 +55,18 @@ impl Router {
             .unwrap_or("");
         match uri_path {
             "/healthz" => Box::new(async { Ok(Response::new(Body::from("OK"))) }.boxed()),
+            "/_reload" => {
+                let res = self.reload();
+                Box::new(
+                    async move {
+                        match res {
+                            Ok(_) => Ok(Response::new(Body::from("OK"))),
+                            Err(e) => Ok(internal_error(&e.to_string())),
+                        }
+                    }
+                    .boxed(),
+                )
+            }
             _ => match self
                 .module_config
                 .read()
