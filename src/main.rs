@@ -1,14 +1,10 @@
 use clap::{App, Arg};
+use hyper::Server;
 use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use hyper::{Body, Request, Response, Server};
-use log::*;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::net::SocketAddr;
 use wagi::Router;
 
 #[tokio::main]
@@ -49,54 +45,27 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .parse()
         .unwrap();
 
-    info!("=> Starting server on {}", addr.to_string());
+    log::info!("=> Starting server on {}", addr.to_string());
 
     // We have to pass a cache file configuration path to a Wasmtime engine.
-    let cache_config_path = String::from(matches.value_of("cache").unwrap_or("cache.toml"));
+    let cache_config_path = matches.value_of("cache").unwrap_or("cache.toml").to_owned();
+    let module_config_path = matches
+        .value_of("config")
+        .unwrap_or("modules.toml")
+        .to_owned();
 
-    // We only parse the config file once, then we share it across all threads on the
-    // service. This is faster than reloading the config on each request, but it does
-    // mean the server has to be restarted to reload config.
-    let config = Arc::new(Mutex::new(wagi::load_modules_toml(
-        matches.value_of("config").unwrap_or("modules.toml"),
-        cache_config_path.clone(),
-    )?));
+    let router = Router::new(module_config_path, cache_config_path)?;
 
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
-        let config = config.clone();
         let addr = conn.remote_addr();
-        let cache_config_path = cache_config_path.clone();
-        async move {
-            Ok::<_, std::convert::Infallible>(service_fn(move |req| {
-                let modules_toml = config.lock().unwrap();
-                route(
-                    req,
-                    modules_toml.clone(),
-                    cache_config_path.clone(),
-                    addr.clone(),
-                )
-            }))
-        }
+        let r = router.clone();
+        async move { Ok::<_, std::convert::Infallible>(service_fn(move |req| r.route(req, addr))) }
     });
 
     let srv = Server::bind(&addr).serve(mk_svc);
 
     if let Err(e) = srv.await {
-        error!("server error: {}", e);
+        log::error!("server error: {}", e);
     }
     Ok(())
-}
-
-async fn route(
-    req: Request<Body>,
-    config: wagi::ModuleConfig,
-    cache_config_path: String,
-    client_addr: SocketAddr,
-) -> Result<Response<Body>, hyper::Error> {
-    let router = &Router {
-        module_config: config,
-        cache_config_path,
-    };
-
-    router.route(req, client_addr).await
 }

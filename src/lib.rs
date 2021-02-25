@@ -1,31 +1,45 @@
 use crate::http_util::*;
 use crate::runtime::*;
 
+use futures::{Future, FutureExt};
 use hyper::{header::HOST, Body, Request, Response};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 mod http_util;
 pub mod runtime;
 pub mod version;
 
+#[derive(Clone)]
 /// A router is responsible for taking an inbound request and sending it to the appropriate handler.
 pub struct Router {
-    pub module_config: ModuleConfig,
+    pub module_config: Arc<RwLock<ModuleConfig>>,
     pub cache_config_path: String,
+    pub module_config_path: String,
 }
 
 impl Router {
+    pub fn new(module_config_path: String, cache_config_path: String) -> anyhow::Result<Self> {
+        let module_config =
+            load_modules_toml(module_config_path.as_str(), cache_config_path.clone())?;
+        Ok(Router {
+            cache_config_path,
+            module_config_path,
+            module_config: Arc::new(RwLock::new(module_config)),
+        })
+    }
     /// Route the request to the correct handler
     ///
     /// Some routes are built in (like healthz), while others are dynamically
     /// dispatched.
-    pub async fn route(
+    pub fn route(
         &self,
         req: Request<Body>,
         client_addr: SocketAddr,
-    ) -> Result<Response<Body>, hyper::Error> {
+    ) -> Box<dyn Future<Output = Result<Response<Body>, hyper::Error>> + Unpin + Send> {
         // TODO: Improve the loading. See issue #3
         //
         // Additionally, we could implement an LRU to cache WASM modules. This would
@@ -40,26 +54,68 @@ impl Router {
             .map(|val| val.to_str().unwrap_or(""))
             .unwrap_or("");
         match uri_path {
-            "/healthz" => Ok(Response::new(Body::from("OK"))),
+            "/healthz" => Box::new(async { Ok(Response::new(Body::from("OK"))) }.boxed()),
+            "/_reload" => {
+                let res = self.reload();
+                Box::new(
+                    async move {
+                        match res {
+                            Ok(_) => Ok(Response::new(Body::from("OK"))),
+                            Err(e) => Ok(internal_error(&e.to_string())),
+                        }
+                    }
+                    .boxed(),
+                )
+            }
             _ => match self
                 .module_config
+                .read()
+                .unwrap()
                 .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
             {
-                Ok(h) => Ok(h
-                    .module
-                    .execute(
-                        h.entrypoint.as_str(),
-                        req,
-                        client_addr,
-                        self.cache_config_path.clone(),
+                Ok(h) => {
+                    let cache_config_path = self.cache_config_path.clone();
+                    Box::new(
+                        async move {
+                            Ok::<_, hyper::Error>(
+                                h.module
+                                    .execute(
+                                        h.entrypoint.as_str(),
+                                        req,
+                                        client_addr,
+                                        cache_config_path,
+                                    )
+                                    .await,
+                            )
+                        }
+                        .boxed(),
                     )
-                    .await),
+                }
                 Err(e) => {
                     log::error!("error: {}", e);
-                    Ok(not_found())
+                    Box::new(async { Ok(not_found()) }.boxed())
                 }
             },
         }
+    }
+
+    /// Reload the config and modules.
+    ///
+    /// This rebuilds the modules list from config, and then re-initializes all
+    /// modules. It will call the `_routes()` method on each module. If caching is
+    /// enabled, it will also clear and recreate the module cache.
+    fn reload(&self) -> anyhow::Result<()> {
+        let new_config = load_modules_toml(
+            self.module_config_path.as_str(),
+            self.cache_config_path.clone(),
+        )?;
+        {
+            let mut module_config = self.module_config.write().unwrap();
+            *module_config = new_config;
+            module_config.build_registry(self.cache_config_path.clone())?;
+        }
+
+        Ok(())
     }
 }
 
