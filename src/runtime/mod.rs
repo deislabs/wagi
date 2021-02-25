@@ -8,10 +8,11 @@ use hyper::{
     Body, Request, Response, StatusCode,
 };
 use serde::Deserialize;
+use std::io::BufRead;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
-use std::{io::BufRead, str::FromStr};
+use url::Url;
 use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
@@ -501,24 +502,28 @@ impl Module {
     /// Bindle. WAGI determines the source by looking at the URI of the module.
     ///
     /// - If `file:` is specified, or no schema is specified, this loads from the local filesystem
-    /// - If bindle:` is specified, then this loads from Bindle using a local cache.
     fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
-        let uri = hyper::Uri::from_str(self.module.as_str())?;
-        match uri.scheme_str() {
-            // That famous American folk artist, Bruce Schemestring
-            Some(s) => anyhow::bail!("Ain't got here yet"),
-            None => wasmtime::Module::from_file(store.engine(), self.module.as_str()),
+        match Url::parse(self.module.as_str()) {
+            Err(e) => {
+                println!("Error parsing module URI: {}", e);
+                wasmtime::Module::from_file(store.engine(), self.module.as_str())
+            }
+            Ok(uri) => match uri.scheme() {
+                "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
+                s => anyhow::bail!("Unknown scheme {}", s),
+            },
         }
     }
 }
 
 #[cfg(test)]
 mod test {
+    use super::Module;
     use crate::ModuleConfig;
     use crate::DEFAULT_HOST as LOCALHOST;
 
-    use super::Module;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     const ROUTES_WAT: &str = r#"
     (module
@@ -543,10 +548,15 @@ mod test {
     )
     "#;
 
+    fn write_temp_wat(data: &str) -> anyhow::Result<NamedTempFile> {
+        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
+        write!(tf, "{}", data).expect("wrote WAT to disk");
+        Ok(tf)
+    }
+
     #[test]
     fn load_routes_from_wasm() {
-        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
-        write!(tf, "{}", ROUTES_WAT).expect("wrote WAT to disk");
+        let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
         let watfile = tf.path();
 
         // HEY RADU! IS THIS OKAY FOR A TEST?
@@ -621,11 +631,8 @@ mod test {
 
     #[test]
     fn should_override_default_domain() {
-        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
-        write!(tf, "{}", ROUTES_WAT).expect("wrote WAT to disk");
+        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let watfile = tf.path();
-
-        // HEY RADU! IS THIS OKAY FOR A TEST?
         let cache = "cache.toml".to_string();
 
         let module = Module {
@@ -651,5 +658,73 @@ mod test {
         assert!(mc
             .handler_for_host_path("localhost.localdomain", "/base")
             .is_ok())
+    }
+
+    #[test]
+    fn should_parse_file_uri() {
+        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
+        let watfile = tf.path();
+
+        let urlish = format!("file:{}", watfile.to_string_lossy().to_string());
+        println!("Testing URL: {}", urlish);
+
+        let module = Module {
+            route: "/base".to_string(),
+            module: urlish,
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: None,
+        };
+
+        let store = super::Store::default();
+
+        module.load_module(&store).expect("loaded module");
+    }
+
+    // Why is there a test for upstream libraries? Well, because they each seem to have
+    // quirks that cause them to differ from the spec. This is here because we plan on
+    // changing to Hyper when it gets updated, but for now are using URL.
+    //
+    // Note that `url` follows the WhatWG convention of omitting `localhost` in `file:` urls.
+    #[test]
+    fn should_parse_file_scheme() {
+        let uri = url::Url::parse("file:///foo/bar").expect("Should parse URI with no host");
+        assert!(uri.host().is_none());
+
+        let uri = url::Url::parse("file:/foo/bar").expect("Should parse URI with no host");
+        assert!(uri.host().is_none());
+
+        let uri =
+            url::Url::parse("file://localhost/foo/bar").expect("Should parse URI with no host");
+        assert_eq!("/foo/bar", uri.path());
+        // Here's why: https://github.com/whatwg/url/pull/544
+        assert!(uri.host().is_none());
+
+        let uri =
+            url::Url::parse("foo://localhost/foo/bar").expect("Should parse URI with no host");
+        assert_eq!("/foo/bar", uri.path());
+        assert_eq!(uri.host_str(), Some("localhost"));
+
+        let uri =
+            url::Url::parse("bindle:localhost/foo/bar").expect("Should parse URI with no host");
+        assert_eq!("localhost/foo/bar", uri.path());
+        assert!(uri.host().is_none());
+
+        // Two from the Bindle spec
+        let uri = url::Url::parse("bindle:example.com/hello_world/1.2.3")
+            .expect("Should parse URI with no host");
+        assert_eq!("example.com/hello_world/1.2.3", uri.path());
+        assert!(uri.host().is_none());
+
+        let uri = url::Url::parse(
+            "bindle:github.com/deislabs/example_bindle/123.234.34567-alpha.9999+hellothere",
+        )
+        .expect("Should parse URI with no host");
+        assert_eq!(
+            "github.com/deislabs/example_bindle/123.234.34567-alpha.9999+hellothere",
+            uri.path()
+        );
+        assert!(uri.host().is_none());
     }
 }

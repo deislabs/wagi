@@ -269,7 +269,7 @@ mod test {
             default_host: None,
         };
 
-        mc.build_registry(cache).expect("registry build cleanly");
+        mc.build_registry(cache).expect("registry built cleanly");
 
         // This should match a default handler
         let foo = mc
