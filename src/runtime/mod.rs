@@ -20,6 +20,11 @@ use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 use crate::http_util::*;
 use crate::version::*;
 
+mod bindle;
+
+/// The default Bindle server URL.
+pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
+
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
 pub struct RouteEntry {
@@ -81,6 +86,10 @@ pub struct Module {
     pub entrypoint: Option<String>,
     /// The name of the host.
     pub host: Option<String>,
+    /// The URL fragment for the bindle server.
+    ///
+    /// If none is supplied, then http://localhost:8080/v1 is used
+    pub bindle_server: Option<String>,
 }
 
 impl Module {
@@ -114,7 +123,10 @@ impl Module {
     /// Examine the given module to see if it has any routes.
     ///
     /// If it has any routes, add them to the vector and return it.
-    pub fn load_routes(&self, cache_config_path: String) -> Result<Vec<RouteEntry>, anyhow::Error> {
+    pub async fn load_routes(
+        &self,
+        cache_config_path: String,
+    ) -> Result<Vec<RouteEntry>, anyhow::Error> {
         let start_time = Instant::now();
 
         let prefix = self
@@ -150,7 +162,7 @@ impl Module {
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
 
-        let module = self.load_module(&store)?;
+        let module = self.load_module(&store).await?;
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
@@ -502,7 +514,7 @@ impl Module {
     /// Bindle. WAGI determines the source by looking at the URI of the module.
     ///
     /// - If `file:` is specified, or no schema is specified, this loads from the local filesystem
-    fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
+    async fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
         match Url::parse(self.module.as_str()) {
             Err(e) => {
                 println!("Error parsing module URI: {}", e);
@@ -510,9 +522,21 @@ impl Module {
             }
             Ok(uri) => match uri.scheme() {
                 "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
+                "bindle" => self.load_bindle(&uri).await,
                 s => anyhow::bail!("Unknown scheme {}", s),
             },
         }
+    }
+
+    async fn load_bindle(&self, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+        bindle::load_bindle(
+            self.bindle_server
+                .clone()
+                .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned())
+                .as_str(),
+            uri,
+        )
+        .await
     }
 }
 
@@ -554,8 +578,8 @@ mod test {
         Ok(tf)
     }
 
-    #[test]
-    fn load_routes_from_wasm() {
+    #[tokio::test]
+    async fn load_routes_from_wasm() {
         let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
         let watfile = tf.path();
 
@@ -569,6 +593,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -579,6 +604,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         let mut mc = ModuleConfig {
@@ -587,7 +613,9 @@ mod test {
             default_host: None,
         };
 
-        mc.build_registry(cache).expect("registry build cleanly");
+        mc.build_registry(cache)
+            .await
+            .expect("registry build cleanly");
 
         log::debug!("{:#?}", mc.route_cache);
 
@@ -629,8 +657,8 @@ mod test {
             .expect("The generic handler should have been returned for this");
     }
 
-    #[test]
-    fn should_override_default_domain() {
+    #[tokio::test]
+    async fn should_override_default_domain() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let watfile = tf.path();
         let cache = "cache.toml".to_string();
@@ -642,6 +670,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         let mut mc = ModuleConfig {
@@ -650,7 +679,9 @@ mod test {
             default_host: Some("localhost.localdomain".to_owned()),
         };
 
-        mc.build_registry(cache).expect("registry build cleanly");
+        mc.build_registry(cache)
+            .await
+            .expect("registry build cleanly");
 
         // This should fail b/c default domain is localhost.localdomain
         assert!(mc.handler_for_host_path("localhost", "/base").is_err());
@@ -660,8 +691,8 @@ mod test {
             .is_ok())
     }
 
-    #[test]
-    fn should_parse_file_uri() {
+    #[tokio::test]
+    async fn should_parse_file_uri() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let watfile = tf.path();
 
@@ -675,11 +706,12 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         let store = super::Store::default();
 
-        module.load_module(&store).expect("loaded module");
+        module.load_module(&store).await.expect("loaded module");
     }
 
     // Why is there a test for upstream libraries? Well, because they each seem to have

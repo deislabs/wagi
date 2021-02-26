@@ -123,7 +123,7 @@ impl Router {
 }
 
 /// Load the configuration TOML
-pub fn load_modules_toml(
+pub async fn load_modules_toml(
     filename: &str,
     cache_config_path: String,
 ) -> Result<ModuleConfig, anyhow::Error> {
@@ -137,7 +137,7 @@ pub fn load_modules_toml(
     let data = std::fs::read_to_string(filename)?;
     let mut modules: ModuleConfig = toml::from_str(data.as_str())?;
 
-    modules.build_registry(cache_config_path)?;
+    modules.build_registry(cache_config_path).await?;
 
     Ok(modules)
 }
@@ -168,22 +168,22 @@ pub struct ModuleConfig {
 
 impl ModuleConfig {
     /// Construct a registry of all routes.
-    fn build_registry(&mut self, cache_config_path: String) -> anyhow::Result<()> {
+    async fn build_registry(&mut self, cache_config_path: String) -> anyhow::Result<()> {
         let mut routes = vec![];
 
         let mut failed_modules: Vec<String> = Vec::new();
 
-        self.modules.iter().for_each(|m| {
-            match m.load_routes(cache_config_path.clone()) {
+        for m in self.modules.iter() {
+            match m.load_routes(cache_config_path.clone()).await {
                 Err(e) => {
                     // FIXME: I think we could do something better here.
                     failed_modules.push(e.to_string())
                 }
                 Ok(subroutes) => subroutes
                     .iter()
-                    .for_each(|entry| routes.push(Handler::new(entry, m))),
+                    .for_each(|entry| routes.push(Handler::new(entry, &m))),
             }
-        });
+        }
 
         if !failed_modules.is_empty() {
             let msg = failed_modules.join(", ");
@@ -240,8 +240,8 @@ mod test {
 
     use super::runtime::Module;
     use super::ModuleConfig;
-    #[test]
-    fn handler_should_respect_host() {
+    #[tokio::test]
+    async fn handler_should_respect_host() {
         let cache = "cache.toml".to_string();
 
         let module = Module {
@@ -251,6 +251,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -261,6 +262,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: Some("example.com".to_owned()),
+            bindle_server: None,
         };
 
         let mut mc = ModuleConfig {
@@ -269,7 +271,9 @@ mod test {
             default_host: None,
         };
 
-        mc.build_registry(cache).expect("registry built cleanly");
+        mc.build_registry(cache)
+            .await
+            .expect("registry built cleanly");
 
         // This should match a default handler
         let foo = mc
