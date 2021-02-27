@@ -517,7 +517,10 @@ impl Module {
     async fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
         match Url::parse(self.module.as_str()) {
             Err(e) => {
-                println!("Error parsing module URI: {}", e);
+                log::debug!(
+                    "Error parsing module URI {}. Assuming this is a local file.",
+                    e
+                );
                 wasmtime::Module::from_file(store.engine(), self.module.as_str())
             }
             Ok(uri) => match uri.scheme() {
