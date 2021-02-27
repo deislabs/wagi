@@ -171,13 +171,13 @@ If a client requests `https://example.com/`, WAGI will execute the `hello.wasm` 
 If the client requests `https://another.example.com`, WAGI will execute the `goodbye.wasm` module.
 If no matching host is found, WAGI will serve an error.
 
-To provide a default host, set the `defaultHost` field at the top of your `modules.toml`.
+To provide a default host, set the `default_host` field at the top of your `modules.toml`.
 Any module that does not declare a `host` will automatically listen (only) on the
-`defaultHost`. If no `defaultHost` is specified and a module does not provide a `host`, then
-WAGI will use `localhost` as the default host.
+`default_host`. If no `default_host` is specified and a module does not provide a `host`, then
+WAGI will use `localhost:3000` as the default host.
 
 ```toml
-defaultHost = "my.example.com"
+default_host = "my.example.com"
 
 # With no `entrypoint`, this will invoke `_start()`
 [[module]]

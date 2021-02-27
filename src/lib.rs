@@ -13,6 +13,9 @@ mod http_util;
 pub mod runtime;
 pub mod version;
 
+/// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
+pub const DEFAULT_HOST: &str = "localhost:3000";
+
 #[derive(Clone)]
 /// A router is responsible for taking an inbound request and sending it to the appropriate handler.
 pub struct Router {
@@ -150,7 +153,6 @@ pub struct ModuleConfig {
     /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
     /// host name specified in this paramter or match the `host` field on the module
     /// that matches this request's path.
-    #[serde(rename = "defaultHost")]
     default_host: Option<String>,
 
     /// this line de-serializes [[module]] as modules
@@ -201,7 +203,7 @@ impl ModuleConfig {
         let default_host = self
             .default_host
             .clone()
-            .unwrap_or_else(|| "localhost".to_owned());
+            .unwrap_or_else(|| DEFAULT_HOST.to_owned());
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
                 // The request must match either the `host` of an entry or the `default_host`
@@ -229,7 +231,7 @@ impl ModuleConfig {
             }
         }
 
-        Err(anyhow::anyhow!("No handler for {}", uri_fragment))
+        Err(anyhow::anyhow!("No handler for //{}{}", host, uri_fragment))
     }
 }
 
@@ -271,7 +273,7 @@ mod test {
 
         // This should match a default handler
         let foo = mc
-            .handler_for_host_path("localhost", "/")
+            .handler_for_host_path(super::DEFAULT_HOST, "/")
             .expect("foo.example.com handler found");
         assert!(foo.host.is_none());
 

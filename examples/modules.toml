@@ -1,3 +1,5 @@
+default_host = "localhost:3000"
+
 [[module]]
 # Example executing a Web Assembly Text file
 route = "/"
