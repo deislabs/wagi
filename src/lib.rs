@@ -27,7 +27,7 @@ pub struct Router {
 impl Router {
     pub fn new(module_config_path: String, cache_config_path: String) -> anyhow::Result<Self> {
         let module_config =
-            load_modules_toml(module_config_path.as_str(), cache_config_path.clone())?;
+            load_modules_toml(module_config_path.as_str(), cache_config_path.clone()).await?;
         Ok(Router {
             cache_config_path,
             module_config_path,
