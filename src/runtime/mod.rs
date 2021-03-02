@@ -499,6 +499,7 @@ impl Module {
 #[cfg(test)]
 mod test {
     use crate::ModuleConfig;
+    use crate::DEFAULT_HOST as LOCALHOST;
 
     use super::Module;
     use std::io::Write;
@@ -571,14 +572,14 @@ mod test {
 
         // Base route is from the config file
         let base = mc
-            .handler_for_host_path("localhost", "/base")
+            .handler_for_host_path(LOCALHOST, "/base")
             .expect("Should get a /base route");
         assert_eq!("_start", base.entrypoint);
         assert_eq!(modpath, base.module.module);
 
         // Route one is from the module's _routes()
         let one = mc
-            .handler_for_host_path("localhost", "/base/one")
+            .handler_for_host_path(LOCALHOST, "/base/one")
             .expect("Should get the /base/one route");
 
         assert_eq!("one", one.entrypoint);
@@ -586,7 +587,7 @@ mod test {
 
         // Route two is a wildcard.
         let two = mc
-            .handler_for_host_path("localhost", "/base/two/three")
+            .handler_for_host_path(LOCALHOST, "/base/two/three")
             .expect("Should get the /base/two/... route");
 
         assert_eq!("two", two.entrypoint);
@@ -594,11 +595,11 @@ mod test {
 
         // This should fail
         assert!(mc
-            .handler_for_host_path("localhost", "/base/no/such/path")
+            .handler_for_host_path(LOCALHOST, "/base/no/such/path")
             .is_err());
 
         // This should pass
-        mc.handler_for_host_path("localhost", "/another/path")
+        mc.handler_for_host_path(LOCALHOST, "/another/path")
             .expect("The generic handler should have been returned for this");
     }
 
