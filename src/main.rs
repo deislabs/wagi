@@ -54,7 +54,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .unwrap_or("modules.toml")
         .to_owned();
 
-    let router = Router::new(module_config_path, cache_config_path)?;
+    let router = Router::new(module_config_path, cache_config_path).await?;
 
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let addr = conn.remote_addr();

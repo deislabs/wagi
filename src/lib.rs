@@ -25,7 +25,10 @@ pub struct Router {
 }
 
 impl Router {
-    pub fn new(module_config_path: String, cache_config_path: String) -> anyhow::Result<Self> {
+    pub async fn new(
+        module_config_path: String,
+        cache_config_path: String,
+    ) -> anyhow::Result<Self> {
         let module_config =
             load_modules_toml(module_config_path.as_str(), cache_config_path.clone()).await?;
         Ok(Router {
@@ -108,6 +111,8 @@ impl Router {
     /// modules. It will call the `_routes()` method on each module. If caching is
     /// enabled, it will also clear and recreate the module cache.
     fn reload(&self) -> anyhow::Result<()> {
+        log::info!("Nothing reloaded.");
+        /*
         let new_config = load_modules_toml(
             self.module_config_path.as_str(),
             self.cache_config_path.clone(),
@@ -117,7 +122,7 @@ impl Router {
             *module_config = new_config;
             module_config.build_registry(self.cache_config_path.clone())?;
         }
-
+        */
         Ok(())
     }
 }
