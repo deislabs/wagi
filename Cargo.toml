@@ -18,6 +18,8 @@ wasmtime-wasi = "0.22"
 wasmtime-cache = "0.22"
 wasi-common = "0.22"
 clap = "2.33.3"
-tempfile = "3.2"
-bindle = "0.3"
+bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
 url = "2.2"
+
+[dev-dependencies]
+tempfile = "3.2"

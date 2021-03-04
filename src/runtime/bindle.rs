@@ -16,6 +16,8 @@ pub(crate) async fn load_bindle(server: &str, uri: &Url) -> anyhow::Result<wasmt
     // TODO: We need to load a keyring and then get it all the way here.
     //invoice.verify(keyring)
 
+    // TODO: We should probably turn on the LRU.
+
     // For now, we grab a list of parcels that have no conditions.
     // This is definitely not the best strategy.
     let parcels = invoice.parcel;

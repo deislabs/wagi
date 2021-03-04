@@ -1,13 +1,12 @@
 use crate::http_util::*;
 use crate::runtime::*;
 
-use futures::{Future, FutureExt};
 use hyper::{header::HOST, Body, Request, Response};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 mod http_util;
 pub mod runtime;
@@ -19,9 +18,7 @@ pub const DEFAULT_HOST: &str = "localhost:3000";
 #[derive(Clone)]
 /// A router is responsible for taking an inbound request and sending it to the appropriate handler.
 pub struct Router {
-    pub module_config: Arc<RwLock<ModuleConfig>>,
-    pub cache_config_path: String,
-    pub module_config_path: String,
+    module_store: ModuleStore,
 }
 
 impl Router {
@@ -30,22 +27,22 @@ impl Router {
         cache_config_path: String,
     ) -> anyhow::Result<Self> {
         let module_config =
-            load_modules_toml(module_config_path.as_str(), cache_config_path.clone()).await?;
-        Ok(Router {
-            cache_config_path,
-            module_config_path,
-            module_config: Arc::new(RwLock::new(module_config)),
-        })
+            load_modules_toml(&module_config_path, cache_config_path.clone()).await?;
+        let module_store = ModuleStore::new(module_config, cache_config_path, module_config_path);
+        let cloned_store = module_store.clone();
+        tokio::spawn(async move { cloned_store.run().await });
+
+        Ok(Router { module_store })
     }
     /// Route the request to the correct handler
     ///
     /// Some routes are built in (like healthz), while others are dynamically
     /// dispatched.
-    pub fn route(
+    pub async fn route(
         &self,
         req: Request<Body>,
         client_addr: SocketAddr,
-    ) -> Box<dyn Future<Output = Result<Response<Body>, hyper::Error>> + Unpin + Send> {
+    ) -> Result<Response<Body>, hyper::Error> {
         // TODO: Improve the loading. See issue #3
         //
         // Additionally, we could implement an LRU to cache WASM modules. This would
@@ -60,71 +57,55 @@ impl Router {
             .map(|val| val.to_str().unwrap_or(""))
             .unwrap_or("");
         match uri_path {
-            "/healthz" => Box::new(async { Ok(Response::new(Body::from("OK"))) }.boxed()),
+            "/healthz" => Ok(Response::new(Body::from("OK"))),
             "/_reload" => {
-                let res = self.reload();
-                Box::new(
-                    async move {
-                        match res {
-                            Ok(_) => Ok(Response::new(Body::from("OK"))),
-                            Err(e) => Ok(internal_error(&e.to_string())),
-                        }
-                    }
-                    .boxed(),
-                )
+                self.module_store.reload();
+                Ok(Response::new(Body::from("OK")))
             }
             _ => match self
-                .module_config
-                .read()
-                .unwrap()
+                .module_store
                 .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
+                .await
             {
                 Ok(h) => {
-                    let cache_config_path = self.cache_config_path.clone();
-                    Box::new(
-                        async move {
-                            Ok::<_, hyper::Error>(
-                                h.module
-                                    .execute(
-                                        h.entrypoint.as_str(),
-                                        req,
-                                        client_addr,
-                                        cache_config_path,
-                                    )
-                                    .await,
-                            )
-                        }
-                        .boxed(),
-                    )
+                    let cache_config_path = self.module_store.cache_config_path.clone();
+                    let res = h
+                        .module
+                        .execute(h.entrypoint.as_str(), req, client_addr, cache_config_path)
+                        .await;
+                    Ok(res)
                 }
                 Err(e) => {
                     log::error!("error: {}", e);
-                    Box::new(async { Ok(not_found()) }.boxed())
+                    Ok(not_found())
                 }
             },
         }
     }
 
+    /*
     /// Reload the config and modules.
     ///
     /// This rebuilds the modules list from config, and then re-initializes all
     /// modules. It will call the `_routes()` method on each module. If caching is
     /// enabled, it will also clear and recreate the module cache.
+
     fn reload(&self) -> anyhow::Result<()> {
-        log::info!("Nothing reloaded.");
-        /*
         let new_config = load_modules_toml(
             self.module_config_path.as_str(),
             self.cache_config_path.clone(),
-        )?;
+        )
+        .await?;
         {
-            let mut module_config = self.module_config.write().unwrap();
+            let mut module_config = self.module_config.write().await;
             *module_config = new_config;
-            module_config.build_registry(self.cache_config_path.clone())?;
+            module_config
+                .build_registry(self.cache_config_path.clone())
+                .await?;
         }
-        */
         Ok(())
     }
+    */
 }
 
 /// Load the configuration TOML
@@ -145,6 +126,70 @@ pub async fn load_modules_toml(
     modules.build_registry(cache_config_path).await?;
 
     Ok(modules)
+}
+
+#[derive(Clone)]
+struct ModuleStore {
+    module_config: Arc<RwLock<ModuleConfig>>,
+    cache_config_path: String,
+    module_config_path: String,
+    notify: Arc<Notify>,
+}
+
+impl ModuleStore {
+    fn new(config: ModuleConfig, cache_config_path: String, module_config_path: String) -> Self {
+        ModuleStore {
+            module_config: Arc::new(RwLock::new(config)),
+            cache_config_path,
+            module_config_path,
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    async fn run(&self) {
+        loop {
+            self.notify.notified().await;
+            let new_config = match load_modules_toml(
+                self.module_config_path.as_str(),
+                self.cache_config_path.clone(),
+            )
+            .await
+            {
+                Ok(conf) => conf,
+                Err(e) => {
+                    log::error!("Error when loading modules, will retry: {}", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    self.notify.notify_one();
+                    continue;
+                }
+            };
+            {
+                let mut module_config = self.module_config.write().await;
+                *module_config = new_config;
+                if let Err(e) = module_config
+                    .build_registry(self.cache_config_path.clone())
+                    .await
+                {
+                    log::error!("Reload: {}", e);
+                }
+            }
+        }
+    }
+
+    async fn handler_for_host_path(
+        &self,
+        host: &str,
+        uri_fragment: &str,
+    ) -> anyhow::Result<Handler> {
+        self.module_config
+            .read()
+            .await
+            .handler_for_host_path(host, uri_fragment)
+    }
+
+    fn reload(&self) {
+        self.notify.notify_one()
+    }
 }
 
 /// The configuration for all modules in a WAGI site
@@ -178,15 +223,18 @@ impl ModuleConfig {
 
         let mut failed_modules: Vec<String> = Vec::new();
 
-        for m in self.modules.iter() {
-            match m.load_routes(cache_config_path.clone()).await {
+        for m in self.modules.iter().cloned() {
+            let cccp = cache_config_path.clone();
+            let module = m.clone();
+            let res = tokio::task::spawn_blocking(move || module.load_routes(cccp)).await?;
+            match res {
                 Err(e) => {
                     // FIXME: I think we could do something better here.
                     failed_modules.push(e.to_string())
                 }
                 Ok(subroutes) => subroutes
-                    .iter()
-                    .for_each(|entry| routes.push(Handler::new(entry, &m))),
+                    .into_iter()
+                    .for_each(|entry| routes.push(Handler::new(entry, m.clone()))),
             }
         }
 
@@ -213,7 +261,7 @@ impl ModuleConfig {
             for r in routes {
                 // The request must match either the `host` of an entry or the `default_host`
                 // for this server.
-                match r.host.as_ref() {
+                match r.host() {
                     // Host doesn't match. Skip.
                     Some(h) if h != host => continue,
                     // This is not the default domain. Skip.
@@ -284,13 +332,13 @@ mod test {
         let foo = mc
             .handler_for_host_path(super::DEFAULT_HOST, "/")
             .expect("foo.example.com handler found");
-        assert!(foo.host.is_none());
+        assert!(foo.module.host.is_none());
 
         // This should match a handler with host example.com
         let foo = mc
             .handler_for_host_path("example.com", "/")
             .expect("example.com handler found");
-        assert!(foo.host.is_some());
+        assert!(foo.module.host.is_some());
 
         // This should not match any handlers
         assert!(mc.handler_for_host_path("foo.example.com", "/").is_err());

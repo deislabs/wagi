@@ -11,9 +11,10 @@ pub(crate) fn not_found() -> Response<Body> {
 }
 
 /// Create an HTTP 500 response
-pub(crate) fn internal_error(msg: &str) -> Response<Body> {
-    log::error!("HTTP 500 error: {}", msg);
-    let mut res = Response::new(Body::from(msg.to_owned()));
+pub(crate) fn internal_error(msg: impl std::string::ToString) -> Response<Body> {
+    let message = msg.to_string();
+    log::error!("HTTP 500 error: {}", message);
+    let mut res = Response::new(Body::from(message));
     *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     res
 }
