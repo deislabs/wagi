@@ -12,12 +12,18 @@ use std::io::BufRead;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
+use url::Url;
 use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::{Wasi, WasiCtxBuilder};
 
 use crate::http_util::*;
 use crate::version::*;
+
+mod bindle;
+
+/// The default Bindle server URL.
+pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
@@ -80,6 +86,10 @@ pub struct Module {
     pub entrypoint: Option<String>,
     /// The name of the host.
     pub host: Option<String>,
+    /// The URL fragment for the bindle server.
+    ///
+    /// If none is supplied, then http://localhost:8080/v1 is used
+    pub bindle_server: Option<String>,
 }
 
 impl Module {
@@ -113,7 +123,10 @@ impl Module {
     /// Examine the given module to see if it has any routes.
     ///
     /// If it has any routes, add them to the vector and return it.
-    pub fn load_routes(&self, cache_config_path: String) -> Result<Vec<RouteEntry>, anyhow::Error> {
+    pub async fn load_routes(
+        &self,
+        cache_config_path: String,
+    ) -> Result<Vec<RouteEntry>, anyhow::Error> {
         let start_time = Instant::now();
 
         let prefix = self
@@ -149,7 +162,7 @@ impl Module {
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
 
-        let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
+        let module = self.load_module(&store).await?;
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
@@ -494,15 +507,50 @@ impl Module {
 
         Ok(res)
     }
+
+    /// Determine the source of the module, and read it from that source.
+    ///
+    /// Modules can be stored locally, or they can be stored in external sources like
+    /// Bindle. WAGI determines the source by looking at the URI of the module.
+    ///
+    /// - If `file:` is specified, or no schema is specified, this loads from the local filesystem
+    async fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
+        match Url::parse(self.module.as_str()) {
+            Err(e) => {
+                log::debug!(
+                    "Error parsing module URI {}. Assuming this is a local file.",
+                    e
+                );
+                wasmtime::Module::from_file(store.engine(), self.module.as_str())
+            }
+            Ok(uri) => match uri.scheme() {
+                "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
+                "bindle" => self.load_bindle(&uri).await,
+                s => anyhow::bail!("Unknown scheme {}", s),
+            },
+        }
+    }
+
+    async fn load_bindle(&self, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+        bindle::load_bindle(
+            self.bindle_server
+                .clone()
+                .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned())
+                .as_str(),
+            uri,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use super::Module;
     use crate::ModuleConfig;
     use crate::DEFAULT_HOST as LOCALHOST;
 
-    use super::Module;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     const ROUTES_WAT: &str = r#"
     (module
@@ -527,10 +575,15 @@ mod test {
     )
     "#;
 
-    #[test]
-    fn load_routes_from_wasm() {
+    fn write_temp_wat(data: &str) -> anyhow::Result<NamedTempFile> {
         let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
-        write!(tf, "{}", ROUTES_WAT).expect("wrote WAT to disk");
+        write!(tf, "{}", data).expect("wrote WAT to disk");
+        Ok(tf)
+    }
+
+    #[tokio::test]
+    async fn load_routes_from_wasm() {
+        let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
         let watfile = tf.path();
 
         // HEY RADU! IS THIS OKAY FOR A TEST?
@@ -543,6 +596,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -553,6 +607,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         let mut mc = ModuleConfig {
@@ -561,7 +616,9 @@ mod test {
             default_host: None,
         };
 
-        mc.build_registry(cache).expect("registry build cleanly");
+        mc.build_registry(cache)
+            .await
+            .expect("registry build cleanly");
 
         log::debug!("{:#?}", mc.route_cache);
 
@@ -603,13 +660,10 @@ mod test {
             .expect("The generic handler should have been returned for this");
     }
 
-    #[test]
-    fn should_override_default_domain() {
-        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
-        write!(tf, "{}", ROUTES_WAT).expect("wrote WAT to disk");
+    #[tokio::test]
+    async fn should_override_default_domain() {
+        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let watfile = tf.path();
-
-        // HEY RADU! IS THIS OKAY FOR A TEST?
         let cache = "cache.toml".to_string();
 
         let module = Module {
@@ -619,6 +673,7 @@ mod test {
             environment: None,
             entrypoint: None,
             host: None,
+            bindle_server: None,
         };
 
         let mut mc = ModuleConfig {
@@ -627,7 +682,9 @@ mod test {
             default_host: Some("localhost.localdomain".to_owned()),
         };
 
-        mc.build_registry(cache).expect("registry build cleanly");
+        mc.build_registry(cache)
+            .await
+            .expect("registry build cleanly");
 
         // This should fail b/c default domain is localhost.localdomain
         assert!(mc.handler_for_host_path("localhost", "/base").is_err());
@@ -635,5 +692,74 @@ mod test {
         assert!(mc
             .handler_for_host_path("localhost.localdomain", "/base")
             .is_ok())
+    }
+
+    #[tokio::test]
+    async fn should_parse_file_uri() {
+        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
+        let watfile = tf.path();
+
+        let urlish = format!("file:{}", watfile.to_string_lossy().to_string());
+        println!("Testing URL: {}", urlish);
+
+        let module = Module {
+            route: "/base".to_string(),
+            module: urlish,
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: None,
+            bindle_server: None,
+        };
+
+        let store = super::Store::default();
+
+        module.load_module(&store).await.expect("loaded module");
+    }
+
+    // Why is there a test for upstream libraries? Well, because they each seem to have
+    // quirks that cause them to differ from the spec. This is here because we plan on
+    // changing to Hyper when it gets updated, but for now are using URL.
+    //
+    // Note that `url` follows the WhatWG convention of omitting `localhost` in `file:` urls.
+    #[test]
+    fn should_parse_file_scheme() {
+        let uri = url::Url::parse("file:///foo/bar").expect("Should parse URI with no host");
+        assert!(uri.host().is_none());
+
+        let uri = url::Url::parse("file:/foo/bar").expect("Should parse URI with no host");
+        assert!(uri.host().is_none());
+
+        let uri =
+            url::Url::parse("file://localhost/foo/bar").expect("Should parse URI with no host");
+        assert_eq!("/foo/bar", uri.path());
+        // Here's why: https://github.com/whatwg/url/pull/544
+        assert!(uri.host().is_none());
+
+        let uri =
+            url::Url::parse("foo://localhost/foo/bar").expect("Should parse URI with no host");
+        assert_eq!("/foo/bar", uri.path());
+        assert_eq!(uri.host_str(), Some("localhost"));
+
+        let uri =
+            url::Url::parse("bindle:localhost/foo/bar").expect("Should parse URI with no host");
+        assert_eq!("localhost/foo/bar", uri.path());
+        assert!(uri.host().is_none());
+
+        // Two from the Bindle spec
+        let uri = url::Url::parse("bindle:example.com/hello_world/1.2.3")
+            .expect("Should parse URI with no host");
+        assert_eq!("example.com/hello_world/1.2.3", uri.path());
+        assert!(uri.host().is_none());
+
+        let uri = url::Url::parse(
+            "bindle:github.com/deislabs/example_bindle/123.234.34567-alpha.9999+hellothere",
+        )
+        .expect("Should parse URI with no host");
+        assert_eq!(
+            "github.com/deislabs/example_bindle/123.234.34567-alpha.9999+hellothere",
+            uri.path()
+        );
+        assert!(uri.host().is_none());
     }
 }
