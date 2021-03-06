@@ -1,5 +1,6 @@
 //! The tools for executing WAGI modules, and managing the lifecycle of a request.
 
+use cap_std::fs::Dir;
 use hyper::{
     header::HOST,
     http::header::{HeaderName, HeaderValue},
@@ -13,9 +14,10 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
 use url::Url;
-use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
+use wasi_cap_std_sync::WasiCtxBuilder;
+use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
-use wasmtime_wasi::{Wasi, WasiCtxBuilder};
+use wasmtime_wasi::Wasi;
 
 use crate::http_util::*;
 use crate::version::*;
@@ -172,9 +174,10 @@ impl Module {
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
         let mut builder = WasiCtxBuilder::new();
-        builder
+
+        builder = builder
             .inherit_stderr() // STDERR goes to the console of the server
-            .stdout(stdout);
+            .stdout(Box::new(stdout));
 
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
@@ -360,6 +363,14 @@ impl Module {
         headers
     }
 
+    fn tmp_headers(&self, headers: HashMap<String, String>) -> Vec<(String, String)> {
+        let mut res: Vec<(String, String)> = Vec::new();
+        for (k, v) in headers.iter() {
+            res.push((k.clone(), v.clone()));
+        }
+        res
+    }
+
     // Load and execute the WASM module.
     //
     // Typically, the higher-level execute() method should be used instead, as that handles
@@ -402,30 +413,32 @@ impl Module {
         // See specifically sections 4.2 and 6.1 of RFC 3875.
         // Currently, we will attach to wherever logs go.
 
-        let mut args = vec![uri_path];
+        let mut args = vec![uri_path.to_string()];
         req.uri
             .query()
-            .map(|q| q.split('&').for_each(|item| args.push(item)))
+            .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
             .take();
 
+        let headers = &self.tmp_headers(headers);
+
         let mut builder = WasiCtxBuilder::new();
-        builder
-            .args(args)
-            .envs(headers)
+        builder = builder
+            .args(&args)?
+            .envs(headers)?
             .inherit_stderr() // STDERR goes to the console of the server
-            .stdout(stdout) // STDOUT is sent to a Vec<u8>, which becomes the Body later
-            .stdin(stdin);
+            .stdout(Box::new(stdout)) // STDOUT is sent to a Vec<u8>, which becomes the Body later
+            .stdin(Box::new(stdin));
 
         // Map all of the volumes.
         if let Some(dirs) = self.volumes.as_ref() {
             for (guest, host) in dirs.iter() {
                 // Try to open the dir or log an error.
-                match std::fs::File::open(host) {
+                match unsafe { Dir::open_ambient_dir(host) } {
                     Ok(dir) => {
-                        builder.preopened_dir(dir, guest);
+                        builder = builder.preopened_dir(dir, guest)?;
                     }
                     Err(e) => log::error!("Error opening {} -> {}: {}", host, guest, e),
-                }
+                };
             }
         }
 

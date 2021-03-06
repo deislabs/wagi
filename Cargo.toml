@@ -13,13 +13,18 @@ futures = "0.3"
 anyhow = "1.0"
 toml = "0.5"
 serde = { version = "1.0", features = ["derive"] }
-wasmtime = "0.22"
-wasmtime-wasi = "0.22"
-wasmtime-cache = "0.22"
-wasi-common = "0.22"
+wasmtime = "0.24"
+wasmtime-wasi = "0.24"
+wasmtime-cache = "0.24"
+wasi-common = "0.24"
+wasi-cap-std-sync = "0.24"
+cap-std = "0.13"
+# wasi-experimental-http-wasmtime = {path = "../wasi-experimental-http/crates/wasi-experimental-http-wasmtime/"}
 clap = "2.33.3"
 bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
 url = "2.2"
 
 [dev-dependencies]
 tempfile = "3.2"
+bindle = "0.3"
+url = "2.2"
