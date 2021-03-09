@@ -16,6 +16,7 @@ use std::{collections::HashMap, net::SocketAddr};
 use url::Url;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
+use wasi_experimental_http_wasmtime;
 use wasmtime::*;
 use wasmtime_wasi::Wasi;
 
@@ -94,6 +95,8 @@ pub struct Module {
     ///
     /// If none is supplied, then http://localhost:8080/v1 is used
     pub bindle_server: Option<String>,
+
+    pub allowed_hosts: Option<Vec<String>>,
 }
 
 impl Module {
@@ -182,6 +185,7 @@ impl Module {
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
+        wasi_experimental_http_wasmtime::link_http(&mut linker, None)?;
 
         // TODO: This could be reallllllllly dangerous as we are for sure going to block at this
         // point on this current thread. This _should_ be ok given that we run this as a
@@ -445,6 +449,7 @@ impl Module {
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
+        wasi_experimental_http_wasmtime::link_http(&mut linker, self.allowed_hosts.clone())?;
 
         let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
         let instance = linker.instantiate(&module)?;
@@ -632,6 +637,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -643,6 +649,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let mut mc = ModuleConfig {
@@ -709,6 +716,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let mut mc = ModuleConfig {
@@ -745,6 +753,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let store = super::Store::default();

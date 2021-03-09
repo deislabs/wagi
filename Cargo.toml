@@ -19,7 +19,7 @@ wasmtime-cache = "0.24"
 wasi-common = "0.24"
 wasi-cap-std-sync = "0.24"
 cap-std = "0.13"
-# wasi-experimental-http-wasmtime = {path = "../wasi-experimental-http/crates/wasi-experimental-http-wasmtime/"}
+wasi-experimental-http-wasmtime = "0.1"
 clap = "2.33.3"
 bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
 url = "2.2"

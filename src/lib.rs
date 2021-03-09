@@ -282,6 +282,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -293,6 +294,7 @@ mod test {
             entrypoint: None,
             host: Some("example.com".to_owned()),
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let mut mc = ModuleConfig {

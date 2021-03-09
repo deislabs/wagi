@@ -1831,6 +1831,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite 0.2.4",
  "serde",
+ "serde_json",
  "serde_urlencoded",
  "tokio",
  "tokio-native-tls",
@@ -2603,6 +2604,7 @@ dependencies = [
  "url",
  "wasi-cap-std-sync",
  "wasi-common",
+ "wasi-experimental-http-wasmtime",
  "wasmtime",
  "wasmtime-cache",
  "wasmtime-wasi",
@@ -2698,6 +2700,40 @@ dependencies = [
  "tracing",
  "wiggle",
  "winapi",
+]
+
+[[package]]
+name = "wasi-experimental-http"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0e78f2cfffae190ca127320dfbfee87c2c5bbf0b20da400fcb8b16d9c5cf51f"
+dependencies = [
+ "anyhow",
+ "bytes 1.0.1",
+ "http",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "wasi-experimental-http-wasmtime"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6aa29a1c7b0c1f53e12f29d8a10eacd4cb210208f59e5e724f6c41950d22f19"
+dependencies = [
+ "anyhow",
+ "bytes 1.0.1",
+ "futures",
+ "http",
+ "reqwest",
+ "tokio",
+ "tracing",
+ "url",
+ "wasi-common",
+ "wasi-experimental-http",
+ "wasmtime",
+ "wasmtime-wasi",
 ]
 
 [[package]]
