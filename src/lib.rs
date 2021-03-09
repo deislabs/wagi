@@ -82,30 +82,6 @@ impl Router {
             },
         }
     }
-
-    /*
-    /// Reload the config and modules.
-    ///
-    /// This rebuilds the modules list from config, and then re-initializes all
-    /// modules. It will call the `_routes()` method on each module. If caching is
-    /// enabled, it will also clear and recreate the module cache.
-
-    fn reload(&self) -> anyhow::Result<()> {
-        let new_config = load_modules_toml(
-            self.module_config_path.as_str(),
-            self.cache_config_path.clone(),
-        )
-        .await?;
-        {
-            let mut module_config = self.module_config.write().await;
-            *module_config = new_config;
-            module_config
-                .build_registry(self.cache_config_path.clone())
-                .await?;
-        }
-        Ok(())
-    }
-    */
 }
 
 /// Load the configuration TOML
@@ -149,6 +125,7 @@ impl ModuleStore {
     async fn run(&self) {
         loop {
             self.notify.notified().await;
+            log::debug!("Reloading module configuration");
             let new_config = match load_modules_toml(
                 self.module_config_path.as_str(),
                 self.cache_config_path.clone(),
