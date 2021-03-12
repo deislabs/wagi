@@ -117,8 +117,14 @@ impl Module {
         .await
         {
             Ok(res) => res,
-            Err(e) if e.is_panic() => return internal_error("Module run error"),
-            Err(e) => return internal_error("module run was cancelled"),
+            Err(e) if e.is_panic() => {
+                log::error!("Recoverable panic on Wasm Runner thread: {}", e);
+                return internal_error("Module run error");
+            }
+            Err(e) => {
+                log::error!("Recoverable panic on Wasm Runner thread: {}", e);
+                return internal_error("module run was cancelled");
+            }
         };
         match res {
             Ok(res) => res,
