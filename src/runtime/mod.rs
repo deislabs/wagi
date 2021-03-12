@@ -46,18 +46,20 @@ pub struct Handler {
     // This path is the _fully constructed_ path. That is, if a module config declares its path as `/base`,
     // and the module registers the path `/foo/...`, the value of this would be `/base/foo/...`.
     pub path: String,
-    pub host: Option<String>,
 }
 
 impl Handler {
     /// Given a module and a route entry, create a new handler.
-    pub fn new(entry: &RouteEntry, module: &Module) -> Self {
+    pub fn new(entry: RouteEntry, module: Module) -> Self {
         Handler {
-            path: entry.path.clone(),
-            entrypoint: entry.entrypoint.clone(),
-            module: module.clone(),
-            host: module.host.clone(),
+            path: entry.path,
+            entrypoint: entry.entrypoint,
+            module: module,
         }
+    }
+
+    pub fn host(&self) -> Option<&String> {
+        self.module.host.as_ref()
     }
 }
 
@@ -107,8 +109,24 @@ impl Module {
             .await
             .unwrap_or_default()
             .to_vec();
-
-        match self.run_wasm(entrypoint, &parts, data, client_addr, cache_config_path) {
+        let ep = entrypoint.to_owned();
+        let me = self.clone();
+        let res = match tokio::task::spawn_blocking(move || {
+            me.run_wasm(&ep, &parts, data, client_addr, cache_config_path)
+        })
+        .await
+        {
+            Ok(res) => res,
+            Err(e) if e.is_panic() => {
+                log::error!("Recoverable panic on Wasm Runner thread: {}", e);
+                return internal_error("Module run error");
+            }
+            Err(e) => {
+                log::error!("Recoverable panic on Wasm Runner thread: {}", e);
+                return internal_error("module run was cancelled");
+            }
+        };
+        match res {
             Ok(res) => res,
             Err(e) => {
                 log::error!("error running WASM module: {}", e);
@@ -123,7 +141,7 @@ impl Module {
     /// Examine the given module to see if it has any routes.
     ///
     /// If it has any routes, add them to the vector and return it.
-    pub async fn load_routes(
+    pub(crate) fn load_routes(
         &self,
         cache_config_path: String,
     ) -> Result<Vec<RouteEntry>, anyhow::Error> {
@@ -162,7 +180,11 @@ impl Module {
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
 
-        let module = self.load_module(&store).await?;
+        // TODO: This could be reallllllllly dangerous as we are for sure going to block at this
+        // point on this current thread. This _should_ be ok given that we run this as a
+        // spawn_blocking, but those sound like famous last words waiting to happen. Refactor this
+        // sooner rather than later
+        let module = futures::executor::block_on(self.load_module(&store))?;
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
