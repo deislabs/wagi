@@ -96,6 +96,8 @@ pub struct Module {
     /// If none is supplied, then http://localhost:8080/v1 is used
     pub bindle_server: Option<String>,
 
+    /// List of hosts that the guest module is allowed to make HTTP requests to.
+    /// If none is supplied, the guest module can send requests to any server.
     pub allowed_hosts: Option<Vec<String>>,
 }
 
@@ -367,14 +369,6 @@ impl Module {
         headers
     }
 
-    fn tmp_headers(&self, headers: HashMap<String, String>) -> Vec<(String, String)> {
-        let mut res: Vec<(String, String)> = Vec::new();
-        for (k, v) in headers.iter() {
-            res.push((k.clone(), v.clone()));
-        }
-        res
-    }
-
     // Load and execute the WASM module.
     //
     // Typically, the higher-level execute() method should be used instead, as that handles
@@ -423,12 +417,15 @@ impl Module {
             .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
             .take();
 
-        let headers = &self.tmp_headers(headers);
+        let headers: Vec<(String, String)> = headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
 
         let mut builder = WasiCtxBuilder::new();
         builder = builder
             .args(&args)?
-            .envs(headers)?
+            .envs(&headers)?
             .inherit_stderr() // STDERR goes to the console of the server
             .stdout(Box::new(stdout)) // STDOUT is sent to a Vec<u8>, which becomes the Body later
             .stdin(Box::new(stdin));
