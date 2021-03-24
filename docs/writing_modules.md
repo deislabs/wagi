@@ -285,14 +285,18 @@ Check the documentation and examples from the repository for complete programs
 that send HTTP requests, but here is a short example of a GET request in Rust:
 
 ```rust
+use http;
+use wasi_experimental_http;
+
 #[no_mangle]
-pub extern "C" fn get() {
+pub extern "C" fn _start() {
     let url = "https://api.brigade.sh/healthz".to_string();
     let req = http::request::Builder::new().uri(&url).body(None).unwrap();
     let res = wasi_experimental_http::request(req).expect("cannot make get request");
 
     let str = std::str::from_utf8(&res.body()).unwrap().to_string();
-    assert_eq!(r#""OK""#, str);
+    println!("Content-Type: text/plain\n");
+    println!("{}", str);
 }
 ```
 
@@ -303,10 +307,9 @@ needed in WAGI is setting the allowed hosts for the module:
 allowed_hosts = ["https://api.brigade.sh"]
 ```
 
-The current behavior is that if the `allowed_hosts` field is missing, the guest module
-is allowed to make requests to any server. This behavior might change in the future.
+If `allowed_hosts` is missing or an empty vector, the guest module is not allowed to send HTTP requests to any server, so users must populate this vector before starting WAGI.
 
-The HTTP support is currently experimental, and breaking changes could occur.
+The HTTP support is currently experimental, and breaking changes _will_ occur, resulting in modules compiled with an older version of the library to stop working on WAGI until the library is stabilized.
 
 ## More Examples and Demos
 
