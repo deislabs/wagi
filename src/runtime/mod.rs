@@ -97,7 +97,8 @@ pub struct Module {
     pub bindle_server: Option<String>,
 
     /// List of hosts that the guest module is allowed to make HTTP requests to.
-    /// If none is supplied, the guest module can send requests to any server.
+    /// If none or an empty vector is supplied, the guest module cannot send
+    /// requests to any server.
     pub allowed_hosts: Option<Vec<String>>,
 }
 
