@@ -1,5 +1,6 @@
 //! The tools for executing WAGI modules, and managing the lifecycle of a request.
 
+use cap_std::fs::Dir;
 use hyper::{
     header::HOST,
     http::header::{HeaderName, HeaderValue},
@@ -13,9 +14,11 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
 use url::Url;
-use wasi_common::virtfs::pipe::{ReadPipe, WritePipe};
+use wasi_cap_std_sync::WasiCtxBuilder;
+use wasi_common::pipe::{ReadPipe, WritePipe};
+use wasi_experimental_http_wasmtime;
 use wasmtime::*;
-use wasmtime_wasi::{Wasi, WasiCtxBuilder};
+use wasmtime_wasi::Wasi;
 
 use crate::http_util::*;
 use crate::version::*;
@@ -92,6 +95,11 @@ pub struct Module {
     ///
     /// If none is supplied, then http://localhost:8080/v1 is used
     pub bindle_server: Option<String>,
+
+    /// List of hosts that the guest module is allowed to make HTTP requests to.
+    /// If none or an empty vector is supplied, the guest module cannot send
+    /// requests to any server.
+    pub allowed_hosts: Option<Vec<String>>,
 }
 
 impl Module {
@@ -172,13 +180,15 @@ impl Module {
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
         let mut builder = WasiCtxBuilder::new();
-        builder
+
+        builder = builder
             .inherit_stderr() // STDERR goes to the console of the server
-            .stdout(stdout);
+            .stdout(Box::new(stdout));
 
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
+        wasi_experimental_http_wasmtime::link_http(&mut linker, None)?;
 
         // TODO: This could be reallllllllly dangerous as we are for sure going to block at this
         // point on this current thread. This _should_ be ok given that we run this as a
@@ -402,36 +412,42 @@ impl Module {
         // See specifically sections 4.2 and 6.1 of RFC 3875.
         // Currently, we will attach to wherever logs go.
 
-        let mut args = vec![uri_path];
+        let mut args = vec![uri_path.to_string()];
         req.uri
             .query()
-            .map(|q| q.split('&').for_each(|item| args.push(item)))
+            .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
             .take();
 
+        let headers: Vec<(String, String)> = headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
         let mut builder = WasiCtxBuilder::new();
-        builder
-            .args(args)
-            .envs(headers)
+        builder = builder
+            .args(&args)?
+            .envs(&headers)?
             .inherit_stderr() // STDERR goes to the console of the server
-            .stdout(stdout) // STDOUT is sent to a Vec<u8>, which becomes the Body later
-            .stdin(stdin);
+            .stdout(Box::new(stdout)) // STDOUT is sent to a Vec<u8>, which becomes the Body later
+            .stdin(Box::new(stdin));
 
         // Map all of the volumes.
         if let Some(dirs) = self.volumes.as_ref() {
             for (guest, host) in dirs.iter() {
                 // Try to open the dir or log an error.
-                match std::fs::File::open(host) {
+                match unsafe { Dir::open_ambient_dir(host) } {
                     Ok(dir) => {
-                        builder.preopened_dir(dir, guest);
+                        builder = builder.preopened_dir(dir, guest)?;
                     }
                     Err(e) => log::error!("Error opening {} -> {}: {}", host, guest, e),
-                }
+                };
             }
         }
 
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
+        wasi_experimental_http_wasmtime::link_http(&mut linker, self.allowed_hosts.clone())?;
 
         let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
         let instance = linker.instantiate(&module)?;
@@ -619,6 +635,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
@@ -630,6 +647,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let mut mc = ModuleConfig {
@@ -696,6 +714,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let mut mc = ModuleConfig {
@@ -732,6 +751,7 @@ mod test {
             entrypoint: None,
             host: None,
             bindle_server: None,
+            allowed_hosts: None,
         };
 
         let store = super::Store::default();

@@ -232,6 +232,7 @@ pub fn _routes() {
     println!("/main _start");
 }
 ```
+
 ([Source](https://github.com/technosophos/hello-wagi))
 
 Here's the `modules.toml` for this feature:
@@ -273,11 +274,53 @@ But if we reversed the order above:
 Then a request for `/example/one/two/three/four` would match `/one/...` last, and so would execute
 the `one()` handler function.
 
+## Outbound HTTP requests
+
+As the WASI specification is in the process of [adding support for Berkeley
+sockets][wasi-berkeley-sockets], WAGI enables _experimental_ outbound HTTP requests through the
+[`wasi-experimental-http`][wasi-experimental-http] library, which adds support
+for guest modules written in Rust and AssemblyScript to execute HTTP 1.1
+requests.
+Check the documentation and examples from the repository for complete programs
+that send HTTP requests, but here is a short example of a GET request in Rust:
+
+```rust
+use http;
+use wasi_experimental_http;
+
+#[no_mangle]
+pub extern "C" fn _start() {
+    let url = "https://api.brigade.sh/healthz".to_string();
+    let req = http::request::Builder::new().uri(&url).body(None).unwrap();
+    let res = wasi_experimental_http::request(req).expect("cannot make get request");
+
+    let str = std::str::from_utf8(&res.body()).unwrap().to_string();
+    println!("Content-Type: text/plain\n");
+    println!("{}", str);
+}
+```
+
+After compiling this program to the `wasm32-wasi` target, the only additional configuration
+needed in WAGI is setting the allowed hosts for the module:
+
+```toml
+allowed_hosts = ["https://api.brigade.sh"]
+```
+
+If `allowed_hosts` is missing or an empty vector, the guest module is not allowed to send HTTP requests to any server, so users must populate this vector before starting WAGI.
+
+The HTTP support is currently experimental, and breaking changes _will_ occur, resulting in modules compiled with an older version of the library to stop working on WAGI until the library is stabilized.
+
 ## More Examples and Demos
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
 - [hello-wagi-as](https://github.com/deislabs/hello-wagi-as): AssemblyScript example using environment variables and query params.
+- [complete HTTP examples for Rust and AssemblyScript](https://github.com/deislabs/wasi-experimental-http/tree/main/tests)
 
 If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
 While this is not an exact implementation, it is very close.
 See the "Differences" section below for the differences.
+
+[wasi-experimental-http]: https://github.com/deislabs/wasi-experimental-http
+[wasi-berkeley-sockets]: https://github.com/WebAssembly/WASI/pull/312
+[http-limitations]: https://github.com/deislabs/wasi-experimental-http#known-limitations

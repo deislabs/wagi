@@ -9,3 +9,8 @@ module = "examples/hello.wat"
 # Example running a WASM file.
 route = "/hello/..."
 module = "examples/hello.wasm"
+
+[[module]]
+route = "/http-example"
+module = "examples/http-example.wasm"
+allowed_hosts = ["https://api.brigade.sh"]
