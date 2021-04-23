@@ -53,6 +53,7 @@ To add your own modules, compile your code to `wasm32-wasi` format and add them 
 ### Examples and Demos
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
+- [hello-wagi-grain](https://github.com/deislabs/hello-wagi-grain): An easy-to-read Grain example for WAGI.
 - [hello-wagi-as](https://github.com/deislabs/hello-wagi-as): AssemblyScript example using environment variables and query params.
 
 If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
