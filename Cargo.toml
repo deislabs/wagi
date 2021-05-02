@@ -13,19 +13,20 @@ futures = "0.3"
 anyhow = "1.0"
 toml = "0.5"
 serde = { version = "1.0", features = ["derive"] }
-wasmtime = "0.24"
-wasmtime-wasi = "0.24"
-wasmtime-cache = "0.24"
-wasi-common = "0.24"
-wasi-cap-std-sync = "0.24"
+wasmtime = "0.26"
+wasmtime-wasi = "0.26"
+wasmtime-cache = "0.26"
+wasi-common = "0.26"
+wasi-cap-std-sync = "0.26"
 cap-std = "0.13"
-wasi-experimental-http-wasmtime = "0.2"
+wasi-experimental-http-wasmtime = { git = "https://github.com/radu-matei/wasi-experimental-http", branch = "headers_get_all"}
 clap = "2.33.3"
 bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
 url = "2.2"
 oci-distribution = "0.6"
 sha2 = "0.9"
 tempfile = "3.2"
+wat = "1.0.37"
 
 [dev-dependencies]
 bindle = "0.3"
