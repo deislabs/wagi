@@ -10,7 +10,7 @@ module = "examples/hello.wat"
 route = "/hello/..."
 module = "examples/hello.wasm"
 
-# [[module]]
-# route = "/http-example"
-# module = "examples/http-example.wasm"
-# allowed_hosts = ["https://api.brigade.sh"]
+[[module]]
+route = "/http-example"
+module = "examples/http-example.wasm"
+allowed_hosts = ["https://api.brigade.sh"]
