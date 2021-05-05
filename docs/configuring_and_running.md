@@ -35,7 +35,7 @@ In a nutshell, these are the fields that `modules.toml` supports.
   - `defaultDomain`: By default, WAGI answers only to the hostname `localhost`. This allows you to specify a different default domain.
 - The `[[module]]` list: Each module starts with a `[[module]]` header. Inside of a module, the following fields are available:
   - `route` (REQUIRED): The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
-  - `module` (REQUIRED): The absolute path to the module on the file system
+  - `module` (REQUIRED): A module reference. See Module References below.
   - `environment`: A list of string/string environment variable pairs.
   - `repository`: RESERVED for future use
   - `entrypoint` (default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
@@ -60,7 +60,7 @@ Each `[[module]]` section in the `modules.toml` file is responsible for mapping 
 The two required directives for a module section are:
 
 - `route`: The path-portion of a URL
-- `module`: The path to the WebAssembly module to execute
+- `module`: A reference to the WebAssembly module to execute
 
 Routes are paths relative to the WAGI HTTP root. Assuming the routes above are running on a server whose domain is `example.com`:
 
@@ -68,9 +68,15 @@ Routes are paths relative to the WAGI HTTP root. Assuming the routes above are r
 - A route like `/hello` would handle traffic to `http://example.com/hello`
 - The route `/hello/...` is a special wildcard route that handles any traffic to `http://example.com/hello` or a subpath (like `http://example.com/hello/today/is/a/goo/day`)
 
-The `module` directive is a path to a `wasm` or `wat` file on the filesystem.
-We recommend using absolute paths.
-Relative paths will be resolved from the current working directory in which `wagi` was started.
+### Module References
+
+A module reference is a URL. There are three supported module reference schemes:
+
+- `file://`: A path to a `.wasm` or `.wat` file on the filesystem. We recommend using absolute paths beginning with `file://`. Right now, there is legacy support for absolute and relative paths without the `file://` prefix, but we discourge using that. Relative paths will be resolved from the current working directory in which `wagi` was started.
+- `bindle:`: A reference to a Bindle. This will be looked up in the configured Bindle server. Example: `bindle:example.com/foo/bar/1.2.3`.
+- `oci`: A reference to an OCI image in an OCI registry. Example: `oci:foo/bar:1.2.3` (equivalent to the Docker image `foo/bar:1.2.3`).
+
+> Note: Bindle URLs should not ever have a `//`. OCI URLs should use a `//` only if refering to a specific host, and may always omit `//` even if there is a reference to an external host.
 
 #### Volume Mounting
 

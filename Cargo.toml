@@ -23,6 +23,7 @@ wasi-experimental-http-wasmtime = "0.2"
 clap = "2.33.3"
 bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
 url = "2.2"
+oci-distribution = "0.6"
 
 [dev-dependencies]
 tempfile = "3.2"

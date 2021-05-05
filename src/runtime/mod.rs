@@ -19,6 +19,9 @@ use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasi_experimental_http_wasmtime;
 use wasmtime::*;
 use wasmtime_wasi::Wasi;
+use oci_distribution::client::{Client, ClientConfig};
+use oci_distribution::secrets::RegistryAuth;
+use oci_distribution::Reference;
 
 use crate::http_util::*;
 use crate::version::*;
@@ -552,6 +555,12 @@ impl Module {
     /// Bindle. WAGI determines the source by looking at the URI of the module.
     ///
     /// - If `file:` is specified, or no schema is specified, this loads from the local filesystem
+    /// - If `bindle:` is specified, this will retrieve the module from the configured Bindle server
+    /// - If `oci:` is specified, this will retrieve the module from an OCI Distribution registry
+    ///
+    /// While `file` is a little lenient in its adherence to the URL spec, `bindle` and `oci` are not.
+    /// For example, an `oci` URL that references `alpine:latest` should be `oci:alpine:latest`.
+    /// It should NOT be `oci://alpine:latest` because `alpine` is not a host name.
     async fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
         match Url::parse(self.module.as_str()) {
             Err(e) => {
@@ -564,6 +573,7 @@ impl Module {
             Ok(uri) => match uri.scheme() {
                 "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
                 "bindle" => self.load_bindle(&uri).await,
+                "oci" => self.load_oci(&uri).await,
                 s => anyhow::bail!("Unknown scheme {}", s),
             },
         }
@@ -579,11 +589,40 @@ impl Module {
         )
         .await
     }
+    async fn load_oci(&self, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+        let config = ClientConfig::default();
+        let mut oc = Client::new(config);
+        let auth = RegistryAuth::Anonymous;
+
+
+        let img = url_to_oci(uri)?;
+        let data = oc.pull(&img, &auth, vec!["application/wasm"]).await?;
+        if data.layers.is_empty() {
+            anyhow::bail!("image has no layers");
+        }
+        let first_layer = data.layers.get(0).unwrap();
+        let module = wasmtime::Module::new(&Engine::default(), first_layer.data.as_slice())?;
+        Ok(module)
+    }
+}
+
+/// Build the image name from the URL passed in.
+/// So oci://example.com/foo:latest will become example.com/foo:latest
+///
+/// If parsing fails, this will emit an error.
+fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
+    let name = uri.path().trim_start_matches("/");
+    let port = uri.port().and_then(|p|Some(format!(":{}", p))).unwrap_or_else(||"".to_owned());
+    let r: Reference = match uri.host() {
+        Some(host) => format!("{}{}/{}", host, port, name).parse(),
+        None => name.parse(),
+    }?;
+    Ok(r) // Because who doesn't love OKRs.
 }
 
 #[cfg(test)]
 mod test {
-    use super::Module;
+    use super::{Module, url_to_oci};
     use crate::ModuleConfig;
     use crate::DEFAULT_HOST as LOCALHOST;
 
@@ -803,5 +842,28 @@ mod test {
             uri.path()
         );
         assert!(uri.host().is_none());
+    }
+
+    #[test]
+    fn test_url_to_oci() {
+        let uri = url::Url::parse("oci:foo:bar").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("foo:bar", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com/foo:dev", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci:example/foo:1.2.3").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example/foo:1.2.3", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com/foo:dev", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com:9000/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com:9000/foo:dev", oci.whole().as_str());
     }
 }
