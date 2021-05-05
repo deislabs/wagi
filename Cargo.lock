@@ -2833,8 +2833,9 @@ dependencies = [
 
 [[package]]
 name = "wasi-experimental-http"
-version = "0.2.0"
-source = "git+https://github.com/radu-matei/wasi-experimental-http?branch=headers_get_all#dc0083515c8ae2a3b98b71d5a0f4ce27a697af8f"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "429ba9fb7e1b2774725a65a75c1064604cb96adf24d237ea29d232d06d4f1537"
 dependencies = [
  "anyhow",
  "bytes 1.0.1",
@@ -2845,8 +2846,9 @@ dependencies = [
 
 [[package]]
 name = "wasi-experimental-http-wasmtime"
-version = "0.2.0"
-source = "git+https://github.com/radu-matei/wasi-experimental-http?branch=headers_get_all#dc0083515c8ae2a3b98b71d5a0f4ce27a697af8f"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39e50642a210a70f0904a3feb311bdf9eace36477f25eeb721728428158af32b"
 dependencies = [
  "anyhow",
  "bytes 1.0.1",
