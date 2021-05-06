@@ -4,7 +4,7 @@ use crate::runtime::*;
 use hyper::{header::HOST, Body, Request, Response};
 use serde::Deserialize;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
@@ -25,10 +25,20 @@ impl Router {
     pub async fn new(
         module_config_path: String,
         cache_config_path: String,
+        module_cache: PathBuf,
     ) -> anyhow::Result<Self> {
-        let module_config =
-            load_modules_toml(&module_config_path, cache_config_path.clone()).await?;
-        let module_store = ModuleStore::new(module_config, cache_config_path, module_config_path);
+        let module_config = load_modules_toml(
+            &module_config_path,
+            cache_config_path.clone(),
+            module_cache.clone(),
+        )
+        .await?;
+        let module_store = ModuleStore::new(
+            module_config,
+            cache_config_path,
+            module_config_path,
+            module_cache,
+        );
         let cloned_store = module_store.clone();
         tokio::spawn(async move { cloned_store.run().await });
 
@@ -69,9 +79,16 @@ impl Router {
             {
                 Ok(h) => {
                     let cache_config_path = self.module_store.cache_config_path.clone();
+                    let module_cache_dir = self.module_store.module_cache.clone();
                     let res = h
                         .module
-                        .execute(h.entrypoint.as_str(), req, client_addr, cache_config_path)
+                        .execute(
+                            h.entrypoint.as_str(),
+                            req,
+                            client_addr,
+                            cache_config_path,
+                            module_cache_dir,
+                        )
                         .await;
                     Ok(res)
                 }
@@ -88,6 +105,7 @@ impl Router {
 pub async fn load_modules_toml(
     filename: &str,
     cache_config_path: String,
+    module_cache_dir: PathBuf,
 ) -> Result<ModuleConfig, anyhow::Error> {
     if !Path::new(filename).is_file() {
         return Err(anyhow::anyhow!(
@@ -99,7 +117,9 @@ pub async fn load_modules_toml(
     let data = std::fs::read_to_string(filename)?;
     let mut modules: ModuleConfig = toml::from_str(data.as_str())?;
 
-    modules.build_registry(cache_config_path).await?;
+    modules
+        .build_registry(cache_config_path, module_cache_dir)
+        .await?;
 
     Ok(modules)
 }
@@ -110,15 +130,22 @@ struct ModuleStore {
     cache_config_path: String,
     module_config_path: String,
     notify: Arc<Notify>,
+    module_cache: PathBuf,
 }
 
 impl ModuleStore {
-    fn new(config: ModuleConfig, cache_config_path: String, module_config_path: String) -> Self {
+    fn new(
+        config: ModuleConfig,
+        cache_config_path: String,
+        module_config_path: String,
+        module_cache: PathBuf,
+    ) -> Self {
         ModuleStore {
             module_config: Arc::new(RwLock::new(config)),
             cache_config_path,
             module_config_path,
             notify: Arc::new(Notify::new()),
+            module_cache,
         }
     }
 
@@ -129,6 +156,7 @@ impl ModuleStore {
             let new_config = match load_modules_toml(
                 self.module_config_path.as_str(),
                 self.cache_config_path.clone(),
+                self.module_cache.clone(),
             )
             .await
             {
@@ -144,7 +172,7 @@ impl ModuleStore {
                 let mut module_config = self.module_config.write().await;
                 *module_config = new_config;
                 if let Err(e) = module_config
-                    .build_registry(self.cache_config_path.clone())
+                    .build_registry(self.cache_config_path.clone(), self.module_cache.clone())
                     .await
                 {
                     log::error!("Reload: {}", e);
@@ -195,7 +223,11 @@ pub struct ModuleConfig {
 
 impl ModuleConfig {
     /// Construct a registry of all routes.
-    async fn build_registry(&mut self, cache_config_path: String) -> anyhow::Result<()> {
+    async fn build_registry(
+        &mut self,
+        cache_config_path: String,
+        module_cache_dir: PathBuf,
+    ) -> anyhow::Result<()> {
         let mut routes = vec![];
 
         let mut failed_modules: Vec<String> = Vec::new();
@@ -203,7 +235,8 @@ impl ModuleConfig {
         for m in self.modules.iter().cloned() {
             let cccp = cache_config_path.clone();
             let module = m.clone();
-            let res = tokio::task::spawn_blocking(move || module.load_routes(cccp)).await?;
+            let mcd = module_cache_dir.clone();
+            let res = tokio::task::spawn_blocking(move || module.load_routes(cccp, mcd)).await?;
             match res {
                 Err(e) => {
                     // FIXME: I think we could do something better here.
@@ -273,6 +306,7 @@ mod test {
     #[tokio::test]
     async fn handler_should_respect_host() {
         let cache = "cache.toml".to_string();
+        let mod_cache = tempfile::tempdir().expect("temp dir created").into_path();
 
         let module = Module {
             route: "/".to_string(),
@@ -303,7 +337,7 @@ mod test {
             default_host: None,
         };
 
-        mc.build_registry(cache)
+        mc.build_registry(cache, mod_cache)
             .await
             .expect("registry built cleanly");
 

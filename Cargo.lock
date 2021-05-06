@@ -2725,6 +2725,7 @@ dependencies = [
  "log",
  "oci-distribution",
  "serde",
+ "sha2",
  "tempfile",
  "tokio",
  "toml",

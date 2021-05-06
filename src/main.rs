@@ -26,7 +26,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             Arg::with_name("cache")
                 .long("cache")
                 .value_name("CACHE_TOML")
-                .help("the path to the cache.toml configuration file")
+                .help("the path to the cache.toml configuration file for configuring the Wasm optimization cache")
                 .takes_value(true),
         )
         .arg(
@@ -36,6 +36,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .value_name("IP_PORT")
                 .takes_value(true)
                 .help("the IP address and port to listen on. Default: 127.0.0.1:3000"),
+        )
+        .arg(
+            Arg::with_name("module_cache")
+                .long("module-cache")
+                .value_name("MODULE_CACHE_DIR")
+                .help("the path to a directory where modules can be cached after fetching from remote locations. Default is to create a tempdir.")
+                .takes_value(true),
         )
         .get_matches();
 
@@ -54,7 +61,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .unwrap_or("modules.toml")
         .to_owned();
 
-    let router = Router::new(module_config_path, cache_config_path).await?;
+    let mc = match matches.value_of("module_cache") {
+        Some(m) => std::path::PathBuf::from(m),
+        None => tempfile::tempdir()?.into_path(),
+    };
+    let router = Router::new(module_config_path, cache_config_path, mc).await?;
 
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let addr = conn.remote_addr();
