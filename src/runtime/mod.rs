@@ -8,8 +8,13 @@ use hyper::{
     http::uri::Scheme,
     Body, Request, Response, StatusCode,
 };
+use oci_distribution::client::{Client, ClientConfig};
+use oci_distribution::secrets::RegistryAuth;
+use oci_distribution::Reference;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::io::BufRead;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
@@ -20,13 +25,15 @@ use wasi_experimental_http_wasmtime;
 use wasmtime::*;
 use wasmtime_wasi::Wasi;
 
-use crate::http_util::*;
 use crate::version::*;
+use crate::{http_util::*, runtime::bindle::bindle_cache_key};
 
 mod bindle;
 
 /// The default Bindle server URL.
 pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
+
+const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
@@ -110,6 +117,7 @@ impl Module {
         req: Request<Body>,
         client_addr: SocketAddr,
         cache_config_path: String,
+        module_cache_dir: PathBuf,
     ) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
@@ -120,7 +128,14 @@ impl Module {
         let ep = entrypoint.to_owned();
         let me = self.clone();
         let res = match tokio::task::spawn_blocking(move || {
-            me.run_wasm(&ep, &parts, data, client_addr, cache_config_path)
+            me.run_wasm(
+                &ep,
+                &parts,
+                data,
+                client_addr,
+                cache_config_path,
+                module_cache_dir,
+            )
         })
         .await
         {
@@ -152,6 +167,7 @@ impl Module {
     pub(crate) fn load_routes(
         &self,
         cache_config_path: String,
+        module_cache_dir: PathBuf,
     ) -> Result<Vec<RouteEntry>, anyhow::Error> {
         let start_time = Instant::now();
 
@@ -190,11 +206,7 @@ impl Module {
         wasi.add_to_linker(&mut linker)?;
         wasi_experimental_http_wasmtime::link_http(&mut linker, None)?;
 
-        // TODO: This could be reallllllllly dangerous as we are for sure going to block at this
-        // point on this current thread. This _should_ be ok given that we run this as a
-        // spawn_blocking, but those sound like famous last words waiting to happen. Refactor this
-        // sooner rather than later
-        let module = futures::executor::block_on(self.load_module(&store))?;
+        let module = self.load_cached_module(&store, module_cache_dir)?;
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
@@ -386,6 +398,7 @@ impl Module {
         body: Vec<u8>,
         client_addr: SocketAddr,
         cache_config_path: String,
+        cache_dir: PathBuf,
     ) -> Result<Response<Body>, anyhow::Error> {
         let start_time = Instant::now();
         let store = match std::fs::canonicalize(cache_config_path.clone()) {
@@ -449,7 +462,8 @@ impl Module {
         wasi.add_to_linker(&mut linker)?;
         wasi_experimental_http_wasmtime::link_http(&mut linker, self.allowed_hosts.clone())?;
 
-        let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
+        //let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
+        let module = self.load_cached_module(&store, cache_dir)?;
         let instance = linker.instantiate(&module)?;
 
         let duration = start_time.elapsed();
@@ -552,7 +566,13 @@ impl Module {
     /// Bindle. WAGI determines the source by looking at the URI of the module.
     ///
     /// - If `file:` is specified, or no schema is specified, this loads from the local filesystem
-    async fn load_module(&self, store: &Store) -> anyhow::Result<wasmtime::Module> {
+    /// - If `bindle:` is specified, this will retrieve the module from the configured Bindle server
+    /// - If `oci:` is specified, this will retrieve the module from an OCI Distribution registry
+    ///
+    /// While `file` is a little lenient in its adherence to the URL spec, `bindle` and `oci` are not.
+    /// For example, an `oci` URL that references `alpine:latest` should be `oci:alpine:latest`.
+    /// It should NOT be `oci://alpine:latest` because `alpine` is not a host name.
+    async fn load_module(&self, store: &Store, cache: PathBuf) -> anyhow::Result<wasmtime::Module> {
         match Url::parse(self.module.as_str()) {
             Err(e) => {
                 log::debug!(
@@ -563,27 +583,133 @@ impl Module {
             }
             Ok(uri) => match uri.scheme() {
                 "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
-                "bindle" => self.load_bindle(&uri).await,
+                "bindle" => self.load_bindle(&uri, store.engine(), cache).await,
+                "oci" => self.load_oci(&uri, store.engine(), cache).await,
                 s => anyhow::bail!("Unknown scheme {}", s),
             },
         }
     }
 
-    async fn load_bindle(&self, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+    /// Load a cached module from the filesystem.
+    ///
+    /// This is synchronous right now because Wasmtime on the runner needs to be run synchronously.
+    /// This will change when the new version of Wasmtime adds Send + Sync to all the things.
+    /// Then we can just do `load_module` or refactor this to be async.
+    fn load_cached_module(
+        &self,
+        store: &Store,
+        cache_dir: PathBuf,
+    ) -> anyhow::Result<wasmtime::Module> {
+        let canonical_path = match Url::parse(self.module.as_str()) {
+            Err(e) => {
+                log::debug!(
+                    "Error parsing module URI {}. Assuming this is a local file.",
+                    e
+                );
+                PathBuf::from(self.module.as_str())
+            }
+            Ok(uri) => match uri.scheme() {
+                "file" => PathBuf::from(uri.path()),
+                "bindle" => cache_dir.join(bindle_cache_key(&uri)),
+                "oci" => cache_dir.join(self.hash_name()),
+                s => anyhow::bail!("Unknown scheme {}", s),
+            },
+        };
+
+        // If there is a module at this path, load it.
+        // Right now, _any_ problem loading the module will result in us trying to
+        // re-fetch it.
+        match wasmtime::Module::from_file(store.engine(), canonical_path) {
+            Ok(module) => Ok(module),
+            Err(_e) => {
+                log::debug!(
+                    "module cache miss. Loading module {} from remote.",
+                    self.module
+                );
+                // TODO: This could be reallllllllly dangerous as we are for sure going to block at this
+                // point on this current thread. This _should_ be ok given that we run this as a
+                // spawn_blocking, but those sound like famous last words waiting to happen. Refactor this
+                // sooner rather than later
+                futures::executor::block_on(self.load_module(&store, cache_dir))
+            }
+        }
+    }
+
+    fn hash_name(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.module.as_str());
+        let result = hasher.finalize();
+        format!("{:x}", result)
+    }
+
+    async fn load_bindle(
+        &self,
+        uri: &Url,
+        engine: &Engine,
+        cache: PathBuf,
+    ) -> anyhow::Result<wasmtime::Module> {
         bindle::load_bindle(
             self.bindle_server
                 .clone()
                 .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned())
                 .as_str(),
             uri,
+            engine,
+            cache,
         )
         .await
     }
+    async fn load_oci(
+        &self,
+        uri: &Url,
+        engine: &Engine,
+        cache: PathBuf,
+    ) -> anyhow::Result<wasmtime::Module> {
+        let mut config = ClientConfig::default();
+        config.protocol = oci_distribution::client::ClientProtocol::HttpsExcept(vec![
+            "localhost:5000".to_owned(),
+            "127.0.0.1:5000".to_owned(),
+        ]);
+        let mut oc = Client::new(config);
+        let auth = RegistryAuth::Anonymous;
+
+        let img = url_to_oci(uri)?;
+        let data = oc.pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE]).await?;
+        if data.layers.is_empty() {
+            anyhow::bail!("image has no layers");
+        }
+        let first_layer = data.layers.get(0).unwrap();
+
+        // If a cache write fails, log it but continue on.
+        tokio::fs::write(cache.join(self.hash_name()), first_layer.data.as_slice())
+            .await
+            .err()
+            .map(|e| log::warn!("failed to write module to cache: {}", e));
+        let module = wasmtime::Module::new(engine, first_layer.data.as_slice())?;
+        Ok(module)
+    }
+}
+
+/// Build the image name from the URL passed in.
+/// So oci://example.com/foo:latest will become example.com/foo:latest
+///
+/// If parsing fails, this will emit an error.
+fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
+    let name = uri.path().trim_start_matches("/");
+    let port = uri
+        .port()
+        .and_then(|p| Some(format!(":{}", p)))
+        .unwrap_or_else(|| "".to_owned());
+    let r: Reference = match uri.host() {
+        Some(host) => format!("{}{}/{}", host, port, name).parse(),
+        None => name.parse(),
+    }?;
+    Ok(r) // Because who doesn't love OKRs.
 }
 
 #[cfg(test)]
 mod test {
-    use super::Module;
+    use super::{url_to_oci, Module};
     use crate::ModuleConfig;
     use crate::DEFAULT_HOST as LOCALHOST;
 
@@ -656,9 +782,12 @@ mod test {
             default_host: None,
         };
 
-        mc.build_registry(cache)
-            .await
-            .expect("registry build cleanly");
+        mc.build_registry(
+            cache,
+            tempfile::tempdir().expect("new temp dir").into_path(),
+        )
+        .await
+        .expect("registry build cleanly");
 
         log::debug!("{:#?}", mc.route_cache);
 
@@ -723,9 +852,12 @@ mod test {
             default_host: Some("localhost.localdomain".to_owned()),
         };
 
-        mc.build_registry(cache)
-            .await
-            .expect("registry build cleanly");
+        mc.build_registry(
+            cache,
+            tempfile::tempdir().expect("new temp dir").into_path(),
+        )
+        .await
+        .expect("registry build cleanly");
 
         // This should fail b/c default domain is localhost.localdomain
         assert!(mc.handler_for_host_path("localhost", "/base").is_err());
@@ -756,7 +888,13 @@ mod test {
 
         let store = super::Store::default();
 
-        module.load_module(&store).await.expect("loaded module");
+        module
+            .load_module(
+                &store,
+                tempfile::tempdir().expect("create a temp dir").into_path(),
+            )
+            .await
+            .expect("loaded module");
     }
 
     // Why is there a test for upstream libraries? Well, because they each seem to have
@@ -803,5 +941,28 @@ mod test {
             uri.path()
         );
         assert!(uri.host().is_none());
+    }
+
+    #[test]
+    fn test_url_to_oci() {
+        let uri = url::Url::parse("oci:foo:bar").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("foo:bar", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com/foo:dev", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci:example/foo:1.2.3").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example/foo:1.2.3", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com/foo:dev", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com:9000/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com:9000/foo:dev", oci.whole().as_str());
     }
 }

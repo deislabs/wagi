@@ -1,14 +1,29 @@
+use std::path::PathBuf;
+
 use bindle::{client::Client, Parcel};
+use sha2::{Digest, Sha256};
 use url::Url;
 use wasmtime::{Engine, Module};
 
 const WASM_MEDIA_TYPE: &str = "application/wasm";
 
+pub(crate) fn bindle_cache_key(uri: &Url) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(uri.path());
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
 /// Given a server and a URI, attempt to load the bindle identified in the URI.
 ///
 /// TODO: this currently fetches the first application/wasm condition-less parcel from the bindle and tries
 /// to load it.
-pub(crate) async fn load_bindle(server: &str, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+pub(crate) async fn load_bindle(
+    server: &str,
+    uri: &Url,
+    engine: &Engine,
+    cache: PathBuf,
+) -> anyhow::Result<wasmtime::Module> {
     let bindle_name = uri.path();
     let bindler = Client::new(server)?;
     let invoice = bindler.get_invoice(bindle_name).await?;
@@ -37,7 +52,11 @@ pub(crate) async fn load_bindle(server: &str, uri: &Url) -> anyhow::Result<wasmt
     let first = to_fetch.get(0).unwrap();
 
     let p = bindler
-        .get_parcel(invoice.bindle.id, first.label.sha256.as_str())
+        .get_parcel(bindle_cache_key(uri), first.label.sha256.as_str())
         .await?;
-    Module::new(&Engine::default(), p)
+    tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p)
+        .await
+        .err()
+        .map(|e| log::warn!("Failed to cache bindle: {}", e));
+    Module::new(engine, p)
 }
