@@ -1,4 +1,4 @@
-LOG_LEVEL ?= info,wagi=debug
+LOG_LEVEL ?= wagi=debug
 MODULES_TOML ?= examples/modules.toml
 MODULE_CACHE ?= _scratch/cache
 
