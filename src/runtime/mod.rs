@@ -21,7 +21,6 @@ use std::{collections::HashMap, net::SocketAddr};
 use url::Url;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
-use wasi_experimental_http_wasmtime;
 use wasmtime::*;
 use wasmtime_wasi::Wasi;
 
@@ -64,7 +63,7 @@ impl Handler {
         Handler {
             path: entry.path,
             entrypoint: entry.entrypoint,
-            module: module,
+            module,
         }
     }
 
@@ -186,7 +185,7 @@ impl Module {
             Ok(p) => {
                 let mut engine_config = Config::default();
                 engine_config.cache_config_load(p)?;
-                let engine = Engine::new(&engine_config);
+                let engine = Engine::new(&engine_config)?;
                 Store::new(&engine)
             }
             Err(_) => Store::default(),
@@ -204,7 +203,8 @@ impl Module {
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
-        wasi_experimental_http_wasmtime::link_http(&mut linker, None)?;
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(None, None)?;
+        http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, module_cache_dir)?;
         let instance = linker.instantiate(&module)?;
@@ -218,8 +218,7 @@ impl Module {
 
         match instance.get_func("_routes") {
             Some(func) => {
-                let start = func.get0::<()>()?;
-                start()?;
+                func.call(&[])?;
             }
             None => return Ok(routes),
         }
@@ -230,7 +229,7 @@ impl Module {
                 // Split line into parts
                 let parts: Vec<&str> = line.trim().split_whitespace().collect();
 
-                if parts.len() == 0 {
+                if parts.is_empty() {
                     return;
                 }
 
@@ -401,11 +400,11 @@ impl Module {
         cache_dir: PathBuf,
     ) -> Result<Response<Body>, anyhow::Error> {
         let start_time = Instant::now();
-        let store = match std::fs::canonicalize(cache_config_path.clone()) {
+        let store = match std::fs::canonicalize(cache_config_path) {
             Ok(p) => {
                 let mut engine_config = Config::default();
                 engine_config.cache_config_load(p)?;
-                let engine = Engine::new(&engine_config);
+                let engine = Engine::new(&engine_config)?;
                 Store::new(&engine)
             }
             Err(_) => Store::default(),
@@ -460,7 +459,9 @@ impl Module {
         let ctx = builder.build()?;
         let wasi = Wasi::new(&store, ctx);
         wasi.add_to_linker(&mut linker)?;
-        wasi_experimental_http_wasmtime::link_http(&mut linker, self.allowed_hosts.clone())?;
+
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), None)?;
+        http.add_to_linker(&mut linker)?;
 
         //let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
         let module = self.load_cached_module(&store, cache_dir)?;
@@ -474,17 +475,15 @@ impl Module {
         );
 
         // This shouldn't error out, because we already know there is a match.
-        let start = instance
-            .get_func(entrypoint)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No such function '{}' in {}",
-                    entrypoint.clone(),
-                    self.module
-                )
-            })?
-            .get0::<()>()?;
-        start()?;
+        let start = instance.get_func(entrypoint).ok_or_else(|| {
+            anyhow::anyhow!(
+                "No such function '{}' in {}",
+                entrypoint.clone(),
+                self.module
+            )
+        })?;
+
+        start.call(&[])?;
 
         // Okay, once we get here, all the information we need to send back in the response
         // should be written to the STDOUT buffer. We fetch that, format it, and send
@@ -740,8 +739,8 @@ mod test {
     "#;
 
     fn write_temp_wat(data: &str) -> anyhow::Result<NamedTempFile> {
-        let mut tf = tempfile::NamedTempFile::new().expect("create a temp file");
-        write!(tf, "{}", data).expect("wrote WAT to disk");
+        let mut tf = tempfile::NamedTempFile::new()?;
+        write!(tf, "{}", data)?;
         Ok(tf)
     }
 

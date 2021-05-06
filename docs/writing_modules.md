@@ -285,18 +285,26 @@ Check the documentation and examples from the repository for complete programs
 that send HTTP requests, but here is a short example of a GET request in Rust:
 
 ```rust
+use anyhow::Error;
 use http;
-use wasi_experimental_http;
+use wasi_experimental_http::request;
 
 #[no_mangle]
 pub extern "C" fn _start() {
-    let url = "https://api.brigade.sh/healthz".to_string();
-    let req = http::request::Builder::new().uri(&url).body(None).unwrap();
-    let res = wasi_experimental_http::request(req).expect("cannot make get request");
+    run().unwrap();
+}
 
-    let str = std::str::from_utf8(&res.body()).unwrap().to_string();
+fn run() -> Result<(), Error> {
+    let url = "https://api.brigade.sh/healthz".to_string();
+    let req = http::request::Builder::new().uri(&url).body(None)?;
+    let mut res = request(req)?;
+
+    let body = res.body_read_all()?;
+    let str = std::str::from_utf8(&body)?.to_string();
     println!("Content-Type: text/plain\n");
     println!("{}", str);
+
+    Ok(())
 }
 ```
 
