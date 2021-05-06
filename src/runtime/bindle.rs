@@ -8,7 +8,11 @@ const WASM_MEDIA_TYPE: &str = "application/wasm";
 ///
 /// TODO: this currently fetches the first application/wasm condition-less parcel from the bindle and tries
 /// to load it.
-pub(crate) async fn load_bindle(server: &str, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+pub(crate) async fn load_bindle(
+    server: &str,
+    uri: &Url,
+    engine: &Engine,
+) -> anyhow::Result<wasmtime::Module> {
     let bindle_name = uri.path();
     let bindler = Client::new(server)?;
     let invoice = bindler.get_invoice(bindle_name).await?;
@@ -39,5 +43,5 @@ pub(crate) async fn load_bindle(server: &str, uri: &Url) -> anyhow::Result<wasmt
     let p = bindler
         .get_parcel(invoice.bindle.id, first.label.sha256.as_str())
         .await?;
-    Module::new(&Engine::default(), p)
+    Module::new(engine, p)
 }

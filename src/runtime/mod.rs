@@ -8,6 +8,9 @@ use hyper::{
     http::uri::Scheme,
     Body, Request, Response, StatusCode,
 };
+use oci_distribution::client::{Client, ClientConfig};
+use oci_distribution::secrets::RegistryAuth;
+use oci_distribution::Reference;
 use serde::Deserialize;
 use std::io::BufRead;
 use std::sync::{Arc, RwLock};
@@ -19,9 +22,6 @@ use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasi_experimental_http_wasmtime;
 use wasmtime::*;
 use wasmtime_wasi::Wasi;
-use oci_distribution::client::{Client, ClientConfig};
-use oci_distribution::secrets::RegistryAuth;
-use oci_distribution::Reference;
 
 use crate::http_util::*;
 use crate::version::*;
@@ -30,6 +30,8 @@ mod bindle;
 
 /// The default Bindle server URL.
 pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
+
+const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
@@ -572,36 +574,36 @@ impl Module {
             }
             Ok(uri) => match uri.scheme() {
                 "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
-                "bindle" => self.load_bindle(&uri).await,
-                "oci" => self.load_oci(&uri).await,
+                "bindle" => self.load_bindle(&uri, store.engine()).await,
+                "oci" => self.load_oci(&uri, store.engine()).await,
                 s => anyhow::bail!("Unknown scheme {}", s),
             },
         }
     }
 
-    async fn load_bindle(&self, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+    async fn load_bindle(&self, uri: &Url, engine: &Engine) -> anyhow::Result<wasmtime::Module> {
         bindle::load_bindle(
             self.bindle_server
                 .clone()
                 .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned())
                 .as_str(),
             uri,
+            engine,
         )
         .await
     }
-    async fn load_oci(&self, uri: &Url) -> anyhow::Result<wasmtime::Module> {
+    async fn load_oci(&self, uri: &Url, engine: &Engine) -> anyhow::Result<wasmtime::Module> {
         let config = ClientConfig::default();
         let mut oc = Client::new(config);
         let auth = RegistryAuth::Anonymous;
 
-
         let img = url_to_oci(uri)?;
-        let data = oc.pull(&img, &auth, vec!["application/wasm"]).await?;
+        let data = oc.pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE]).await?;
         if data.layers.is_empty() {
             anyhow::bail!("image has no layers");
         }
         let first_layer = data.layers.get(0).unwrap();
-        let module = wasmtime::Module::new(&Engine::default(), first_layer.data.as_slice())?;
+        let module = wasmtime::Module::new(engine, first_layer.data.as_slice())?;
         Ok(module)
     }
 }
@@ -612,7 +614,10 @@ impl Module {
 /// If parsing fails, this will emit an error.
 fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
     let name = uri.path().trim_start_matches("/");
-    let port = uri.port().and_then(|p|Some(format!(":{}", p))).unwrap_or_else(||"".to_owned());
+    let port = uri
+        .port()
+        .and_then(|p| Some(format!(":{}", p)))
+        .unwrap_or_else(|| "".to_owned());
     let r: Reference = match uri.host() {
         Some(host) => format!("{}{}/{}", host, port, name).parse(),
         None => name.parse(),
@@ -622,7 +627,7 @@ fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
 
 #[cfg(test)]
 mod test {
-    use super::{Module, url_to_oci};
+    use super::{url_to_oci, Module};
     use crate::ModuleConfig;
     use crate::DEFAULT_HOST as LOCALHOST;
 
