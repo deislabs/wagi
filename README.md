@@ -39,7 +39,7 @@ $ curl -v http://localhost:3000/hello/world
 > Accept: */*
 >
 < HTTP/1.1 200 OK
-< content-type: text/plain
+< content-type: text/html; charset=UTF-8
 < content-length: 12
 < date: Wed, 14 Oct 2020 22:00:59 GMT
 <
