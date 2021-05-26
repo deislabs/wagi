@@ -30,7 +30,7 @@ Here is a minimalist "hello world" example written in Rust:
 
 ```rust
 fn main() {
-    println!("Content-Type: text/plain\n");
+    println!("Content-Type: text/html; charset=UTF-8\n");
     println!("hello world");
 }
 ```
@@ -42,7 +42,7 @@ In Rust, you can compile the above with `cargo build --target wasm32-wasi --rele
 A Swift version looks like this:
 
 ```swift
-print("content-type: text/plain\n\n");
+print("content-type: text/html; charset=UTF-8\n\n");
 print("hello world\n");
 ```
 
@@ -57,7 +57,7 @@ And here is an [AssemblyScript](https://www.assemblyscript.org) version:
 import "wasi";
 import { Console } from "as-wasi";
 
-Console.log("content-type: text-plain");
+Console.log("content-type: text/html; charset=UTF-8");
 Console.log(""); // blank line separates headers from body.
 Console.log("hello world");
 ```
@@ -80,7 +80,7 @@ Finally, you can execute raw WAT (Web Assembly Text) format. Here's the same exa
     (memory 1)
     (export "memory" (memory 0))
 
-    (data (i32.const 8) "content-type:text/plain\n\nhello world\n")
+    (data (i32.const 8) "content-type:text/html;charset=UTF-8\n\nhello world\n")
 
     (func $main (export "_start")
         (i32.store (i32.const 0) (i32.const 8))
@@ -203,20 +203,20 @@ Here is an example in Rust:
 
 ```rust
 fn main() {
-    println!("Content-Type: text/plain\n\n Hello from main()");
+    println!("Content-Type: text/html; charset=UTF-8\n\n Hello from main()");
 }
 
 // Use no_mangle so we can call this from WAGI or other external tools.
 #[no_mangle]
 /// A provider function that can be called directly
 pub fn hello() {
-    println!("Content-Type: text/plain\n\n Hello")
+    println!("Content-Type: text/html; charset=UTF-8\n\n Hello")
 }
 
 #[no_mangle]
 /// Another provider function that can be called directly.
 pub fn goodbye() {
-    println!("Content-Type: text/plain\n\n Goodbye")
+    println!("Content-Type: text/html; charset=UTF-8\n\n Goodbye")
 }
 
 // This maps a few routes:
@@ -301,7 +301,7 @@ fn run() -> Result<(), Error> {
 
     let body = res.body_read_all()?;
     let str = std::str::from_utf8(&body)?.to_string();
-    println!("Content-Type: text/plain\n");
+    println!("Content-Type: text/html; charset=UTF-8\n");
     println!("{}", str);
 
     Ok(())
