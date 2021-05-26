@@ -181,15 +181,7 @@ impl Module {
             entrypoint: self.entrypoint.clone().unwrap_or("_start".to_string()),
         });
 
-        let store = match std::fs::canonicalize(cache_config_path) {
-            Ok(p) => {
-                let mut engine_config = Config::default();
-                engine_config.cache_config_load(p)?;
-                let engine = Engine::new(&engine_config)?;
-                Store::new(&engine)
-            }
-            Err(_) => Store::default(),
-        };
+        let store = self.new_store(cache_config_path)?;
         let mut linker = Linker::new(&store);
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
@@ -400,16 +392,8 @@ impl Module {
         cache_dir: PathBuf,
     ) -> Result<Response<Body>, anyhow::Error> {
         let start_time = Instant::now();
-        let store = match std::fs::canonicalize(cache_config_path) {
-            Ok(p) => {
-                let mut engine_config = Config::default();
-                engine_config.cache_config_load(p)?;
-                let engine = Engine::new(&engine_config)?;
-                Store::new(&engine)
-            }
-            Err(_) => Store::default(),
-        };
 
+        let store = self.new_store(cache_config_path)?;
         let mut linker = Linker::new(&store);
         let uri_path = req.uri.path();
 
@@ -686,6 +670,17 @@ impl Module {
             .map(|e| log::warn!("failed to write module to cache: {}", e));
         let module = wasmtime::Module::new(engine, first_layer.data.as_slice())?;
         Ok(module)
+    }
+
+    fn new_store(&self, cache_config_path: String) -> Result<Store, anyhow::Error> {
+        let mut config = Config::default();
+
+        if let Ok(p) = std::fs::canonicalize(cache_config_path) {
+            config.cache_config_load(p)?;
+        };
+
+        let engine = Engine::new(&config)?;
+        Ok(Store::new(&engine))
     }
 }
 
