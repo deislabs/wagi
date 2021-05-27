@@ -239,6 +239,72 @@ module = "/path/to/bar.wasm"
 entrypoint = "goodbye  # Executes the `goodbye()` function in the module (instead of `_start`)
 ```
 
+## Using a Bindle Instead of a `module.toml`
+
+In the event that a Bindle is used, the Bindle will construct a module configuration according
+to the following rules:
+
+- Every parcel in the global group (aka the default group) that has the media type `application/wasm` will be mounted to a path.
+- The parcel should be annotated with the `feature.wagi.route = "SOME PATH"` to declare the path.
+
+A parcel may require a group of supporting parcels. Supporting parcels are evaluated as follows:
+- Any supporting parcel that is marked `feature.wagi.file = "true"` will be mounted as a file, using the `lable.name` as the relative path.
+
+A supporting file MUST be be a member of a group, and that group MUST be required by a module before that module will be given access to the file.
+
+### Wagi Features in a Parcel
+
+The following features are available for Wagi under `feature.wagi.FEATURE`:
+
+| Feature | Description |
+| --- | --- |
+| entrypoint | The name of the entrypoint function |
+| bindle_server | RESERVED |
+| route | The relative path from the server route. e.g. "/foo" is mapped to http://example.com/foo |
+| host | The hostname that this module should listen on |
+| allowed_hosts | A comma-separated list of hosts that the HTTP client is allowed to access |
+| file | If this is "true", this parcel will be treated as a file for consumption by a Wagi module |
+
+### Bindle Example
+
+This invoice defines a bindle with two Wasm modules and two other parcels.
+The `static.wasm` file will have one file mounted to it.
+A number of Bindle fields have been omitted for readability.
+
+```toml
+bindle_version = "1.0.0"
+
+[[group]]
+name = "files"
+
+[[parcel]]
+label.name = "main.wasm"
+label.media_type = "application/wasm"  # Wagi will only run application/wasm modules
+label.feature.wagi.route = "/"         # This will be http://example.com/
+
+[[parcel]]
+label.name = "static.wasm"
+label.media_type = "application/wasm"
+label.feature.wagi.route = "/static/..." # This will be http://example.com/static/*
+conditions.requires = ["files"]  # This will cause Wagi to load the files group for this module
+
+[[parcel]]
+label.name = "image.jpeg"        # The name of the file
+label.feature.wagi.file = "true" # Mark this as a file
+conditions.member_of = ["files"] # Add it to the "files" group
+
+# Nothing is done with this, since no features tell Wagi what to do
+[[parcel]]
+label.name = "another.jpeg"        # The name of the file
+conditions.member_of = ["files"] # Add it to the "files" group
+```
+
+When Wagi loads the invoice above, it will create two routes: `/` and `/static/...`.
+The main module (`main.wasm`) will listen on `/`.
+The static module (`static.wasm`) will listen on any subpath of `/static`.
+It will also have access to the file `/image.jpeg` on its virtual file system.
+Note that because `another.jpeg` was not marked as a `feature.wagi.file`, it is not mounted as a file.
+
 ## Enabling Caching
 
 To enable the [Wasmtime cache](https://docs.wasmtime.dev/cli-cache.html), which caches the result of the compilation
