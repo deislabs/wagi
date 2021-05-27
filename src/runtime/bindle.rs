@@ -52,7 +52,7 @@ pub(crate) async fn load_bindle(
     let first = to_fetch.get(0).unwrap();
 
     let p = bindler
-        .get_parcel(bindle_cache_key(uri), first.label.sha256.as_str())
+        .get_parcel(bindle_name, first.label.sha256.as_str())
         .await?;
     tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p)
         .await
