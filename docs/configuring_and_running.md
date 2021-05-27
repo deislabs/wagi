@@ -32,7 +32,7 @@ By convention, this file is called `modules.toml`.
 In a nutshell, these are the fields that `modules.toml` supports.
 
 - Top-level fields
-  - `defaultDomain`: By default, WAGI answers only to the hostname `localhost`. This allows you to specify a different default domain.
+  - `default_host`: By default, WAGI answers only to the hostname `localhost`. This allows you to specify a different default domain.
 - The `[[module]]` list: Each module starts with a `[[module]]` header. Inside of a module, the following fields are available:
   - `route` (REQUIRED): The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
   - `module` (REQUIRED): A module reference. See Module References below.
