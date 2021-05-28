@@ -119,6 +119,12 @@ impl Module {
         module_cache_dir: PathBuf,
     ) -> Response<Body> {
         // Read the parts in here
+        log::trace!(
+            "Module::execute: route={}, module={}",
+            self.route,
+            self.module
+        );
+
         let (parts, body) = req.into_parts();
         let data = hyper::body::to_bytes(body)
             .await
@@ -391,6 +397,13 @@ impl Module {
         cache_config_path: String,
         cache_dir: PathBuf,
     ) -> Result<Response<Body>, anyhow::Error> {
+        log::trace!(
+            "Moduke::run_wasm: uri={}, module={}, entrypoint={}",
+            req.uri,
+            &self.module,
+            &entrypoint
+        );
+
         let start_time = Instant::now();
 
         let store = self.new_store(cache_config_path)?;
@@ -467,6 +480,7 @@ impl Module {
             )
         })?;
 
+        log::trace!("Module::run_wasm: calling Wasm entry point");
         start.call(&[])?;
 
         // Okay, once we get here, all the information we need to send back in the response
@@ -556,6 +570,10 @@ impl Module {
     /// For example, an `oci` URL that references `alpine:latest` should be `oci:alpine:latest`.
     /// It should NOT be `oci://alpine:latest` because `alpine` is not a host name.
     async fn load_module(&self, store: &Store, cache: PathBuf) -> anyhow::Result<wasmtime::Module> {
+        log::trace!(
+            "Module::load_module: loading from source: module={}",
+            &self.module
+        );
         match Url::parse(self.module.as_str()) {
             Err(e) => {
                 log::debug!(
@@ -583,6 +601,7 @@ impl Module {
         store: &Store,
         cache_dir: PathBuf,
     ) -> anyhow::Result<wasmtime::Module> {
+        log::trace!("Module::load_cached_module: {}", &self.module);
         let canonical_path = match Url::parse(self.module.as_str()) {
             Err(e) => {
                 log::debug!(
@@ -595,9 +614,20 @@ impl Module {
                 "file" => PathBuf::from(uri.path()),
                 "bindle" => cache_dir.join(bindle_cache_key(&uri)),
                 "oci" => cache_dir.join(self.hash_name()),
-                s => anyhow::bail!("Unknown scheme {}", s),
+                s => {
+                    log::error!(
+                        "Module::load_cached_module: unknown scheme {} in module {}",
+                        s,
+                        &self.module
+                    );
+                    anyhow::bail!("Unknown scheme {}", s)
+                }
             },
         };
+        log::trace!(
+            "Module::load_cached_module: canonical_path={:?}",
+            canonical_path
+        );
 
         // If there is a module at this path, load it.
         // Right now, _any_ problem loading the module will result in us trying to
@@ -631,6 +661,11 @@ impl Module {
         engine: &Engine,
         cache: PathBuf,
     ) -> anyhow::Result<wasmtime::Module> {
+        log::trace!(
+            "Module::load_bindle: server={:?}, uri={}",
+            self.bindle_server,
+            uri
+        );
         bindle::load_bindle(
             self.bindle_server
                 .clone()
@@ -648,6 +683,7 @@ impl Module {
         engine: &Engine,
         cache: PathBuf,
     ) -> anyhow::Result<wasmtime::Module> {
+        log::trace!("Module::load_oci: uri={}", uri);
         let mut config = ClientConfig::default();
         config.protocol = oci_distribution::client::ClientProtocol::HttpsExcept(vec![
             "localhost:5000".to_owned(),
@@ -656,14 +692,29 @@ impl Module {
         let mut oc = Client::new(config);
         let auth = RegistryAuth::Anonymous;
 
-        let img = url_to_oci(uri)?;
-        let data = oc.pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE]).await?;
+        let img = url_to_oci(uri).map_err(|e| {
+            log::error!(
+                "Module::load_oci: could not convert {} to OCI reference: {}",
+                uri,
+                e
+            );
+            e
+        })?;
+        let data = oc
+            .pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE])
+            .await
+            .map_err(|e| {
+                log::error!("Module::load_oci: pull failed: {}", e);
+                e
+            })?;
         if data.layers.is_empty() {
+            log::error!("Module::load_oci: image {} has no layers", &img);
             anyhow::bail!("image has no layers");
         }
         let first_layer = data.layers.get(0).unwrap();
 
         // If a cache write fails, log it but continue on.
+        log::trace!("Module::load_oci: writing layer to module cache");
         tokio::fs::write(cache.join(self.hash_name()), first_layer.data.as_slice())
             .await
             .err()

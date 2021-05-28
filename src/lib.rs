@@ -60,6 +60,8 @@ impl Router {
         // drawbacks: (a) it would be different than CGI, and (b) it would involve a cache
         // clear during debugging, which could be a bit annoying.
 
+        log::trace!("Processing request to {}", req.uri());
+
         let uri_path = req.uri().path();
         let host = req
             .headers()
