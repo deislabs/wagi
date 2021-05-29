@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use bindle::{client::Client, Invoice, Parcel};
+use bindle::{client::Client, Id, Invoice, Parcel};
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -99,16 +99,65 @@ pub(crate) async fn load_bindle(
     wasmtime::Module::new(engine, p)
 }
 
+pub async fn load_parcel(
+    server: &str,
+    uri: &Url,
+    engine: &wasmtime::Engine,
+    cache: PathBuf,
+) -> anyhow::Result<wasmtime::Module> {
+    let bindler = Client::new(server)?;
+    let parcel_sha = uri.fragment();
+    if parcel_sha.is_none() {
+        anyhow::bail!("No parcel sha was found in URI: {}", uri)
+    }
+
+    let p = load_parcel_asset(&bindler, uri).await?;
+    tokio::fs::write(cache.join(parcel_sha.unwrap()), &p)
+        .await
+        .err()
+        .map(|e| log::warn!("Failed to cache bindle: {}", e));
+    wasmtime::Module::new(engine, p)
+}
+
+/// Load a parcel, but make no assumptions about what is in the parcel.
+pub async fn load_parcel_asset(bindler: &Client, uri: &Url) -> anyhow::Result<Vec<u8>> {
+    let bindle_name = uri.path();
+    let parcel_sha = uri.fragment();
+    if parcel_sha.is_none() {
+        anyhow::bail!("No parcel sha was found in URI: {}", uri)
+    }
+    let r = bindler.get_parcel(bindle_name, parcel_sha.unwrap()).await?;
+    Ok(r)
+}
+
+/// Fetch a bindle and convert it to a module configuration.
+pub async fn bindle_to_modules(name: &str, server_url: &str) -> anyhow::Result<ModuleConfig> {
+    let bindler = Client::new(server_url)?;
+    let invoice = bindler.get_invoice(name).await?;
+
+    Ok(invoice_to_modules(&invoice))
+}
+
+fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
+    format!(
+        "parcel:{}/{}#{}",
+        bindle_id.name(),
+        bindle_id.version_string(),
+        parcel_sha
+    )
+}
+
 /// Given a bindle's invoice, build a module configuration.
-pub fn bindle_to_modules(invoice: &Invoice) -> ModuleConfig {
+pub fn invoice_to_modules(invoice: &Invoice) -> ModuleConfig {
     let mut modules = vec![];
+    let bindle_id = invoice.bindle.id.clone();
 
     // For each top-level entry, if it is a Wasm module, we create a Module.
     let top = top_modules(invoice);
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
-        let mut def = wagi_features(&parcel);
+        let mut def = wagi_features(&invoice.bindle.id, &parcel);
 
         // If the parcel has a group, get the group.
         // Then we have to figure out how to map the group onto a Wagi configuration.
@@ -125,7 +174,7 @@ pub fn bindle_to_modules(invoice: &Invoice) -> ModuleConfig {
                         // Add this parcel to the volumes
                         volumes.insert(
                             parcel.label.name.clone(),
-                            format!("parcel:{}", parcel.label.sha256.clone()),
+                            parcel_url(&bindle_id, parcel.label.sha256.clone()),
                         );
                     }
                 }
@@ -170,9 +219,9 @@ fn top_modules(inv: &Invoice) -> Vec<Parcel> {
         .collect()
 }
 
-fn wagi_features(parcel: &Parcel) -> Module {
+fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
     let label = parcel.label.clone();
-    let module = format!("parcel:{}", label.sha256);
+    let module = parcel_url(inv_id, label.sha256);
     let all_features = label.feature.unwrap_or_default();
     let features = all_features
         .get("wagi")

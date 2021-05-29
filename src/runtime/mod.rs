@@ -27,7 +27,7 @@ use wasmtime_wasi::Wasi;
 use crate::version::*;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
 
-mod bindle;
+pub mod bindle;
 
 /// The default Bindle server URL.
 pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
@@ -585,6 +585,7 @@ impl Module {
             Ok(uri) => match uri.scheme() {
                 "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
                 "bindle" => self.load_bindle(&uri, store.engine(), cache).await,
+                "parcel" => self.load_parcel(&uri, store.engine(), cache).await,
                 "oci" => self.load_oci(&uri, store.engine(), cache).await,
                 s => anyhow::bail!("Unknown scheme {}", s),
             },
@@ -613,6 +614,7 @@ impl Module {
             Ok(uri) => match uri.scheme() {
                 "file" => PathBuf::from(uri.path()),
                 "bindle" => cache_dir.join(bindle_cache_key(&uri)),
+                "parcel" => cache_dir.join(uri.path()), // parcel:SHA256 becomes cache_dir/SHA256
                 "oci" => cache_dir.join(self.hash_name()),
                 s => {
                     log::error!(
@@ -676,6 +678,18 @@ impl Module {
             cache,
         )
         .await
+    }
+    async fn load_parcel(
+        &self,
+        uri: &Url,
+        engine: &Engine,
+        cache: PathBuf,
+    ) -> anyhow::Result<wasmtime::Module> {
+        let bs = self
+            .bindle_server
+            .clone()
+            .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned());
+        bindle::load_parcel(bs.as_str(), uri, engine, cache).await
     }
     async fn load_oci(
         &self,
