@@ -23,24 +23,25 @@ pub struct Router {
 
 impl Router {
     pub async fn new(
-        module_config_path: String,
+        //module_config_path: String,
+        module_config: ModuleConfig,
         cache_config_path: String,
         module_cache: PathBuf,
     ) -> anyhow::Result<Self> {
-        let module_config = load_modules_toml(
-            &module_config_path,
-            cache_config_path.clone(),
-            module_cache.clone(),
-        )
-        .await?;
+        // let module_config = load_modules_toml(
+        //     &module_config_path,
+        //     cache_config_path.clone(),
+        //     module_cache.clone(),
+        // )
+        // .await?;
         let module_store = ModuleStore::new(
             module_config,
             cache_config_path,
-            module_config_path,
+            //module_config_path,
             module_cache,
         );
-        let cloned_store = module_store.clone();
-        tokio::spawn(async move { cloned_store.run().await });
+        //let cloned_store = module_store.clone();
+        //tokio::spawn(async move { cloned_store.run().await });
 
         Ok(Router { module_store })
     }
@@ -68,10 +69,10 @@ impl Router {
             .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            "/_reload" => {
-                self.module_store.reload();
-                Ok(Response::new(Body::from("OK")))
-            }
+            // "/_reload" => {
+            //     self.module_store.reload();
+            //     Ok(Response::new(Body::from("OK")))
+            // }
             _ => match self
                 .module_store
                 .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
@@ -124,11 +125,24 @@ pub async fn load_modules_toml(
     Ok(modules)
 }
 
+pub async fn load_bindle(
+    name: &str,
+    bindle_server: &str,
+    cache_config_path: String,
+    module_cache_dir: PathBuf,
+) -> Result<ModuleConfig, anyhow::Error> {
+    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server).await?;
+
+    mods.build_registry(cache_config_path, module_cache_dir)
+        .await?;
+    Ok(mods)
+}
+
 #[derive(Clone)]
 struct ModuleStore {
     module_config: Arc<RwLock<ModuleConfig>>,
     cache_config_path: String,
-    module_config_path: String,
+    //module_config_path: String,
     notify: Arc<Notify>,
     module_cache: PathBuf,
 }
@@ -137,18 +151,19 @@ impl ModuleStore {
     fn new(
         config: ModuleConfig,
         cache_config_path: String,
-        module_config_path: String,
+        //module_config_path: String,
         module_cache: PathBuf,
     ) -> Self {
         ModuleStore {
             module_config: Arc::new(RwLock::new(config)),
             cache_config_path,
-            module_config_path,
+            //module_config_path,
             notify: Arc::new(Notify::new()),
             module_cache,
         }
     }
 
+    /*
     async fn run(&self) {
         loop {
             self.notify.notified().await;
@@ -180,6 +195,7 @@ impl ModuleStore {
             }
         }
     }
+    */
 
     async fn handler_for_host_path(
         &self,
@@ -192,13 +208,15 @@ impl ModuleStore {
             .handler_for_host_path(host, uri_fragment)
     }
 
+    /*
     fn reload(&self) {
         self.notify.notify_one()
     }
+    */
 }
 
 /// The configuration for all modules in a WAGI site
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ModuleConfig {
     /// The default hostname to use if none is supplied.
     ///

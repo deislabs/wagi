@@ -2716,6 +2716,7 @@ name = "wagi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bindle",
  "cap-std",
  "clap",
