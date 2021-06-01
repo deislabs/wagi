@@ -60,6 +60,8 @@ impl Router {
         // drawbacks: (a) it would be different than CGI, and (b) it would involve a cache
         // clear during debugging, which could be a bit annoying.
 
+        log::trace!("Processing request to {}", req.uri());
+
         let uri_path = req.uri().path();
         let host = req
             .headers()
@@ -263,22 +265,42 @@ impl ModuleConfig {
         host: &str,
         uri_fragment: &str,
     ) -> Result<Handler, anyhow::Error> {
+        log::trace!(
+            "Module::handler_for_host_path: host={}, url_fragment={}",
+            host,
+            uri_fragment
+        );
         let default_host = self
             .default_host
             .clone()
             .unwrap_or_else(|| DEFAULT_HOST.to_owned());
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
+                log::trace!(
+                    "Module::handler_for_host_path: trying route host={:?} path={}",
+                    r.host(),
+                    r.path
+                );
                 // The request must match either the `host` of an entry or the `default_host`
                 // for this server.
                 match r.host() {
                     // Host doesn't match. Skip.
-                    Some(h) if h != host => continue,
+                    Some(h) if h != host => {
+                        log::trace!("Module::handler_for_host_path: host {} did not match", h);
+                        continue;
+                    }
                     // This is not the default domain. Skip.
-                    None if default_host != host => continue,
+                    None if default_host != host => {
+                        log::trace!(
+                            "Module::handler_for_host_path: default host {} did not match",
+                            default_host
+                        );
+                        continue;
+                    }
                     // Something matched, so continue our checks.
                     _ => {}
                 }
+                log::trace!("Module::handler_for_host_path: host matched, examining path");
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
                 if r.path
