@@ -1,7 +1,7 @@
 LOG_LEVEL ?= wagi=debug
 MODULES_TOML ?= examples/modules.toml
 MODULE_CACHE ?= _scratch/cache
-BINDLE ?= example.com/hello/1.0.0
+BINDLE ?= example.com/hello/1.3.0
 BINDLE_HOST_URL ?= http://localhost:8080/v1
 
 .PHONY: build
