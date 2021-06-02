@@ -255,7 +255,7 @@ impl ModuleConfig {
                         continue;
                     }
                     // This is not the default domain. Skip.
-                    None if default_host != host => {
+                    None if !is_default_host(default_host.as_str(), host) => {
                         log::trace!(
                             "Module::handler_for_host_path: default host {} did not match",
                             default_host
@@ -283,6 +283,13 @@ impl ModuleConfig {
 
         Err(anyhow::anyhow!("No handler for //{}{}", host, uri_fragment))
     }
+}
+
+fn is_default_host(default_host: &str, host: &str) -> bool {
+    if default_host.starts_with("127.0.0.1:") && host.starts_with("localhost:") {
+        return true;
+    }
+    default_host == host
 }
 
 #[cfg(test)]
