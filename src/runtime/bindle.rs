@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
+use log::{trace, warn};
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -60,7 +61,15 @@ pub(crate) async fn load_bindle(
         .unwrap_or_default()
         .iter()
         .filter(|parcel| {
-            parcel.label.media_type.as_str() == WASM_MEDIA_TYPE && parcel.conditions.is_none()
+            if parcel.label.media_type.as_str() == WASM_MEDIA_TYPE {
+                let is_default = parcel.conditions.is_none()
+                    || parcel.conditions.clone().unwrap().member_of.is_none();
+                if !is_default {
+                    warn!("The parcel {} is not in the default group (it has a non-empty memberOf), and is ignored.", parcel.label.name);
+                }
+                return is_default
+            }
+            false
         })
         .cloned()
         .collect();
@@ -126,18 +135,83 @@ pub async fn load_parcel_asset(bindler: &Client, uri: &Url) -> anyhow::Result<Ve
     if parcel_sha.is_none() {
         anyhow::bail!("No parcel sha was found in URI: {}", uri)
     }
+    trace!("fetching parcel asset from bindle server");
     let r = bindler.get_parcel(bindle_name, parcel_sha.unwrap()).await?;
+    trace!("received parcel");
     Ok(r)
 }
 
+/// Load a parcel, cache it locally on disk, and then return the path to the cached version.
+///
+/// Wagi creates a local cache of all of the file assets for a particular bindle.
+/// These assets are stored in a directory, and then during exection of a module,
+/// the directory is mounted to the wasm module as `/`.
+///
+/// This is part of a workaround for Wasmtime. When Wasmtime can be safely used in
+/// async, this method will be removed and the runtime will directly load from the parcel.
+pub async fn cache_parcel_asset(
+    bindler: &Client,
+    uri: &Url,
+    asset_cache: PathBuf,
+    guest_path: String,
+) -> anyhow::Result<PathBuf> {
+    trace!("caching parcel as asset");
+    let hash = bindle_cache_key(&uri);
+    let dest = asset_cache.join(hash);
+
+    // Now we can create the cache directory.
+    // If it already exists, create_dir_all will not return an error.
+    tokio::fs::create_dir_all(&dest).await.map_err(|e| {
+        anyhow::anyhow!(
+            "Could not create asset cache directory at {}: {}",
+            dest.display(),
+            e
+        )
+    })?;
+
+    // Next, we dump the parcel into the cache directory, creating directories as needed.
+    let internal_path = dest.join(guest_path);
+    if !internal_path.starts_with(&dest) {
+        anyhow::bail!(
+            "Attempt to breakout of cache: Parcel tried to write to {}",
+            internal_path.display()
+        );
+    }
+
+    // We have already checked to make sure there is no breakout.
+    // So now we are just looking to make sure that the parent directory exists.
+    let parent = internal_path.parent().unwrap_or(&dest);
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create asset subdirectories: {}", e))?;
+
+    // Next, we fetch the actual data from the Bindle server and then write it to
+    // the newly created path on disk.
+    let data = load_parcel_asset(bindler, uri).await?;
+    tokio::fs::write(&internal_path, data)
+        .await
+        .map_err(|e| anyhow::anyhow!("Could not create parcel data file: {}", e))?;
+
+    Ok(dest)
+}
+
 /// Fetch a bindle and convert it to a module configuration.
-pub async fn bindle_to_modules(name: &str, server_url: &str) -> anyhow::Result<ModuleConfig> {
+pub async fn bindle_to_modules(
+    name: &str,
+    server_url: &str,
+    asset_cache: PathBuf,
+) -> anyhow::Result<ModuleConfig> {
     let bindler = Client::new(server_url)?;
     let invoice = bindler.get_invoice(name).await?;
 
-    Ok(invoice_to_modules(&invoice, server_url))
+    invoice_to_modules(&invoice, server_url, asset_cache).await
 }
 
+/// Convenience function for generating an internal Parcel URL.
+///
+/// Internally, a parcel URL is represented as `parcel:$NAME/$VERSION#$PARCEL_SHA`
+/// This is not a general convention, but is used to pass parcel information into
+/// and out of a module configuration.
 fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
     format!(
         "parcel:{}/{}#{}",
@@ -148,7 +222,11 @@ fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
 }
 
 /// Given a bindle's invoice, build a module configuration.
-pub fn invoice_to_modules(invoice: &Invoice, bindle_server: &str) -> ModuleConfig {
+pub async fn invoice_to_modules(
+    invoice: &Invoice,
+    bindle_server: &str,
+    asset_cache: PathBuf,
+) -> anyhow::Result<ModuleConfig> {
     let mut modules = vec![];
     let bindle_id = invoice.bindle.id.clone();
 
@@ -166,24 +244,38 @@ pub fn invoice_to_modules(invoice: &Invoice, bindle_server: &str) -> ModuleConfi
         // As we slim down the scope of Wagi, we should probably refactor this assumption
         // out of the codebase.
         def.bindle_server = Some(bindle_server.to_owned());
+        let bindler = Client::new(bindle_server)?;
 
         // If the parcel has a group, get the group.
         // Then we have to figure out how to map the group onto a Wagi configuration.
         if let Some(c) = parcel.conditions.clone() {
             let mut volumes = HashMap::new();
             let groups = c.requires.unwrap_or_default();
-            groups.iter().for_each(|n| {
+            for n in groups.iter() {
                 let name = n.clone();
                 let members = group_members(invoice, name.as_str());
 
                 // If it is a file, then we will mount it as a volume
                 for member in members {
                     if is_file(&member) {
+                        // Store the parcel at a local path
+                        let purl = parcel_url(&bindle_id, member.label.sha256.clone());
+                        trace!("converting a parcel to an asset: {}", purl.clone());
+                        let puri = purl.parse().unwrap();
+                        let cached_path = cache_parcel_asset(
+                            &bindler,
+                            &puri,
+                            asset_cache.clone(),
+                            member.label.name.clone(),
+                        )
+                        .await?;
                         // Add this parcel to the volumes
                         volumes.insert(
-                            parcel.label.name.clone(),
-                            parcel_url(&bindle_id, parcel.label.sha256.clone()),
+                            // HACK: FIXME
+                            "/".to_owned(), //member.label.name.clone(),
+                            cached_path.to_str().unwrap().to_owned(),
                         );
+                        trace!("Done with conversion");
                     }
                 }
 
@@ -192,7 +284,7 @@ pub fn invoice_to_modules(invoice: &Invoice, bindle_server: &str) -> ModuleConfi
                     def.volumes = Some(volumes.clone());
                 }
                 // Currently, there are no other defined behaviors for parcels.
-            });
+            }
         }
 
         // For each group required by the module entry, we try to map its parts to one
@@ -208,7 +300,7 @@ pub fn invoice_to_modules(invoice: &Invoice, bindle_server: &str) -> ModuleConfi
         modules,
     };
 
-    mc
+    Ok(mc)
 }
 
 // America's next...

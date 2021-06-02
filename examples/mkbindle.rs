@@ -8,7 +8,7 @@
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    // Start with this invoice
+    // Start with the invoice in the examples directory
     let data = std::fs::read_to_string("examples/invoice.toml")?;
     let inv: bindle::Invoice = toml::from_str(data.as_str())?;
     let bindle_server = std::env::var("BINDLE_SERVER_URL")

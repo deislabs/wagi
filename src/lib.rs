@@ -120,7 +120,12 @@ pub async fn load_bindle(
     cache_config_path: String,
     module_cache_dir: PathBuf,
 ) -> Result<ModuleConfig, anyhow::Error> {
-    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server)
+    log::trace!("Loading bindle {}", name);
+    let cache_dir = module_cache_dir.join("_ASSETS");
+    //std::fs::create_dir_all(&cache_dir).map_err(|e| {
+    //    anyhow::anyhow!("Could not create cache dir {}: {}", cache_dir.display(), e)
+    //})?;
+    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
 
@@ -170,7 +175,7 @@ pub struct ModuleConfig {
     /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
     /// host name specified in this paramter or match the `host` field on the module
     /// that matches this request's path.
-    default_host: Option<String>,
+    pub default_host: Option<String>,
 
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]

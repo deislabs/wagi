@@ -8,6 +8,7 @@ use hyper::{
     http::uri::Scheme,
     Body, Request, Response, StatusCode,
 };
+use log::debug;
 use oci_distribution::client::{Client, ClientConfig};
 use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
@@ -443,6 +444,7 @@ impl Module {
         // Map all of the volumes.
         if let Some(dirs) = self.volumes.as_ref() {
             for (guest, host) in dirs.iter() {
+                debug!("Mapping volume from {} (host) to {} (guest)", host, guest);
                 // Try to open the dir or log an error.
                 match unsafe { Dir::open_ambient_dir(host) } {
                     Ok(dir) => {

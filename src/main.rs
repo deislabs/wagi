@@ -100,7 +100,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         Some(m) => std::path::PathBuf::from(m),
         None => tempfile::tempdir()?.into_path(),
     };
-    let module_config = match bindle {
+    let mut module_config = match bindle {
         Some(name) => wagi::load_bindle(
             name,
             bindle_server.as_str(),
@@ -117,6 +117,12 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load TOML {}: {}", module_config_path, e))?,
     };
+
+    if module_config.default_host.is_none() {
+        log::info!("Setting default host to {}", addr.to_string());
+        module_config.default_host = Some(addr.to_string());
+    }
+
     //debug!("Module Config\n {:#?}", module_config);
     let router = Router::new(module_config, cache_config_path, mc).await?;
 

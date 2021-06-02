@@ -1,8 +1,9 @@
 LOG_LEVEL ?= wagi=debug
 MODULES_TOML ?= examples/modules.toml
 MODULE_CACHE ?= _scratch/cache
-BINDLE ?= example.com/hello/1.3.0
+BINDLE ?= example.com/hello/1.3.3
 BINDLE_HOST_URL ?= http://localhost:8080/v1
+WAGI_HOST ?= 127.0.0.1:3000
 
 .PHONY: build
 build:
@@ -20,7 +21,7 @@ serve: run
 .PHONY: run-bindle
 run-bindle:
 	mkdir -p $(MODULE_CACHE)
-	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -b $(BINDLE) --module-cache $(MODULE_CACHE) --bindle-server ${BINDLE_HOST_URL}
+	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -b $(BINDLE) --module-cache $(MODULE_CACHE) --bindle-server ${BINDLE_HOST_URL} --listen ${WAGI_HOST}
 
 .PHONY: test
 test:
