@@ -286,7 +286,7 @@ impl ModuleConfig {
 }
 
 fn is_default_host(default_host: &str, host: &str) -> bool {
-    if default_host.starts_with("127.0.0.1:") && host.starts_with("localhost:") {
+    if default_host.starts_with("localhost:") && host.starts_with("127.0.0.1:") {
         return true;
     }
     default_host == host

@@ -67,6 +67,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .help("the IP address and port to listen on. Default: 127.0.0.1:3000"),
         )
         .arg(
+            Arg::with_name("default_host")
+                .long("default-host")
+                .value_name("HOSTNAME")
+                .takes_value(true)
+                .help("the hostname and port that is to be considered the default. Default: localhost:3000"),
+        )
+        .arg(
             Arg::with_name("module_cache")
                 .long("module-cache")
                 .value_name("MODULE_CACHE_DIR")
@@ -96,6 +103,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .to_owned();
     let bindle = matches.value_of("bindle");
 
+    let default_host = matches
+        .value_of("default_host")
+        .unwrap_or("localhost:3000")
+        .to_owned();
+
     let mc = match matches.value_of("module_cache") {
         Some(m) => std::path::PathBuf::from(m),
         None => tempfile::tempdir()?.into_path(),
@@ -119,8 +131,8 @@ pub async fn main() -> Result<(), anyhow::Error> {
     };
 
     if module_config.default_host.is_none() {
-        log::info!("Setting default host to {}", addr.to_string());
-        module_config.default_host = Some(addr.to_string());
+        log::info!("Setting default host to {}", default_host.as_str());
+        module_config.default_host = Some(default_host);
     }
 
     //debug!("Module Config\n {:#?}", module_config);
