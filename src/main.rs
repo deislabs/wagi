@@ -1,13 +1,11 @@
-use anyhow::anyhow;
 use clap::{App, Arg};
 use hyper::Server;
 use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use log::debug;
 use std::net::SocketAddr;
-use wagi::{load_modules_toml, Router};
+use wagi::Router;
 
 const ABOUT: &str = r#"
 Run an HTTP WAGI server
@@ -110,14 +108,14 @@ pub async fn main() -> Result<(), anyhow::Error> {
             mc.clone(),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to load {}: {}", name, e))?,
+        .map_err(|e| anyhow::anyhow!("Failed to load bindle {}: {}", name, e))?,
         None => wagi::load_modules_toml(
             module_config_path.as_str(),
             cache_config_path.clone(),
             mc.clone(),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to load {}: {}", module_config_path, e))?,
+        .map_err(|e| anyhow::anyhow!("Failed to load TOML {}: {}", module_config_path, e))?,
     };
     //debug!("Module Config\n {:#?}", module_config);
     let router = Router::new(module_config, cache_config_path, mc).await?;

@@ -135,7 +135,7 @@ pub async fn bindle_to_modules(name: &str, server_url: &str) -> anyhow::Result<M
     let bindler = Client::new(server_url)?;
     let invoice = bindler.get_invoice(name).await?;
 
-    Ok(invoice_to_modules(&invoice))
+    Ok(invoice_to_modules(&invoice, server_url))
 }
 
 fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
@@ -148,7 +148,7 @@ fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
 }
 
 /// Given a bindle's invoice, build a module configuration.
-pub fn invoice_to_modules(invoice: &Invoice) -> ModuleConfig {
+pub fn invoice_to_modules(invoice: &Invoice, bindle_server: &str) -> ModuleConfig {
     let mut modules = vec![];
     let bindle_id = invoice.bindle.id.clone();
 
@@ -158,6 +158,14 @@ pub fn invoice_to_modules(invoice: &Invoice) -> ModuleConfig {
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
         let mut def = wagi_features(&invoice.bindle.id, &parcel);
+
+        // FIXME: This should get refactored out. Right now, every module needs its own
+        // reference to a bindle server. This is because in the older modules.toml
+        // format, it is legal to specify a different bindle server per modules. And
+        // THIS is because the original modules.toml was designed to support multi-tenancy.
+        // As we slim down the scope of Wagi, we should probably refactor this assumption
+        // out of the codebase.
+        def.bindle_server = Some(bindle_server.to_owned());
 
         // If the parcel has a group, get the group.
         // Then we have to figure out how to map the group onto a Wagi configuration.
