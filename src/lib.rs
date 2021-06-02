@@ -118,7 +118,9 @@ pub async fn load_bindle(
     cache_config_path: String,
     module_cache_dir: PathBuf,
 ) -> Result<ModuleConfig, anyhow::Error> {
-    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server).await?;
+    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
 
     mods.build_registry(cache_config_path, module_cache_dir)
         .await?;
