@@ -28,21 +28,12 @@ impl Router {
         cache_config_path: String,
         module_cache: PathBuf,
     ) -> anyhow::Result<Self> {
-        // let module_config = load_modules_toml(
-        //     &module_config_path,
-        //     cache_config_path.clone(),
-        //     module_cache.clone(),
-        // )
-        // .await?;
         let module_store = ModuleStore::new(
             module_config,
             cache_config_path,
             //module_config_path,
             module_cache,
         );
-        //let cloned_store = module_store.clone();
-        //tokio::spawn(async move { cloned_store.run().await });
-
         Ok(Router { module_store })
     }
     /// Route the request to the correct handler
@@ -69,10 +60,6 @@ impl Router {
             .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            // "/_reload" => {
-            //     self.module_store.reload();
-            //     Ok(Response::new(Body::from("OK")))
-            // }
             _ => match self
                 .module_store
                 .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
@@ -142,60 +129,19 @@ pub async fn load_bindle(
 struct ModuleStore {
     module_config: Arc<RwLock<ModuleConfig>>,
     cache_config_path: String,
-    //module_config_path: String,
     notify: Arc<Notify>,
     module_cache: PathBuf,
 }
 
 impl ModuleStore {
-    fn new(
-        config: ModuleConfig,
-        cache_config_path: String,
-        //module_config_path: String,
-        module_cache: PathBuf,
-    ) -> Self {
+    fn new(config: ModuleConfig, cache_config_path: String, module_cache: PathBuf) -> Self {
         ModuleStore {
             module_config: Arc::new(RwLock::new(config)),
             cache_config_path,
-            //module_config_path,
             notify: Arc::new(Notify::new()),
             module_cache,
         }
     }
-
-    /*
-    async fn run(&self) {
-        loop {
-            self.notify.notified().await;
-            log::debug!("Reloading module configuration");
-            let new_config = match load_modules_toml(
-                self.module_config_path.as_str(),
-                self.cache_config_path.clone(),
-                self.module_cache.clone(),
-            )
-            .await
-            {
-                Ok(conf) => conf,
-                Err(e) => {
-                    log::error!("Error when loading modules, will retry: {}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    self.notify.notify_one();
-                    continue;
-                }
-            };
-            {
-                let mut module_config = self.module_config.write().await;
-                *module_config = new_config;
-                if let Err(e) = module_config
-                    .build_registry(self.cache_config_path.clone(), self.module_cache.clone())
-                    .await
-                {
-                    log::error!("Reload: {}", e);
-                }
-            }
-        }
-    }
-    */
 
     async fn handler_for_host_path(
         &self,
@@ -207,12 +153,6 @@ impl ModuleStore {
             .await
             .handler_for_host_path(host, uri_fragment)
     }
-
-    /*
-    fn reload(&self) {
-        self.notify.notify_one()
-    }
-    */
 }
 
 /// The configuration for all modules in a WAGI site
