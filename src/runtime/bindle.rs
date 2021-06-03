@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -232,6 +232,7 @@ pub async fn invoice_to_modules(
 
     // For each top-level entry, if it is a Wasm module, we create a Module.
     let top = top_modules(invoice);
+    debug!("loaded {} modules from the default group (parcels that do not have conditions.memberOf set)", top.len());
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
@@ -249,7 +250,6 @@ pub async fn invoice_to_modules(
         // If the parcel has a group, get the group.
         // Then we have to figure out how to map the group onto a Wagi configuration.
         if let Some(c) = parcel.conditions.clone() {
-            let mut volumes = HashMap::new();
             let groups = c.requires.unwrap_or_default();
             for n in groups.iter() {
                 let name = n.clone();
@@ -269,20 +269,26 @@ pub async fn invoice_to_modules(
                             member.label.name.clone(),
                         )
                         .await?;
-                        // Add this parcel to the volumes
-                        volumes.insert(
-                            // HACK: FIXME
-                            "/".to_owned(), //member.label.name.clone(),
-                            cached_path.to_str().unwrap().to_owned(),
-                        );
+
+                        // Right now, we have to cache all of the files locally in one
+                        // directory and then mount that entire directory synchronously
+                        // (as a detail of how wasmtime currently works).
+                        // So for now, all we need to do is point Wagi to the directory
+                        // and have it mount that directory as root.
+                        //
+                        // The directory that cache_parcel_asset returns is the directory
+                        // that we expect all files to be written to. So we map
+                        // that to `/`
+                        if def.volumes.is_none() {
+                            let mut volumes = HashMap::new();
+                            volumes
+                                .insert("/".to_owned(), cached_path.to_str().unwrap().to_owned());
+                            def.volumes = Some(volumes);
+                        }
                         trace!("Done with conversion");
                     }
                 }
 
-                // If there are any volumes, then we add them to the definition
-                if !volumes.is_empty() {
-                    def.volumes = Some(volumes.clone());
-                }
                 // Currently, there are no other defined behaviors for parcels.
             }
         }
