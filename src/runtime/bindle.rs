@@ -62,8 +62,7 @@ pub(crate) async fn load_bindle(
         .iter()
         .filter(|parcel| {
             if parcel.label.media_type.as_str() == WASM_MEDIA_TYPE {
-                let is_default = parcel.conditions.is_none()
-                    || parcel.conditions.clone().unwrap().member_of.is_none();
+                let is_default = parcel.is_global_group();
                 if !is_default {
                     warn!("The parcel {} is not in the default group (it has a non-empty memberOf), and is ignored.", parcel.label.name);
                 }

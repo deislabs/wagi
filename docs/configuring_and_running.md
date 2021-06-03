@@ -108,7 +108,7 @@ Here is an example of providing a volume:
 route = "/bar"
 module = "/path/to/bar.wasm"
 # You can give WAGI access to particular directories on the filesystem.
-volumes = {"/path/inside/wasm": "/path/on/host"}
+volumes = {"/path/inside/wasm" = "/path/on/host"}
 ```
 
 In this case, the `volumes` directive tells WAGI to expose the contents of `/path/on/host` to the `bar.wasm` module.
@@ -229,7 +229,7 @@ module = "/path/to/foo.wasm"
 route = "/bar/..."
 module = "/path/to/bar.wasm"
 # You can give WAGI access to particular directories on the filesystem.
-volumes = {"/path/inside/wasm": "/path/on/host"}
+volumes = {"/path/inside/wasm" = "/path/on/host"}
 # You can also put static environment variables in the TOML file
 environment.TEST_NAME = "test value" 
 
