@@ -300,8 +300,8 @@ pub async fn invoice_to_modules(
 
     // Finally, we return the module configuration
     let mc = ModuleConfig {
-        default_host: None, // TODO: Do we care about this?
-        route_cache: None,  // TODO: Pass this in
+        default_host: None, // Do not allow default host to be set from a bindle.
+        route_cache: None, // This is built by ModuleConfig.build_registry(), which is called later.
         modules,
     };
 

@@ -23,17 +23,11 @@ pub struct Router {
 
 impl Router {
     pub async fn new(
-        //module_config_path: String,
         module_config: ModuleConfig,
         cache_config_path: String,
         module_cache: PathBuf,
     ) -> anyhow::Result<Self> {
-        let module_store = ModuleStore::new(
-            module_config,
-            cache_config_path,
-            //module_config_path,
-            module_cache,
-        );
+        let module_store = ModuleStore::new(module_config, cache_config_path, module_cache);
         Ok(Router { module_store })
     }
     /// Route the request to the correct handler
@@ -122,9 +116,6 @@ pub async fn load_bindle(
 ) -> Result<ModuleConfig, anyhow::Error> {
     log::trace!("Loading bindle {}", name);
     let cache_dir = module_cache_dir.join("_ASSETS");
-    //std::fs::create_dir_all(&cache_dir).map_err(|e| {
-    //    anyhow::anyhow!("Could not create cache dir {}: {}", cache_dir.display(), e)
-    //})?;
     let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
