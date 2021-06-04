@@ -386,7 +386,7 @@ fn is_file(parcel: &Parcel) -> bool {
 
 #[cfg(test)]
 mod test {
-    use bindle::{BindleSpec, Condition, Group, Id, Invoice, Label, Parcel};
+    use bindle::{BindleSpec, Condition, Group, Invoice, Label, Parcel};
     use std::{collections::BTreeMap, convert::TryInto};
 
     use crate::runtime::bindle::{top_modules, WASM_MEDIA_TYPE};
