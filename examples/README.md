@@ -7,6 +7,7 @@ These examples provide an easy way to get started with Wagi.
 - `http-example.wasm` provides a simple example of our HTTP client library support for Wagi modules
 - `invoice.toml` and `mkbindle.rs` are for loading these testing modules into a Bindle server
 - `modules.toml` is for loading the modules into Wagi straight off of the disk
+- `error.wat` shows an example of sending an HTTP error.
 
 ## Getting Started with `modules.toml`
 

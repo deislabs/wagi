@@ -26,16 +26,38 @@ To build a WAGI module, you need to do two things:
 At minimum, a WAGI module needs to output a content type header and an empty line.
 Usually, we want to also print out some information that will be displayed to the client.
 
+One of the following headers MUST be set:
+
+- `content-type: MEDIA_TYPE`: Where `MEDIA_TYPE` is a media type like `text/plain` or `application/javascript`.
+    - The `content-type` header can optionally have a character set appended: `text/plain; charset=UTF-8`
+    - Capitalization of the header name is unimportant. (`Content-Type` or `content-type`, etc)
+    - Capitalization of the value is system-dependent. Remember, this value can make its way all the way to the browser.
+- `location: FULL_URL`: Where `FULL_URL` is a complete URL like `http://example.com/foo`
+
 Here is a minimalist "hello world" example written in Rust:
 
 ```rust
 fn main() {
-    println!("Content-Type: text/html; charset=UTF-8\n");
+    println!("Content-Type: text/plain");
+    println!(); // Empty line between header and body
     println!("hello world");
 }
 ```
 
 In Rust, you can compile the above with `cargo build --target wasm32-wasi --release` and have a WAGI module ready to use!
+
+#### Returning an Error
+
+If you want to return an error, you should return _two_ headers: the `content-type` and a `status`:
+
+```rust
+fn main() {
+    println!("Content-Type: text/plain");
+    println!("Status: 404");
+    println!(); // An empty line between headers and body.
+    println!("Not Found");
+}
+```
 
 ### Swift Hello World
 
