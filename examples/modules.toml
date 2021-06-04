@@ -14,3 +14,8 @@ module = "examples/hello.wasm"
 route = "/http-example"
 module = "examples/http-example.wasm"
 allowed_hosts = ["https://api.brigade.sh"]
+
+[[module]]
+# Example error.
+route = "/error"
+module = "examples/error.wat"
