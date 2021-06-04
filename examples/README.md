@@ -21,7 +21,7 @@ If you already have a Bindle server, you can load the examples into a Bindle ser
 
 ```console
 $ cargo run --example mkbindle
-$ wagi -b example.com/hello/1.2.0
+$ wagi -b example.com/hello/1.3.3
 ```
 
 If your Bindle server isn't running at "http://localhost:8080/v1",

@@ -85,7 +85,7 @@ Routes are paths relative to the WAGI HTTP root. Assuming the routes above are r
 
 - The `/` route handles traffic to `http://example.com/` (or `https://example.com/`)
 - A route like `/hello` would handle traffic to `http://example.com/hello`
-- The route `/hello/...` is a special wildcard route that handles any traffic to `http://example.com/hello` or a subpath (like `http://example.com/hello/today/is/a/goo/day`)
+- The route `/hello/...` is a special wildcard route that handles any traffic to `http://example.com/hello` or a subpath (like `http://example.com/hello/today/is/a/good/day`)
 
 ### Module References
 
@@ -272,7 +272,7 @@ To do this, you will need to configure the following:
 
 ```console
 $ export BINDLE_SERVER_URL="http://localhost:8080/v1"
-$ wagi -b example.com/hello/1.0.0
+$ wagi -b example.com/hello/1.3.3
 ```
 
 ### Building a Bindle for Wagi
