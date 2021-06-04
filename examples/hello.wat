@@ -7,11 +7,11 @@
     (memory 1)
     (export "memory" (memory 0))
 
-    (data (i32.const 8) "content-type:text/html;charset=UTF-8\n\nhello world\n")
+    (data (i32.const 8) "content-type: text/html;charset=UTF-8\n\nOh hi world\n")
 
     (func $main (export "_start")
         (i32.store (i32.const 0) (i32.const 8))
-        (i32.store (i32.const 4) (i32.const 37))
+        (i32.store (i32.const 4) (i32.const 51))
 
         (call $fd_write
             (i32.const 1)

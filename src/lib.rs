@@ -23,25 +23,11 @@ pub struct Router {
 
 impl Router {
     pub async fn new(
-        module_config_path: String,
+        module_config: ModuleConfig,
         cache_config_path: String,
         module_cache: PathBuf,
     ) -> anyhow::Result<Self> {
-        let module_config = load_modules_toml(
-            &module_config_path,
-            cache_config_path.clone(),
-            module_cache.clone(),
-        )
-        .await?;
-        let module_store = ModuleStore::new(
-            module_config,
-            cache_config_path,
-            module_config_path,
-            module_cache,
-        );
-        let cloned_store = module_store.clone();
-        tokio::spawn(async move { cloned_store.run().await });
-
+        let module_store = ModuleStore::new(module_config, cache_config_path, module_cache);
         Ok(Router { module_store })
     }
     /// Route the request to the correct handler
@@ -70,10 +56,6 @@ impl Router {
             .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            "/_reload" => {
-                self.module_store.reload();
-                Ok(Response::new(Body::from("OK")))
-            }
             _ => match self
                 .module_store
                 .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
@@ -126,60 +108,38 @@ pub async fn load_modules_toml(
     Ok(modules)
 }
 
+pub async fn load_bindle(
+    name: &str,
+    bindle_server: &str,
+    cache_config_path: String,
+    module_cache_dir: PathBuf,
+) -> Result<ModuleConfig, anyhow::Error> {
+    log::trace!("Loading bindle {}", name);
+    let cache_dir = module_cache_dir.join("_ASSETS");
+    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
+
+    mods.build_registry(cache_config_path, module_cache_dir)
+        .await?;
+    Ok(mods)
+}
+
 #[derive(Clone)]
 struct ModuleStore {
     module_config: Arc<RwLock<ModuleConfig>>,
     cache_config_path: String,
-    module_config_path: String,
     notify: Arc<Notify>,
     module_cache: PathBuf,
 }
 
 impl ModuleStore {
-    fn new(
-        config: ModuleConfig,
-        cache_config_path: String,
-        module_config_path: String,
-        module_cache: PathBuf,
-    ) -> Self {
+    fn new(config: ModuleConfig, cache_config_path: String, module_cache: PathBuf) -> Self {
         ModuleStore {
             module_config: Arc::new(RwLock::new(config)),
             cache_config_path,
-            module_config_path,
             notify: Arc::new(Notify::new()),
             module_cache,
-        }
-    }
-
-    async fn run(&self) {
-        loop {
-            self.notify.notified().await;
-            log::debug!("Reloading module configuration");
-            let new_config = match load_modules_toml(
-                self.module_config_path.as_str(),
-                self.cache_config_path.clone(),
-                self.module_cache.clone(),
-            )
-            .await
-            {
-                Ok(conf) => conf,
-                Err(e) => {
-                    log::error!("Error when loading modules, will retry: {}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    self.notify.notify_one();
-                    continue;
-                }
-            };
-            {
-                let mut module_config = self.module_config.write().await;
-                *module_config = new_config;
-                if let Err(e) = module_config
-                    .build_registry(self.cache_config_path.clone(), self.module_cache.clone())
-                    .await
-                {
-                    log::error!("Reload: {}", e);
-                }
-            }
         }
     }
 
@@ -193,14 +153,10 @@ impl ModuleStore {
             .await
             .handler_for_host_path(host, uri_fragment)
     }
-
-    fn reload(&self) {
-        self.notify.notify_one()
-    }
 }
 
 /// The configuration for all modules in a WAGI site
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ModuleConfig {
     /// The default hostname to use if none is supplied.
     ///
@@ -210,7 +166,7 @@ pub struct ModuleConfig {
     /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
     /// host name specified in this paramter or match the `host` field on the module
     /// that matches this request's path.
-    default_host: Option<String>,
+    pub default_host: Option<String>,
 
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]
@@ -290,7 +246,7 @@ impl ModuleConfig {
                         continue;
                     }
                     // This is not the default domain. Skip.
-                    None if default_host != host => {
+                    None if !is_default_host(default_host.as_str(), host) => {
                         log::trace!(
                             "Module::handler_for_host_path: default host {} did not match",
                             default_host
@@ -318,6 +274,13 @@ impl ModuleConfig {
 
         Err(anyhow::anyhow!("No handler for //{}{}", host, uri_fragment))
     }
+}
+
+fn is_default_host(default_host: &str, host: &str) -> bool {
+    if default_host.starts_with("localhost:") && host.starts_with("127.0.0.1:") {
+        return true;
+    }
+    default_host == host
 }
 
 #[cfg(test)]

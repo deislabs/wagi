@@ -9,9 +9,17 @@ This guide begins with starting the WAGI server, then covers the `modules.toml` 
 
 The `wagi` server is run from the command line. It has a few flags:
 
-- `-c`|`--config` (REQUIRED): The path to a `modules.toml` configuration
+- `-c`|`--config`: The path to a `modules.toml` configuration
+- `-b`|`--bindle`: The name of a bindle to use for configuration, e.g. `-b example.com/hello/1.0.0`. 
+  - You *must* specify _one of_ `--config` or `--bindle`.
+  - If you specify both, it will use the `--bindle`
+- `--bindle-server`: The full URL to a Bindle server. Default is `http://localhost:8080/v1`
 - `--cache`: The path to an optional `cache.toml` configuration file (see the caching section below)
-- `-l`|`--listen`: The IP address and port to listen on. Default is 127.0.0.1:3000
+- `--default-host`: The hostname (with port) to use when no `host` directive is declared in `modules.toml`. Default is `localhost:3000`
+- `-l`|`--listen`: The IP address and port to listen on. Default is `127.0.0.1:3000`
+- `--module-cache`: The location to write cached binary Wasm modules. Default is a tempdir.
+
+
 
 At minimum, to start WAGI, run a command that looks like this:
 
@@ -22,7 +30,18 @@ $ wagi -c examples/modules.toml
 (load_routes) instantiation time for module examples/hello.wasm: 680.518671ms
 ```
 
-To start from source, use `cargo run -- -c examples/modules.toml`.
+If you would prefer to load the application from a bindle, use the bindle name:
+```console
+$ export BINDLE_SERVER_URL=http://localhost:8080/v1
+$ wagi -b example.com/hello/1.0.0
+=> Starting server
+(load_routes) instantiation time for module examples/hello.wat: 101.840297ms
+(load_routes) instantiation time for module examples/hello.wasm: 680.518671ms
+```
+
+To start from source, use `cargo run -- -c examples/modules.toml` or `make run`.
+
+Next we cover the `modules.toml` format, followed by the Bindle format.
 
 ## The `modules.toml` Configuration File
 
@@ -66,7 +85,7 @@ Routes are paths relative to the WAGI HTTP root. Assuming the routes above are r
 
 - The `/` route handles traffic to `http://example.com/` (or `https://example.com/`)
 - A route like `/hello` would handle traffic to `http://example.com/hello`
-- The route `/hello/...` is a special wildcard route that handles any traffic to `http://example.com/hello` or a subpath (like `http://example.com/hello/today/is/a/goo/day`)
+- The route `/hello/...` is a special wildcard route that handles any traffic to `http://example.com/hello` or a subpath (like `http://example.com/hello/today/is/a/good/day`)
 
 ### Module References
 
@@ -94,7 +113,7 @@ Here is an example of providing a volume:
 route = "/bar"
 module = "/path/to/bar.wasm"
 # You can give WAGI access to particular directories on the filesystem.
-volumes = {"/path/inside/wasm": "/path/on/host"}
+volumes = {"/path/inside/wasm" = "/path/on/host"}
 ```
 
 In this case, the `volumes` directive tells WAGI to expose the contents of `/path/on/host` to the `bar.wasm` module.
@@ -215,7 +234,7 @@ module = "/path/to/foo.wasm"
 route = "/bar/..."
 module = "/path/to/bar.wasm"
 # You can give WAGI access to particular directories on the filesystem.
-volumes = {"/path/inside/wasm": "/path/on/host"}
+volumes = {"/path/inside/wasm" = "/path/on/host"}
 # You can also put static environment variables in the TOML file
 environment.TEST_NAME = "test value" 
 
@@ -238,6 +257,148 @@ route = "/entrypoint/goodbye"
 module = "/path/to/bar.wasm"
 entrypoint = "goodbye  # Executes the `goodbye()` function in the module (instead of `_start`)
 ```
+
+## Using a Bindle Instead of a `modules.toml`
+
+Instead of using a `modules.toml`, it is possible to directly use a bindle.
+To do this, you will need to configure the following:
+
+- You will need access to a Bindle server. See the [Bindle project](https://github.com/deislabs/bindle) for instructions.
+- You will need to set the environment variable `BINDLE_SERVER_URL`
+  - The default value is `http://localhost:8080/v1`
+  - The version identifier is required. You cannot omit `/v1`
+- You will need a bindle that has your app. We cover this below.
+- When starting up `wagi`, use the `--bindle` argument to specify the bindle that holds your app
+
+```console
+$ export BINDLE_SERVER_URL="http://localhost:8080/v1"
+$ wagi -b example.com/hello/1.3.3
+```
+
+### Building a Bindle for Wagi
+
+In the event that a Bindle is used, the Bindle will construct a module configuration according
+to the following rules:
+
+- Every parcel in the global group (aka the default group) that has the media type `application/wasm` will be mounted to a path.
+- The parcel should be annotated with the `feature.wagi.route = "SOME PATH"` to declare the path.
+
+A parcel may require a group of supporting parcels. Supporting parcels are evaluated as follows:
+- Any supporting parcel that is marked `feature.wagi.file = "true"` will be mounted as a file, using the `lable.name` as the relative path.
+
+A supporting file MUST be be a member of a group, and that group MUST be required by a module before that module will be given access to the file.
+
+### Wagi Features in a Parcel
+
+The following features are available for Wagi under `feature.wagi.FEATURE`:
+
+| Feature | Description |
+| --- | --- |
+| entrypoint | The name of the entrypoint function |
+| bindle_server | RESERVED (to prevent using a deprecated feature) |
+| route | The relative path from the server route. e.g. "/foo" is mapped to http://example.com/foo |
+| host | The hostname that this module should listen on |
+| allowed_hosts | A comma-separated list of hosts that the HTTP client is allowed to access |
+| file | If this is "true", this parcel will be treated as a file for consumption by a Wagi module |
+
+### Simple Bindle Example
+
+This example can be found in `examples/invoice.toml` in the Wagi source code.
+
+```toml
+bindleVersion = "1.0.0"
+
+[bindle]
+name = "example.com/hello"
+version = "1.0.0"
+description = "Autogenerated example bindle for Wagi"
+
+[[parcel]]
+[parcel.label]
+name = "examples/hello.wasm"
+mediaType = "application/wasm"
+size = 165
+sha256 = "1f2bc60e4e39297d9a3fd06b789f6f00fac4272d72da6bf5dae20fb5f32d45a4"
+[parcel.label.feature.wagi]
+route = "/"
+```
+
+The above declares a bindle named `example.com/hello/1.0.0`.
+It references one module: `examples/hello.wasm`, which you can find in the `examples/hello.wasm` file in the source code.
+This module is mounted to the route `/`, which means it will be executable at `http://localhost:3000/`.
+
+The `examples/mkbindle.rs` program can load the invoice into a bindle server for you.
+To run it, use `cargo run --example mkbindle`.
+
+```console
+$ cargo run --example mkbindle
+    Finished dev [unoptimized + debuginfo] target(s) in 0.70s
+     Running `target/debug/examples/mkbindle`
+You can now use example.com/hello/1.0.0
+```
+
+Feel free to edit the code in that example and see what it does.
+Remember that you must change a bindle's version each time you send it to the Bindle server.
+
+### Advanced Bindle Example
+
+This invoice defines a bindle with two Wasm modules and two other parcels.
+The `static.wasm` file will have one file mounted to it.
+A number of Bindle fields have been omitted for readability.
+
+```toml
+bindle_version = "1.0.0"
+
+[[group]]
+name = "files"
+
+[[parcel]]
+[parcel.label]
+name = "examples/hello.wasm"
+mediaType = "application/wasm" # Wagi will only run application/wasm modules
+size = 165
+sha256 = "1f2bc60e4e392..."
+[parcel.label.feature.wagi]
+route = "/"    # This will be http://example.com/
+
+[[parcel]]
+[parcel.label]
+name = "static.wasm"
+mediaType = "application/wasm"
+size = 155
+sha256  = "aaaaa..."
+[parcel.label.feature.wagi]
+route = "/static/..." # This will be http://example.com/static/*
+[parcel.conditions]
+requires = ["files"]  # This will cause Wagi to load the files group for this module
+
+[[parcel]]
+[parcel.label]
+name = "image.jpeg"        # The name of the file
+mediaType = "image/jpeg"
+size = 12345
+sha256  = "aaaaa..."
+[parcel.label.feature.wagi]
+file = "true"              # Mark this as a file
+[parcel.conditions]
+member_of = ["files"]      # Add it to the "files" group
+
+# Nothing is done with this, since no features tell Wagi what to do
+[[parcel]]
+[parcel.label]
+name = "another.jpeg"        # The name of the file
+mediaType = "image/jpeg"
+size = 12345
+sha256  = "aaaaa..."
+[parcel.conditions]
+member_of = ["files"]       # Add it to the "files" group
+```
+
+When Wagi loads the invoice above, it will create two routes: `/` and `/static/...`.
+The main module (`hello.wasm`) will listen on `/`.
+The static module (`static.wasm`) will listen on any subpath of `/static`.
+It will also have access to the file `/image.jpeg` on its virtual file system.
+Note that because `another.jpeg` was not marked as a `feature.wagi.file`, it is not mounted as a file.
 
 ## Enabling Caching
 
