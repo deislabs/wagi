@@ -91,7 +91,7 @@ Routes are paths relative to the WAGI HTTP root. Assuming the routes above are r
 
 A module reference is a URL. There are three supported module reference schemes:
 
-- `file://`: A path to a `.wasm` or `.wat` file on the filesystem. We recommend using absolute paths beginning with `file://`. Right now, there is legacy support for absolute and relative paths without the `file://` prefix, but we discourge using that. Relative paths will be resolved from the current working directory in which `wagi` was started.
+- `file://`: A path to a `.wasm` or `.wat` file on the filesystem. We recommend using absolute paths beginning with `file://`. Right now, there is legacy support for absolute and relative paths without the `file://` prefix (note that this is not working on Windows with absolute paths), but we discourage using that. Relative paths will be resolved from the current working directory in which `wagi` was started.
 - `bindle:`: A reference to a Bindle. This will be looked up in the configured Bindle server. Example: `bindle:example.com/foo/bar/1.2.3`. Bindle URLs do not ever have a `//` after `bindle:`.
 - `oci`: A reference to an OCI image in an OCI registry. Example: `oci:foo/bar:1.2.3` (equivalent to the Docker image `foo/bar:1.2.3`). OCI URLs should not need `//` after `oci://`.
 
