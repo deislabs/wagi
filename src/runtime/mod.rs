@@ -783,8 +783,6 @@ mod test {
     use crate::DEFAULT_HOST as LOCALHOST;
 
     use std::io::Write;
-    use std::path::Path;
-    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     const ROUTES_WAT: &str = r#"
