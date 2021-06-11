@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
 use log::{debug, trace, warn};
@@ -100,10 +103,9 @@ pub(crate) async fn load_bindle(
         })?;
 
     log::trace!("load_bindle: Writing module parcel to cache");
-    tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p)
-        .await
-        .err()
-        .map(|e| log::warn!("load_bindle: Failed to cache bindle: {}", e));
+    if let Err(e) = tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p).await {
+        log::warn!("load_bindle: Failed to cache bindle: {}", e)
+    }
     wasmtime::Module::new(engine, p)
 }
 
@@ -120,10 +122,9 @@ pub async fn load_parcel(
     }
 
     let p = load_parcel_asset(&bindler, uri).await?;
-    tokio::fs::write(cache.join(parcel_sha.unwrap()), &p)
-        .await
-        .err()
-        .map(|e| log::warn!("Failed to cache bindle: {}", e));
+    if let Err(e) = tokio::fs::write(cache.join(parcel_sha.unwrap()), &p).await {
+        log::warn!("Failed to cache bindle: {}", e)
+    }
     wasmtime::Module::new(engine, p)
 }
 
@@ -226,7 +227,7 @@ pub async fn invoice_to_modules(
     bindle_server: &str,
     asset_cache: PathBuf,
 ) -> anyhow::Result<ModuleConfig> {
-    let mut modules = vec![];
+    let mut modules = HashSet::new();
     let bindle_id = invoice.bindle.id.clone();
 
     // For each top-level entry, if it is a Wasm module, we create a Module.
@@ -295,7 +296,7 @@ pub async fn invoice_to_modules(
         // For each group required by the module entry, we try to map its parts to one
         // or more of the Bindle module details
 
-        modules.push(def)
+        modules.insert(def);
     }
 
     // Finally, we return the module configuration
@@ -324,6 +325,7 @@ fn top_modules(inv: &Invoice) -> Vec<Parcel> {
         .collect()
 }
 
+#[allow(clippy::map_clone)]
 fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
     let label = parcel.label.clone();
     let module = parcel_url(inv_id, label.sha256);
@@ -341,7 +343,7 @@ fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
     let host = features.get("host").map(|s| s.clone());
     let allowed_hosts = features
         .get("allowed_hosts")
-        .map(|ah| ah.split(",").map(|v| v.to_owned()).collect())
+        .map(|ah| ah.split(',').map(|v| v.to_owned()).collect())
         .or_else(|| Some(vec![]));
     Module {
         module,
@@ -362,7 +364,7 @@ fn group_members(invoice: &Invoice, name: &str) -> Vec<Parcel> {
         .unwrap_or_default()
         .iter()
         .filter(|p| p.member_of(name))
-        .map(|p| p.clone())
+        .cloned()
         .collect()
 }
 
@@ -371,16 +373,15 @@ fn is_file(parcel: &Parcel) -> bool {
     let file_key = "file".to_owned();
     parcel
         .label
-        .clone()
         .feature
-        .and_then(|f| {
-            f.clone()
-                .get(&wagi_key)
-                .and_then(|g| match g.get(&file_key) {
-                    Some(v) => Some("true" == v),
-                    None => Some(false),
-                })
+        .as_ref()
+        .map(|f| {
+            f.get(&wagi_key).map(|g| match g.get(&file_key) {
+                Some(v) => "true" == v,
+                None => false,
+            })
         })
+        .flatten()
         .unwrap_or(false)
 }
 

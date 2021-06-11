@@ -19,3 +19,8 @@ allowed_hosts = ["https://api.brigade.sh"]
 # Example error.
 route = "/error"
 module = "examples/error.wat"
+
+[[module]]
+# Example logging.
+route = "/log"
+module = "examples/log.wasm"

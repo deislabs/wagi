@@ -80,6 +80,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .help("the path to a directory where modules can be cached after fetching from remote locations. Default is to create a tempdir.")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("log_dir")
+                .long("log-dir")
+                .value_name("LOG_DIR")
+                .help("the path to a directory where module logs should be stored. This directory will have a separate subdirectory created within it per running module. Default is to create a tempdir.")
+                .takes_value(true),
+        )
         .get_matches();
 
     let addr: SocketAddr = matches
@@ -112,12 +119,19 @@ pub async fn main() -> Result<(), anyhow::Error> {
         Some(m) => std::path::PathBuf::from(m),
         None => tempfile::tempdir()?.into_path(),
     };
+
+    let log_dir = match matches.value_of("log_dir") {
+        Some(m) => std::path::PathBuf::from(m),
+        None => tempfile::tempdir()?.into_path(),
+    };
+
     let mut module_config = match bindle {
         Some(name) => wagi::load_bindle(
             name,
             bindle_server.as_str(),
             cache_config_path.clone(),
             mc.clone(),
+            &log_dir,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load bindle {}: {}", name, e))?,
@@ -125,6 +139,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             module_config_path.as_str(),
             cache_config_path.clone(),
             mc.clone(),
+            &log_dir,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load TOML {}: {}", module_config_path, e))?,
@@ -136,7 +151,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
     }
 
     //debug!("Module Config\n {:#?}", module_config);
-    let router = Router::new(module_config, cache_config_path, mc).await?;
+    let router = Router::new(module_config, cache_config_path, mc, log_dir).await?;
 
     let mk_svc = make_service_fn(move |conn: &AddrStream| {
         let addr = conn.remote_addr();

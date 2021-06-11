@@ -1,5 +1,14 @@
 //! The tools for executing WAGI modules, and managing the lifecycle of a request.
 
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
+use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    hash::{Hash, Hasher},
+    io::BufRead,
+};
+
 use cap_std::fs::Dir;
 use hyper::{
     header::HOST,
@@ -14,11 +23,6 @@ use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::io::BufRead;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
-use std::time::Instant;
-use std::{collections::HashMap, net::SocketAddr};
 use url::Url;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
@@ -34,6 +38,7 @@ pub mod bindle;
 pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
 
 const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
+const STDERR_FILE: &str = "module.stderr";
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
@@ -109,8 +114,39 @@ pub struct Module {
     pub allowed_hosts: Option<Vec<String>>,
 }
 
+// For hashing, we don't need all of the fields to hash, particularly the config like volumes and
+// environment. Route + module + entrypoint + host + bindle_server is enough to be a unique
+// identity. A wasm module (not a `Module`) can be used multiple times and configured different
+// ways, but the route + host can only be used once per WAGI instance
+impl Hash for Module {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.route.hash(state);
+        self.module.hash(state);
+        self.entrypoint.hash(state);
+        self.host.hash(state);
+        self.bindle_server.hash(state);
+    }
+}
+
+impl PartialEq for Module {
+    fn eq(&self, other: &Self) -> bool {
+        self.route == other.route
+            && self.module == other.module
+            && self.entrypoint == other.entrypoint
+            && self.host == other.host
+            && self.bindle_server == other.bindle_server
+    }
+}
+
+impl Eq for Module {}
+
 impl Module {
     /// Execute the WASM module in a WAGI
+    ///
+    /// The given `base_log_dir` should be a directory where all module logs will be stored. When
+    /// executing a module, a subdirectory will be created in this directory with the ID (from the
+    /// [`id` method](Module::id)) for its name. The log will be placed in that directory at
+    /// `module.stderr`
     pub async fn execute(
         &self,
         entrypoint: &str,
@@ -118,6 +154,7 @@ impl Module {
         client_addr: SocketAddr,
         cache_config_path: String,
         module_cache_dir: PathBuf,
+        base_log_dir: impl AsRef<Path>,
     ) -> Response<Body> {
         // Read the parts in here
         log::trace!(
@@ -133,6 +170,8 @@ impl Module {
             .to_vec();
         let ep = entrypoint.to_owned();
         let me = self.clone();
+        // Clone the log dir to send into the blocking thread
+        let log_dir = base_log_dir.as_ref().to_owned();
         let res = match tokio::task::spawn_blocking(move || {
             me.run_wasm(
                 &ep,
@@ -141,6 +180,7 @@ impl Module {
                 client_addr,
                 cache_config_path,
                 module_cache_dir,
+                log_dir.as_ref(),
             )
         })
         .await
@@ -167,26 +207,75 @@ impl Module {
         }
     }
 
+    /// Returns the unique ID of the module.
+    ///
+    /// This is the SHA256 sum of the following data, written into the hasher in the following order
+    /// (skipping any `None`s):
+    ///
+    /// - route
+    /// - module
+    /// - entrypoint
+    /// - host
+    /// - bindle_server
+    pub fn id(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.route);
+        hasher.update(&self.module);
+        if let Some(entrypoint) = self.entrypoint.as_ref() {
+            hasher.update(entrypoint);
+        }
+        if let Some(host) = self.host.as_ref() {
+            hasher.update(host);
+        }
+        if let Some(bindle_server) = self.bindle_server.as_ref() {
+            hasher.update(bindle_server);
+        }
+        format!("{:x}", hasher.finalize())
+    }
+
     /// Examine the given module to see if it has any routes.
     ///
-    /// If it has any routes, add them to the vector and return it.
+    /// If it has any routes, add them to the vector and return it. The given `base_log_dir` should
+    /// be a directory where all module logs will be stored. When executing a module, a subdirectory
+    /// will be created in this directory with the ID (from the [`id` method](Module::id)) for its
+    /// name. The log will be placed in that directory at `module.stderr`
     pub(crate) fn load_routes(
         &self,
         cache_config_path: String,
         module_cache_dir: PathBuf,
+        base_log_dir: impl AsRef<Path>,
     ) -> Result<Vec<RouteEntry>, anyhow::Error> {
         let start_time = Instant::now();
 
         let prefix = self
             .route
             .strip_suffix("/...")
-            .unwrap_or(self.route.as_str());
-        let mut routes = vec![];
-
-        routes.push(RouteEntry {
+            .unwrap_or_else(|| self.route.as_str());
+        let mut routes = vec![RouteEntry {
             path: self.route.to_owned(), // We don't use prefix because prefix has been normalized.
-            entrypoint: self.entrypoint.clone().unwrap_or("_start".to_string()),
-        });
+            entrypoint: self
+                .entrypoint
+                .clone()
+                .unwrap_or_else(|| "_start".to_string()),
+        }];
+
+        // TODO: We should dedup this code somewhere because there are plenty of similarities to
+        // `run_wasm`
+
+        // Make sure the directory exists
+        let log_dir = base_log_dir.as_ref().join(self.id());
+        std::fs::create_dir_all(&log_dir)?;
+        // Open a file for appending. Right now this will just keep appending as there is no log
+        // rotation or cleanup
+        let stderr = unsafe {
+            cap_std::fs::File::from_std(
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(log_dir.join(STDERR_FILE))?,
+            )
+        };
+        let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
         let store = self.new_store(cache_config_path)?;
         let mut linker = Linker::new(&store);
@@ -196,7 +285,7 @@ impl Module {
         let mut builder = WasiCtxBuilder::new();
 
         builder = builder
-            .inherit_stderr() // STDERR goes to the console of the server
+            .stderr(Box::new(stderr)) // STDERR goes to the console of the server
             .stdout(Box::new(stdout));
 
         let ctx = builder.build()?;
@@ -389,6 +478,9 @@ impl Module {
     // Note that on occasion, this module COULD return an Ok() with a response body that
     // contains an HTTP error. This can occur, for example, if the WASM module sets
     // the status code on its own.
+    //
+    // TODO: Waaaay too many args
+    #[allow(clippy::too_many_arguments)]
     fn run_wasm(
         &self,
         entrypoint: &str,
@@ -397,9 +489,10 @@ impl Module {
         client_addr: SocketAddr,
         cache_config_path: String,
         cache_dir: PathBuf,
+        base_log_dir: &Path,
     ) -> Result<Response<Body>, anyhow::Error> {
         log::trace!(
-            "Moduke::run_wasm: uri={}, module={}, entrypoint={}",
+            "Module::run_wasm: uri={}, module={}, entrypoint={}",
             req.uri,
             &self.module,
             &entrypoint
@@ -418,6 +511,22 @@ impl Module {
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
+
+        // Make sure the directory exists
+        let log_dir = base_log_dir.join(self.id());
+        println!("Using {} for log dir", log_dir.display());
+        std::fs::create_dir_all(&log_dir)?;
+        // Open a file for appending. Right now this will just keep appending as there is no log
+        // rotation or cleanup
+        let stderr = unsafe {
+            cap_std::fs::File::from_std(
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(log_dir.join(STDERR_FILE))?,
+            )
+        };
+        let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
         // The spec does not say what to do with STDERR.
         // See specifically sections 4.2 and 6.1 of RFC 3875.
         // Currently, we will attach to wherever logs go.
@@ -437,7 +546,7 @@ impl Module {
         builder = builder
             .args(&args)?
             .envs(&headers)?
-            .inherit_stderr() // STDERR goes to the console of the server
+            .stderr(Box::new(stderr)) // STDERR goes to the console of the server
             .stdout(Box::new(stdout)) // STDOUT is sent to a Vec<u8>, which becomes the Body later
             .stdin(Box::new(stdin));
 
@@ -462,7 +571,6 @@ impl Module {
         let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), None)?;
         http.add_to_linker(&mut linker)?;
 
-        //let module = wasmtime::Module::from_file(store.engine(), self.module.as_str())?;
         let module = self.load_cached_module(&store, cache_dir)?;
         let instance = linker.instantiate(&module)?;
 
@@ -475,11 +583,7 @@ impl Module {
 
         // This shouldn't error out, because we already know there is a match.
         let start = instance.get_func(entrypoint).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No such function '{}' in {}",
-                entrypoint.clone(),
-                self.module
-            )
+            anyhow::anyhow!("No such function '{}' in {}", entrypoint, self.module)
         })?;
 
         log::trace!("Module::run_wasm: calling Wasm entry point");
@@ -708,11 +812,12 @@ impl Module {
         cache: PathBuf,
     ) -> anyhow::Result<wasmtime::Module> {
         log::trace!("Module::load_oci: uri={}", uri);
-        let mut config = ClientConfig::default();
-        config.protocol = oci_distribution::client::ClientProtocol::HttpsExcept(vec![
-            "localhost:5000".to_owned(),
-            "127.0.0.1:5000".to_owned(),
-        ]);
+        let config = ClientConfig {
+            protocol: oci_distribution::client::ClientProtocol::HttpsExcept(vec![
+                "localhost:5000".to_owned(),
+                "127.0.0.1:5000".to_owned(),
+            ]),
+        };
         let mut oc = Client::new(config);
         let auth = RegistryAuth::Anonymous;
 
@@ -739,10 +844,11 @@ impl Module {
 
         // If a cache write fails, log it but continue on.
         log::trace!("Module::load_oci: writing layer to module cache");
-        tokio::fs::write(cache.join(self.hash_name()), first_layer.data.as_slice())
-            .await
-            .err()
-            .map(|e| log::warn!("failed to write module to cache: {}", e));
+        if let Err(e) =
+            tokio::fs::write(cache.join(self.hash_name()), first_layer.data.as_slice()).await
+        {
+            log::warn!("failed to write module to cache: {}", e);
+        }
         let module = wasmtime::Module::new(engine, first_layer.data.as_slice())?;
         Ok(module)
     }
@@ -764,11 +870,8 @@ impl Module {
 ///
 /// If parsing fails, this will emit an error.
 fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
-    let name = uri.path().trim_start_matches("/");
-    let port = uri
-        .port()
-        .and_then(|p| Some(format!(":{}", p)))
-        .unwrap_or_else(|| "".to_owned());
+    let name = uri.path().trim_start_matches('/');
+    let port = uri.port().map(|p| format!(":{}", p)).unwrap_or_default();
     let r: Reference = match uri.host() {
         Some(host) => format!("{}{}/{}", host, port, name).parse(),
         None => name.parse(),
@@ -845,14 +948,17 @@ mod test {
         };
 
         let mut mc = ModuleConfig {
-            modules: vec![module.clone(), module2.clone()],
+            modules: vec![module.clone(), module2.clone()].into_iter().collect(),
             route_cache: None,
             default_host: None,
         };
 
+        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+
         mc.build_registry(
             cache,
             tempfile::tempdir().expect("new temp dir").into_path(),
+            tempdir.path(),
         )
         .await
         .expect("registry build cleanly");
@@ -916,14 +1022,17 @@ mod test {
         };
 
         let mut mc = ModuleConfig {
-            modules: vec![module.clone()],
+            modules: vec![module.clone()].into_iter().collect(),
             route_cache: None,
             default_host: Some("localhost.localdomain".to_owned()),
         };
 
+        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+
         mc.build_registry(
             cache,
             tempfile::tempdir().expect("new temp dir").into_path(),
+            tempdir.path(),
         )
         .await
         .expect("registry build cleanly");
@@ -973,6 +1082,7 @@ mod test {
             let module = Module {
                 route: "/base".to_string(),
                 module: test,
+                log_dir: "/does/not/matter".into(),
                 volumes: None,
                 environment: None,
                 entrypoint: None,
