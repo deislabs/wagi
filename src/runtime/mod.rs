@@ -114,27 +114,19 @@ pub struct Module {
     pub allowed_hosts: Option<Vec<String>>,
 }
 
-// For hashing, we don't need all of the fields to hash, particularly the config like volumes and
-// environment. Route + module + entrypoint + host + bindle_server is enough to be a unique
-// identity. A wasm module (not a `Module`) can be used multiple times and configured different
-// ways, but the route + host can only be used once per WAGI instance
+// For hashing, we don't need all of the fields to hash. A wasm module (not a `Module`) can be used
+// multiple times and configured different ways, but the route + host can only be used once per WAGI
+// instance
 impl Hash for Module {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.route.hash(state);
-        self.module.hash(state);
-        self.entrypoint.hash(state);
         self.host.hash(state);
-        self.bindle_server.hash(state);
     }
 }
 
 impl PartialEq for Module {
     fn eq(&self, other: &Self) -> bool {
-        self.route == other.route
-            && self.module == other.module
-            && self.entrypoint == other.entrypoint
-            && self.host == other.host
-            && self.bindle_server == other.bindle_server
+        self.route == other.route && self.host == other.host
     }
 }
 
@@ -213,22 +205,12 @@ impl Module {
     /// (skipping any `None`s):
     ///
     /// - route
-    /// - module
-    /// - entrypoint
     /// - host
-    /// - bindle_server
     pub fn id(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&self.route);
-        hasher.update(&self.module);
-        if let Some(entrypoint) = self.entrypoint.as_ref() {
-            hasher.update(entrypoint);
-        }
         if let Some(host) = self.host.as_ref() {
             hasher.update(host);
-        }
-        if let Some(bindle_server) = self.bindle_server.as_ref() {
-            hasher.update(bindle_server);
         }
         format!("{:x}", hasher.finalize())
     }
@@ -1082,7 +1064,6 @@ mod test {
             let module = Module {
                 route: "/base".to_string(),
                 module: test,
-                log_dir: "/does/not/matter".into(),
                 volumes: None,
                 environment: None,
                 entrypoint: None,
