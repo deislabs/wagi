@@ -817,8 +817,7 @@ mod test {
     #[tokio::test]
     async fn load_routes_from_wasm() {
         let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
-        let watfile = tf.path();
-        let urlish = format!("file:{}", watfile.to_string_lossy().to_string());
+        let urlish = format!("file:{}", tf.path().to_string_lossy());
 
         let cache = "cache.toml".to_string();
 
@@ -901,8 +900,7 @@ mod test {
     #[tokio::test]
     async fn should_override_default_domain() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let watfile = tf.path();
-        let urlish = format!("file:{}", watfile.to_string_lossy().to_string());
+        let urlish = format!("file:{}", tf.path().to_string_lossy());
 
         let cache = "cache.toml".to_string();
 
@@ -941,8 +939,7 @@ mod test {
     #[tokio::test]
     async fn should_parse_file_uri() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let watfile = tf.path();
-        let urlish = format!("file:{}", watfile.to_string_lossy().to_string());
+        let urlish = format!("file:{}", tf.path().to_string_lossy());
 
         let module = Module {
             route: "/base".to_string(),
@@ -971,8 +968,7 @@ mod test {
     async fn should_parse_file_with_all_the_windows_slashes() {
         env_logger::init();
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let watfile = tf.path();
-        let testcases = possible_slashes_for_paths(watfile.to_string_lossy().to_string());
+        let testcases = possible_slashes_for_paths(tf.path().to_string_lossy().to_string());
         for test in testcases {
             let module = Module {
                 route: "/base".to_string(),
