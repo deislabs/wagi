@@ -585,7 +585,12 @@ impl Module {
                 wasmtime::Module::from_file(store.engine(), self.module.as_str())
             }
             Ok(uri) => match uri.scheme() {
-                "file" => wasmtime::Module::from_file(store.engine(), uri.path()),
+                "file" => {
+                    match uri.to_file_path() {
+                        Ok(p) => return wasmtime::Module::from_file(store.engine(), p),
+                        Err(e) => anyhow::bail!("Cannot get path to file: {:#?}", e),
+                    };
+                }
                 "bindle" => self.load_bindle(&uri, store.engine(), cache).await,
                 "parcel" => self.load_parcel(&uri, store.engine(), cache).await,
                 "oci" => self.load_oci(&uri, store.engine(), cache).await,
@@ -614,7 +619,10 @@ impl Module {
                 PathBuf::from(self.module.as_str())
             }
             Ok(uri) => match uri.scheme() {
-                "file" => PathBuf::from(uri.path()),
+                "file" => match uri.to_file_path() {
+                    Ok(p) => p,
+                    Err(e) => anyhow::bail!("Cannot get path to file: {:#?}", e),
+                },
                 "bindle" => cache_dir.join(bindle_cache_key(&uri)),
                 "parcel" => cache_dir.join(uri.path()), // parcel:SHA256 becomes cache_dir/SHA256
                 "oci" => cache_dir.join(self.hash_name()),
@@ -809,14 +817,13 @@ mod test {
     #[tokio::test]
     async fn load_routes_from_wasm() {
         let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
-        let watfile = tf.path();
+        let urlish = format!("file:{}", tf.path().to_string_lossy());
 
-        // HEY RADU! IS THIS OKAY FOR A TEST?
         let cache = "cache.toml".to_string();
 
         let module = Module {
             route: "/base".to_string(),
-            module: watfile.to_string_lossy().to_string(),
+            module: urlish.clone(),
             volumes: None,
             environment: None,
             entrypoint: None,
@@ -828,7 +835,7 @@ mod test {
         // We should be able to mount the same wasm at a separate route.
         let module2 = Module {
             route: "/another/...".to_string(),
-            module: watfile.to_string_lossy().to_string(),
+            module: urlish,
             volumes: None,
             environment: None,
             entrypoint: None,
@@ -893,12 +900,13 @@ mod test {
     #[tokio::test]
     async fn should_override_default_domain() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let watfile = tf.path();
+        let urlish = format!("file:{}", tf.path().to_string_lossy());
+
         let cache = "cache.toml".to_string();
 
         let module = Module {
             route: "/base".to_string(),
-            module: watfile.to_string_lossy().to_string(),
+            module: urlish,
             volumes: None,
             environment: None,
             entrypoint: None,
@@ -931,10 +939,7 @@ mod test {
     #[tokio::test]
     async fn should_parse_file_uri() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let watfile = tf.path();
-
-        let urlish = format!("file:{}", watfile.to_string_lossy().to_string());
-        println!("Testing URL: {}", urlish);
+        let urlish = format!("file:{}", tf.path().to_string_lossy());
 
         let module = Module {
             route: "/base".to_string(),
@@ -956,6 +961,70 @@ mod test {
             )
             .await
             .expect("loaded module");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn should_parse_file_with_all_the_windows_slashes() {
+        env_logger::init();
+        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
+        let testcases = possible_slashes_for_paths(tf.path().to_string_lossy().to_string());
+        for test in testcases {
+            let module = Module {
+                route: "/base".to_string(),
+                module: test,
+                volumes: None,
+                environment: None,
+                entrypoint: None,
+                host: None,
+                bindle_server: None,
+                allowed_hosts: None,
+            };
+
+            let store = super::Store::default();
+
+            module
+                .load_module(
+                    &store,
+                    tempfile::tempdir().expect("create a temp dir").into_path(),
+                )
+                .await
+                .expect("loaded module");
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn possible_slashes_for_paths(path: String) -> Vec<String> {
+        let mut res = vec![];
+
+        // this should transform the initial Windows path coming from
+        // the temoporary file to most common ways to define a module
+        // in modules.toml.
+
+        res.push(format!("file:{}", path));
+        res.push(format!("file:/{}", path));
+        res.push(format!("file://{}", path));
+        res.push(format!("file:///{}", path));
+
+        let double_backslash = str::replace(path.as_str(), "\\", "\\\\");
+        res.push(format!("file:{}", double_backslash));
+        res.push(format!("file:/{}", double_backslash));
+        res.push(format!("file://{}", double_backslash));
+        res.push(format!("file:///{}", double_backslash));
+
+        let forward_slash = str::replace(path.as_str(), "\\", "/");
+        res.push(format!("file:{}", forward_slash));
+        res.push(format!("file:/{}", forward_slash));
+        res.push(format!("file://{}", forward_slash));
+        res.push(format!("file:///{}", forward_slash));
+
+        let double_slash = str::replace(path.as_str(), "\\", "//");
+        res.push(format!("file:{}", double_slash));
+        res.push(format!("file:/{}", double_slash));
+        res.push(format!("file://{}", double_slash));
+        res.push(format!("file:///{}", double_slash));
+
+        res
     }
 
     // Why is there a test for upstream libraries? Well, because they each seem to have
