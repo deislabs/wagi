@@ -1,11 +1,13 @@
 use crate::http_util::*;
 use crate::runtime::*;
 
-use hyper::{header::HOST, Body, Request, Response};
-use serde::Deserialize;
+use indexmap::IndexSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use hyper::{header::HOST, Body, Request, Response};
+use serde::Deserialize;
 use tokio::sync::{Notify, RwLock};
 
 mod http_util;
@@ -19,16 +21,28 @@ pub const DEFAULT_HOST: &str = "localhost:3000";
 /// A router is responsible for taking an inbound request and sending it to the appropriate handler.
 pub struct Router {
     module_store: ModuleStore,
+    base_log_dir: PathBuf,
 }
 
 impl Router {
+    /// Creates a new router with the given module config, a cache config path for the wasmtime
+    /// runtime, a path to the module cache (used for caching downloaded modules), and a base log
+    /// directory which is used as a location for storing module logs in unique subdirectories
     pub async fn new(
         module_config: ModuleConfig,
         cache_config_path: String,
-        module_cache: PathBuf,
+        module_cache: impl AsRef<Path>,
+        base_log_dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
-        let module_store = ModuleStore::new(module_config, cache_config_path, module_cache);
-        Ok(Router { module_store })
+        let module_store = ModuleStore::new(
+            module_config,
+            cache_config_path,
+            module_cache.as_ref().to_owned(),
+        );
+        Ok(Router {
+            module_store,
+            base_log_dir: base_log_dir.as_ref().to_owned(),
+        })
     }
     /// Route the request to the correct handler
     ///
@@ -64,6 +78,7 @@ impl Router {
                 Ok(h) => {
                     let cache_config_path = self.module_store.cache_config_path.clone();
                     let module_cache_dir = self.module_store.module_cache.clone();
+                    let base_log_dir = self.base_log_dir.clone();
                     let res = h
                         .module
                         .execute(
@@ -72,6 +87,7 @@ impl Router {
                             client_addr,
                             cache_config_path,
                             module_cache_dir,
+                            base_log_dir,
                         )
                         .await;
                     Ok(res)
@@ -90,6 +106,7 @@ pub async fn load_modules_toml(
     filename: &str,
     cache_config_path: String,
     module_cache_dir: PathBuf,
+    base_log_dir: impl AsRef<Path>,
 ) -> Result<ModuleConfig, anyhow::Error> {
     if !Path::new(filename).is_file() {
         return Err(anyhow::anyhow!(
@@ -102,7 +119,7 @@ pub async fn load_modules_toml(
     let mut modules: ModuleConfig = toml::from_str(data.as_str())?;
 
     modules
-        .build_registry(cache_config_path, module_cache_dir)
+        .build_registry(cache_config_path, module_cache_dir, base_log_dir)
         .await?;
 
     Ok(modules)
@@ -113,6 +130,7 @@ pub async fn load_bindle(
     bindle_server: &str,
     cache_config_path: String,
     module_cache_dir: PathBuf,
+    base_log_dir: impl AsRef<Path>,
 ) -> Result<ModuleConfig, anyhow::Error> {
     log::trace!("Loading bindle {}", name);
     let cache_dir = module_cache_dir.join("_ASSETS");
@@ -120,7 +138,7 @@ pub async fn load_bindle(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
 
-    mods.build_registry(cache_config_path, module_cache_dir)
+    mods.build_registry(cache_config_path, module_cache_dir, base_log_dir)
         .await?;
     Ok(mods)
 }
@@ -170,7 +188,7 @@ pub struct ModuleConfig {
 
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]
-    pub modules: Vec<crate::runtime::Module>,
+    pub modules: IndexSet<crate::runtime::Module>,
 
     /// Cache of routes.
     ///
@@ -185,6 +203,7 @@ impl ModuleConfig {
         &mut self,
         cache_config_path: String,
         module_cache_dir: PathBuf,
+        base_log_dir: impl AsRef<Path>,
     ) -> anyhow::Result<()> {
         let mut routes = vec![];
 
@@ -194,7 +213,9 @@ impl ModuleConfig {
             let cccp = cache_config_path.clone();
             let module = m.clone();
             let mcd = module_cache_dir.clone();
-            let res = tokio::task::spawn_blocking(move || module.load_routes(cccp, mcd)).await?;
+            let bld = base_log_dir.as_ref().to_owned();
+            let res =
+                tokio::task::spawn_blocking(move || module.load_routes(cccp, mcd, bld)).await?;
             match res {
                 Err(e) => {
                     // FIXME: I think we could do something better here.
@@ -259,14 +280,15 @@ impl ModuleConfig {
                 log::trace!("Module::handler_for_host_path: host matched, examining path");
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
-                if r.path
+                let route_match = r
+                    .path
                     .strip_suffix("/...")
                     .map(|i| {
-                        log::info!("Comparing {} to {}", uri_fragment.clone(), r.path.as_str());
+                        log::info!("Comparing {} to {}", uri_fragment, r.path.as_str());
                         uri_fragment.starts_with(i)
                     })
-                    .unwrap_or_else(|| r.path == uri_fragment)
-                {
+                    .unwrap_or_else(|| r.path == uri_fragment);
+                if route_match {
                     return Ok(r.clone());
                 }
             }
@@ -317,26 +339,28 @@ mod test {
         };
 
         let mut mc = ModuleConfig {
-            modules: vec![module.clone(), module2.clone()],
+            modules: vec![module.clone(), module2.clone()].into_iter().collect(),
             route_cache: None,
             default_host: None,
         };
 
-        mc.build_registry(cache, mod_cache)
+        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+
+        mc.build_registry(cache, mod_cache, tempdir.path())
             .await
             .expect("registry built cleanly");
 
         // This should match a default handler
-        let foo = mc
+        let default_handler = mc
             .handler_for_host_path(super::DEFAULT_HOST, "/")
             .expect("foo.example.com handler found");
-        assert!(foo.module.host.is_none());
+        assert!(default_handler.module.host.is_none());
 
         // This should match a handler with host example.com
-        let foo = mc
+        let example_handler = mc
             .handler_for_host_path("example.com", "/")
             .expect("example.com handler found");
-        assert!(foo.module.host.is_some());
+        assert!(example_handler.module.host.is_some());
 
         // This should not match any handlers
         assert!(mc.handler_for_host_path("foo.example.com", "/").is_err());
