@@ -183,7 +183,11 @@ REQUEST_METHOD = GET
 REMOTE_HOST = localhost
 X_FULL_URL = http://foo.example.com/env?greet=matt&foo=bar
 QUERY_STRING = greet=matt&foo=bar
+X_RELATIVE_PATH = ""
 ```
+
+See the [Environment Variables Reference](environment_variables.md) for a description of
+each environment variable.
 
 Most languages provide a convenient way to access environment variables.
 WASI provides an implementation of this OS facility (Which is why we require `wasm32-wasi` as the compile target).

@@ -392,6 +392,14 @@ impl Module {
         headers.insert("X_MATCHED_ROUTE".to_owned(), self.route.to_owned()); // Specific to WAGI (not CGI)
         headers.insert("PATH_INFO".to_owned(), req.uri.path().to_owned()); // TODO: Does this get trimmed?
 
+        // This also does not appear in the specification for CGI (largely because CGI did
+        // not necessarily "know about" URL rewrites). But it is very useful when combined
+        // with wildcard pattern matching.
+        headers.insert(
+            "X_RELATIVE_PATH".to_owned(),
+            self.x_relative_path(req.uri.path()),
+        );
+
         // NOTE: The security model of WAGI means that we do not give the actual
         // translated path on the host filesystem, as that is off limits to the runtime.
         // Right now, this just returns the same as PATH_INFO, but we could attempt to
@@ -449,6 +457,26 @@ impl Module {
         });
 
         headers
+    }
+
+    /// Resolve a relative path from the end of the matched path to the end of the string.
+    ///
+    /// For example, if the match is `/foo/...` and the path is `/foo/bar`, it should return `"bar"`,
+    /// but if the match is `/foo/bar` and the path is `/foo/bar`, it should return `""`.
+    fn x_relative_path(&self, uri_path: &str) -> String {
+        uri_path
+            .strip_prefix(
+                // Chop the `/...` off of the end if there is one.
+                self.route
+                    .strip_suffix("/...")
+                    .unwrap_or_else(|| self.route.as_str()),
+            )
+            // Remove a leading `/` if there is one.
+            .map(|r| r.strip_prefix("/").unwrap_or(r))
+            // It is possible that a root path request matching /... returns a None here,
+            // so in that case the appropriate return is "".
+            .unwrap_or("")
+            .to_owned()
     }
 
     // Load and execute the WASM module.
@@ -983,6 +1011,39 @@ mod test {
         // This should pass
         mc.handler_for_host_path(LOCALHOST, "/another/path")
             .expect("The generic handler should have been returned for this");
+    }
+
+    #[test]
+    fn should_produce_relative_path() {
+        let uri_path = "/static/images/icon.png";
+        let mut m = Module {
+            route: "/static/...".to_owned(),
+            module: "/tmp/fake".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: None,
+            bindle_server: None,
+            allowed_hosts: None,
+        };
+        assert_eq!("images/icon.png", m.x_relative_path(uri_path.clone()));
+
+        m.route = "/static/images/icon.png".to_owned();
+        assert_eq!("", m.x_relative_path(uri_path));
+
+        m.route = "/...".to_owned();
+        assert_eq!("", m.x_relative_path("/"));
+
+        m.route = "/".to_owned();
+        assert_eq!("", m.x_relative_path("/"));
+
+        // As a degenerate case, if the path does not match the prefix,
+        // then it should return an empty path because this is not
+        // a relative path from the given path. While this is a no-op in
+        // current Wagi, conceivably we could some day have to alter this
+        // behavior. So this test is a canary for a breaking change.
+        m.route = "/foo".to_owned();
+        assert_eq!("", m.x_relative_path("/bar"));
     }
 
     #[tokio::test]
