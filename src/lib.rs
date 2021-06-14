@@ -1,7 +1,7 @@
 use crate::http_util::*;
 use crate::runtime::*;
 
-use std::collections::HashSet;
+use indexmap::IndexSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -188,7 +188,7 @@ pub struct ModuleConfig {
 
     /// this line de-serializes [[module]] as modules
     #[serde(rename = "module")]
-    pub modules: HashSet<crate::runtime::Module>,
+    pub modules: IndexSet<crate::runtime::Module>,
 
     /// Cache of routes.
     ///

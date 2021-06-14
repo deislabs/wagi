@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
+use indexmap::IndexSet;
 use log::{debug, trace, warn};
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -227,7 +225,7 @@ pub async fn invoice_to_modules(
     bindle_server: &str,
     asset_cache: PathBuf,
 ) -> anyhow::Result<ModuleConfig> {
-    let mut modules = HashSet::new();
+    let mut modules = IndexSet::new();
     let bindle_id = invoice.bindle.id.clone();
 
     // For each top-level entry, if it is a Wasm module, we create a Module.
