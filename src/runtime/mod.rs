@@ -1036,6 +1036,14 @@ mod test {
 
         m.route = "/".to_owned();
         assert_eq!("", m.x_relative_path("/"));
+
+        // As a degenerate case, if the path does not match the prefix,
+        // then it should return an empty path because this is not
+        // a relative path from the given path. While this is a no-op in
+        // current Wagi, conceivably we could some day have to alter this
+        // behavior. So this test is a canary for a breaking change.
+        m.route = "/foo".to_owned();
+        assert_eq!("", m.x_relative_path("/bar"));
     }
 
     #[tokio::test]
