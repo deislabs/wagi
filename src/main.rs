@@ -122,7 +122,14 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     let log_dir = match matches.value_of("log_dir") {
         Some(m) => std::path::PathBuf::from(m),
-        None => tempfile::tempdir()?.into_path(),
+        None => {
+            let tempdir = tempfile::tempdir()?;
+            println!(
+                "No log_dir specified, using temporary directory {} for logs",
+                tempdir.path().display()
+            );
+            tempdir.into_path()
+        }
     };
 
     let mut module_config = match bindle {
