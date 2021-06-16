@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
 use indexmap::IndexSet;
@@ -25,7 +28,7 @@ pub(crate) async fn load_bindle(
     server: &str,
     uri: &Url,
     engine: &wasmtime::Engine,
-    cache: PathBuf,
+    cache: &Path,
 ) -> anyhow::Result<wasmtime::Module> {
     let bindle_name = uri.path();
 
@@ -111,7 +114,7 @@ pub async fn load_parcel(
     server: &str,
     uri: &Url,
     engine: &wasmtime::Engine,
-    cache: PathBuf,
+    cache: &Path,
 ) -> anyhow::Result<wasmtime::Module> {
     let bindler = Client::new(server)?;
     let parcel_sha = uri.fragment();
@@ -194,7 +197,7 @@ pub async fn cache_parcel_asset(
 }
 
 /// Fetch a bindle and convert it to a module configuration.
-pub async fn bindle_to_modules(
+pub(crate) async fn bindle_to_modules(
     name: &str,
     server_url: &str,
     asset_cache: PathBuf,

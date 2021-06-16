@@ -144,9 +144,9 @@ impl Module {
         entrypoint: &str,
         req: Request<Body>,
         client_addr: SocketAddr,
-        cache_config_path: String,
-        module_cache_dir: PathBuf,
-        base_log_dir: impl AsRef<Path>,
+        cache_config_path: &Path,
+        module_cache_dir: &Path,
+        base_log_dir: &Path,
     ) -> Response<Body> {
         // Read the parts in here
         log::trace!(
@@ -162,18 +162,12 @@ impl Module {
             .to_vec();
         let ep = entrypoint.to_owned();
         let me = self.clone();
-        // Clone the log dir to send into the blocking thread
-        let log_dir = base_log_dir.as_ref().to_owned();
+        // Get owned copies of the various paths to pass into the thread
+        let cccp = cache_config_path.to_owned();
+        let mcd = module_cache_dir.to_owned();
+        let bld = base_log_dir.to_owned();
         let res = match tokio::task::spawn_blocking(move || {
-            me.run_wasm(
-                &ep,
-                &parts,
-                data,
-                client_addr,
-                cache_config_path,
-                module_cache_dir,
-                log_dir.as_ref(),
-            )
+            me.run_wasm(&ep, &parts, data, client_addr, &cccp, &mcd, &bld)
         })
         .await
         {
@@ -223,9 +217,9 @@ impl Module {
     /// name. The log will be placed in that directory at `module.stderr`
     pub(crate) fn load_routes(
         &self,
-        cache_config_path: String,
-        module_cache_dir: PathBuf,
-        base_log_dir: impl AsRef<Path>,
+        cache_config_path: &Path,
+        module_cache_dir: &Path,
+        base_log_dir: &Path,
     ) -> Result<Vec<RouteEntry>, anyhow::Error> {
         let start_time = Instant::now();
 
@@ -245,7 +239,7 @@ impl Module {
         // `run_wasm`
 
         // Make sure the directory exists
-        let log_dir = base_log_dir.as_ref().join(self.id());
+        let log_dir = base_log_dir.join(self.id());
         std::fs::create_dir_all(&log_dir)?;
         // Open a file for appending. Right now this will just keep appending as there is no log
         // rotation or cleanup
@@ -497,8 +491,8 @@ impl Module {
         req: &Parts,
         body: Vec<u8>,
         client_addr: SocketAddr,
-        cache_config_path: String,
-        cache_dir: PathBuf,
+        cache_config_path: &Path,
+        cache_dir: &Path,
         base_log_dir: &Path,
     ) -> Result<Response<Body>, anyhow::Error> {
         log::trace!(
@@ -685,7 +679,7 @@ impl Module {
     /// While `file` is a little lenient in its adherence to the URL spec, `bindle` and `oci` are not.
     /// For example, an `oci` URL that references `alpine:latest` should be `oci:alpine:latest`.
     /// It should NOT be `oci://alpine:latest` because `alpine` is not a host name.
-    async fn load_module(&self, store: &Store, cache: PathBuf) -> anyhow::Result<wasmtime::Module> {
+    async fn load_module(&self, store: &Store, cache: &Path) -> anyhow::Result<wasmtime::Module> {
         log::trace!(
             "Module::load_module: loading from source: module={}",
             &self.module
@@ -721,7 +715,7 @@ impl Module {
     fn load_cached_module(
         &self,
         store: &Store,
-        cache_dir: PathBuf,
+        cache_dir: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
         log::trace!("Module::load_cached_module: {}", &self.module);
         let canonical_path = match Url::parse(self.module.as_str()) {
@@ -785,7 +779,7 @@ impl Module {
         &self,
         uri: &Url,
         engine: &Engine,
-        cache: PathBuf,
+        cache: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
         log::trace!(
             "Module::load_bindle: server={:?}, uri={}",
@@ -807,7 +801,7 @@ impl Module {
         &self,
         uri: &Url,
         engine: &Engine,
-        cache: PathBuf,
+        cache: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
         let bs = self
             .bindle_server
@@ -819,7 +813,7 @@ impl Module {
         &self,
         uri: &Url,
         engine: &Engine,
-        cache: PathBuf,
+        cache: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
         log::trace!("Module::load_oci: uri={}", uri);
         let config = ClientConfig {
@@ -863,7 +857,7 @@ impl Module {
         Ok(module)
     }
 
-    fn new_store(&self, cache_config_path: String) -> Result<Store, anyhow::Error> {
+    fn new_store(&self, cache_config_path: &Path) -> Result<Store, anyhow::Error> {
         let mut config = Config::default();
 
         if let Ok(p) = std::fs::canonicalize(cache_config_path) {
@@ -896,6 +890,7 @@ mod test {
     use crate::DEFAULT_HOST as LOCALHOST;
 
     use std::io::Write;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     const ROUTES_WAT: &str = r#"
@@ -932,7 +927,7 @@ mod test {
         let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
         let urlish = format!("file:{}", tf.path().to_string_lossy());
 
-        let cache = "cache.toml".to_string();
+        let cache = PathBuf::from("cache.toml");
 
         let module = Module {
             route: "/base".to_string(),
@@ -963,15 +958,12 @@ mod test {
             default_host: None,
         };
 
-        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+        let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+        let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
 
-        mc.build_registry(
-            cache,
-            tempfile::tempdir().expect("new temp dir").into_path(),
-            tempdir.path(),
-        )
-        .await
-        .expect("registry build cleanly");
+        mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
+            .await
+            .expect("registry build cleanly");
 
         log::debug!("{:#?}", mc.route_cache);
 
@@ -1026,7 +1018,7 @@ mod test {
             bindle_server: None,
             allowed_hosts: None,
         };
-        assert_eq!("images/icon.png", m.x_relative_path(uri_path.clone()));
+        assert_eq!("images/icon.png", m.x_relative_path(uri_path));
 
         m.route = "/static/images/icon.png".to_owned();
         assert_eq!("", m.x_relative_path(uri_path));
@@ -1051,7 +1043,7 @@ mod test {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let urlish = format!("file:{}", tf.path().to_string_lossy());
 
-        let cache = "cache.toml".to_string();
+        let cache = PathBuf::from("cache.toml");
 
         let module = Module {
             route: "/base".to_string(),
@@ -1070,15 +1062,12 @@ mod test {
             default_host: Some("localhost.localdomain".to_owned()),
         };
 
-        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+        let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+        let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
 
-        mc.build_registry(
-            cache,
-            tempfile::tempdir().expect("new temp dir").into_path(),
-            tempdir.path(),
-        )
-        .await
-        .expect("registry build cleanly");
+        mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
+            .await
+            .expect("registry build cleanly");
 
         // This should fail b/c default domain is localhost.localdomain
         assert!(mc.handler_for_host_path("localhost", "/base").is_err());
@@ -1106,11 +1095,10 @@ mod test {
 
         let store = super::Store::default();
 
+        let tempdir = tempfile::tempdir().expect("create a temp dir");
+
         module
-            .load_module(
-                &store,
-                tempfile::tempdir().expect("create a temp dir").into_path(),
-            )
+            .load_module(&store, tempdir.path())
             .await
             .expect("loaded module");
     }
@@ -1135,11 +1123,10 @@ mod test {
 
             let store = super::Store::default();
 
+            let tempdir = tempfile::tempdir().expect("create a temp dir");
+
             module
-                .load_module(
-                    &store,
-                    tempfile::tempdir().expect("create a temp dir").into_path(),
-                )
+                .load_module(&store, tempdir.path())
                 .await
                 .expect("loaded module");
         }
