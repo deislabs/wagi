@@ -157,8 +157,8 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .global_env_vars(env_vars);
 
     let router = match bindle {
-        Some(name) => builder.build_bindle(name, &bindle_server).await?,
-        None => builder.build_modules_toml(&module_config_path).await?,
+        Some(name) => builder.build_from_bindle(name, &bindle_server).await?,
+        None => builder.build_from_modules_toml(&module_config_path).await?,
     };
 
     let mk_svc = make_service_fn(move |conn: &AddrStream| {

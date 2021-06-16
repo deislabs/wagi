@@ -170,7 +170,7 @@ impl RouterBuilder {
     }
 
     /// Build the router, loading the config from a toml file at the given path
-    pub async fn build_modules_toml(self, path: impl AsRef<Path>) -> anyhow::Result<Router> {
+    pub async fn build_from_modules_toml(self, path: impl AsRef<Path>) -> anyhow::Result<Router> {
         if !tokio::fs::metadata(&path)
             .await
             .map(|m| m.is_file())
@@ -198,7 +198,11 @@ impl RouterBuilder {
 
     /// Build the router, loading the config from a bindle with the given name fetched from the
     /// provided server
-    pub async fn build_bindle(self, name: &str, bindle_server: &str) -> anyhow::Result<Router> {
+    pub async fn build_from_bindle(
+        self,
+        name: &str,
+        bindle_server: &str,
+    ) -> anyhow::Result<Router> {
         log::info!("Loading bindle {}", name);
         let cache_dir = self.module_cache_dir.join("_ASSETS");
         let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
