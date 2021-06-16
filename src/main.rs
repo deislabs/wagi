@@ -109,8 +109,6 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     log::info!("=> Starting server on {}", addr.to_string());
 
-    let builder = Router::builder();
-
     // We have to pass a cache file configuration path to a Wasmtime engine.
     let cache_config_path = matches.value_of("cache").unwrap_or("cache.toml").to_owned();
     let module_config_path = matches
@@ -151,7 +149,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         None => HashMap::new(),
     };
 
-    let builder = builder
+    let builder = Router::builder()
         .cache_config_path(cache_config_path)
         .module_cache_dir(mc)
         .base_log_dir(log_dir)
