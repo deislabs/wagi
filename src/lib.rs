@@ -2,6 +2,7 @@ use crate::http_util::*;
 use crate::runtime::*;
 
 use indexmap::IndexSet;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,31 +20,27 @@ pub const DEFAULT_HOST: &str = "localhost:3000";
 
 #[derive(Clone)]
 /// A router is responsible for taking an inbound request and sending it to the appropriate handler.
+/// The only way to construct a router is with the [`RouterBuilder`](crate::RouterBuilder)
 pub struct Router {
     module_store: ModuleStore,
     base_log_dir: PathBuf,
+    cache_config_path: PathBuf,
+    module_cache: PathBuf,
 }
 
 impl Router {
-    /// Creates a new router with the given module config, a cache config path for the wasmtime
-    /// runtime, a path to the module cache (used for caching downloaded modules), and a base log
-    /// directory which is used as a location for storing module logs in unique subdirectories
-    pub async fn new(
-        module_config: ModuleConfig,
-        cache_config_path: String,
-        module_cache: impl AsRef<Path>,
-        base_log_dir: impl AsRef<Path>,
-    ) -> anyhow::Result<Self> {
-        let module_store = ModuleStore::new(
-            module_config,
-            cache_config_path,
-            module_cache.as_ref().to_owned(),
-        );
-        Ok(Router {
-            module_store,
-            base_log_dir: base_log_dir.as_ref().to_owned(),
-        })
+    /// Creates a new router builder with empty values. For default values, use
+    /// [RouterBuilder::default]
+    pub fn builder() -> RouterBuilder {
+        RouterBuilder {
+            cache_config_path: PathBuf::default(),
+            module_cache_dir: PathBuf::default(),
+            base_log_dir: PathBuf::default(),
+            default_host: String::default(),
+            global_env_vars: HashMap::new(),
+        }
     }
+
     /// Route the request to the correct handler
     ///
     /// Some routes are built in (like healthz), while others are dynamically
@@ -76,18 +73,15 @@ impl Router {
                 .await
             {
                 Ok(h) => {
-                    let cache_config_path = self.module_store.cache_config_path.clone();
-                    let module_cache_dir = self.module_store.module_cache.clone();
-                    let base_log_dir = self.base_log_dir.clone();
                     let res = h
                         .module
                         .execute(
                             h.entrypoint.as_str(),
                             req,
                             client_addr,
-                            cache_config_path,
-                            module_cache_dir,
-                            base_log_dir,
+                            &self.cache_config_path,
+                            &self.module_cache,
+                            &self.base_log_dir,
                         )
                         .await;
                     Ok(res)
@@ -101,63 +95,170 @@ impl Router {
     }
 }
 
-/// Load the configuration TOML
-pub async fn load_modules_toml(
-    filename: &str,
-    cache_config_path: String,
+/// A builder for setting up a WAGI router. Created from [Router::builder]
+pub struct RouterBuilder {
+    cache_config_path: PathBuf,
     module_cache_dir: PathBuf,
-    base_log_dir: impl AsRef<Path>,
-) -> Result<ModuleConfig, anyhow::Error> {
-    if !Path::new(filename).is_file() {
-        return Err(anyhow::anyhow!(
-            "no modules configuration file found at {}",
-            filename
-        ));
-    }
-
-    let data = std::fs::read_to_string(filename)?;
-    let mut modules: ModuleConfig = toml::from_str(data.as_str())?;
-
-    modules
-        .build_registry(cache_config_path, module_cache_dir, base_log_dir)
-        .await?;
-
-    Ok(modules)
+    base_log_dir: PathBuf,
+    default_host: String,
+    global_env_vars: HashMap<String, String>,
 }
 
-pub async fn load_bindle(
-    name: &str,
-    bindle_server: &str,
-    cache_config_path: String,
-    module_cache_dir: PathBuf,
-    base_log_dir: impl AsRef<Path>,
-) -> Result<ModuleConfig, anyhow::Error> {
-    log::trace!("Loading bindle {}", name);
-    let cache_dir = module_cache_dir.join("_ASSETS");
-    let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
+impl Default for RouterBuilder {
+    fn default() -> Self {
+        // NOTE: Because we default to tempdirs, there is the very small chance this could fail, so
+        // we just log a warning in that case. If there is a better way to do this, we can change it
+        // in the future
+        RouterBuilder {
+            cache_config_path: PathBuf::from("cache.toml"),
+            module_cache_dir: tempfile::tempdir()
+                .map_err(|e| {
+                    log::warn!(
+                        "Error while trying to create temporary directory for module cache: {}",
+                        e
+                    );
+                    e
+                })
+                .map(|td| td.into_path())
+                .unwrap_or_default(),
+            base_log_dir: tempfile::tempdir()
+                .map_err(|e| {
+                    log::warn!(
+                        "Error while trying to create temporary directory for logging: {}",
+                        e
+                    );
+                    e
+                })
+                .map(|td| td.into_path())
+                .unwrap_or_default(),
+            default_host: String::from("localhost:3000"),
+            global_env_vars: HashMap::new(),
+        }
+    }
+}
 
-    mods.build_registry(cache_config_path, module_cache_dir, base_log_dir)
+impl RouterBuilder {
+    /// Sets a location for the wasmtime config cache
+    pub fn cache_config_path(mut self, cache_config_path: impl AsRef<Path>) -> Self {
+        self.cache_config_path = cache_config_path.as_ref().to_owned();
+        self
+    }
+
+    /// Sets a location for caching downloaded Wasm modules
+    pub fn module_cache_dir(mut self, module_cache_dir: impl AsRef<Path>) -> Self {
+        self.module_cache_dir = module_cache_dir.as_ref().to_owned();
+        self
+    }
+
+    /// Sets the base log directory which is used as a location for storing module logs in unique
+    /// subdirectories
+    pub fn base_log_dir(mut self, base_log_dir: impl AsRef<Path>) -> Self {
+        self.base_log_dir = base_log_dir.as_ref().to_owned();
+        self
+    }
+
+    /// Sets the default host to use for virtual hosting. If this is already set in a
+    /// `ModulesConfig`, this will be ignored when the router is built
+    pub fn default_host(mut self, host: &str) -> Self {
+        self.default_host = host.to_owned();
+        self
+    }
+
+    pub fn global_env_vars(mut self, vars: HashMap<String, String>) -> Self {
+        self.global_env_vars = vars;
+        self
+    }
+
+    /// Build the router, loading the config from a toml file at the given path
+    pub async fn build_modules_toml(self, path: impl AsRef<Path>) -> anyhow::Result<Router> {
+        if !tokio::fs::metadata(&path)
+            .await
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "no modules configuration file found at {}",
+                path.as_ref().display()
+            ));
+        }
+
+        let data = std::fs::read(path)?;
+        let mut modules: ModuleConfig = toml::from_slice(&data)?;
+
+        modules
+            .build_registry(
+                &self.cache_config_path,
+                &self.module_cache_dir,
+                &self.base_log_dir,
+            )
+            .await?;
+
+        Ok(self.build(modules))
+    }
+
+    /// Build the router, loading the config from a bindle with the given name fetched from the
+    /// provided server
+    pub async fn build_bindle(self, name: &str, bindle_server: &str) -> anyhow::Result<Router> {
+        log::info!("Loading bindle {}", name);
+        let cache_dir = self.module_cache_dir.join("_ASSETS");
+        let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
+            })?;
+
+        mods.build_registry(
+            &self.cache_config_path,
+            &self.module_cache_dir,
+            &self.base_log_dir,
+        )
         .await?;
-    Ok(mods)
+
+        Ok(self.build(mods))
+    }
+
+    fn build(self, mut config: ModuleConfig) -> Router {
+        // Apply the global variables on top of the user defined ones. This will overwrite existing
+        // user variables and add any ones that don't exist
+        if !self.global_env_vars.is_empty() {
+            config.modules = config
+                .modules
+                .into_iter()
+                .map(|mut module| {
+                    match module.environment.as_mut() {
+                        Some(current) => current.extend(self.global_env_vars.clone()),
+                        None => module.environment = Some(self.global_env_vars.clone()),
+                    }
+                    module
+                })
+                .collect();
+        }
+
+        if config.default_host.is_none() {
+            config.default_host = Some(self.default_host);
+        }
+
+        let module_store = ModuleStore::new(config);
+        Router {
+            module_store,
+            base_log_dir: self.base_log_dir,
+            cache_config_path: self.cache_config_path,
+            module_cache: self.module_cache_dir,
+        }
+    }
 }
 
 #[derive(Clone)]
 struct ModuleStore {
     module_config: Arc<RwLock<ModuleConfig>>,
-    cache_config_path: String,
     notify: Arc<Notify>,
-    module_cache: PathBuf,
 }
 
 impl ModuleStore {
-    fn new(config: ModuleConfig, cache_config_path: String, module_cache: PathBuf) -> Self {
+    fn new(config: ModuleConfig) -> Self {
         ModuleStore {
             module_config: Arc::new(RwLock::new(config)),
-            cache_config_path,
             notify: Arc::new(Notify::new()),
-            module_cache,
         }
     }
 
@@ -201,21 +302,21 @@ impl ModuleConfig {
     /// Construct a registry of all routes.
     async fn build_registry(
         &mut self,
-        cache_config_path: String,
-        module_cache_dir: PathBuf,
-        base_log_dir: impl AsRef<Path>,
+        cache_config_path: &Path,
+        module_cache_dir: &Path,
+        base_log_dir: &Path,
     ) -> anyhow::Result<()> {
         let mut routes = vec![];
 
         let mut failed_modules: Vec<String> = Vec::new();
 
         for m in self.modules.iter().cloned() {
-            let cccp = cache_config_path.clone();
+            let cccp = cache_config_path.to_owned();
             let module = m.clone();
-            let mcd = module_cache_dir.clone();
-            let bld = base_log_dir.as_ref().to_owned();
+            let mcd = module_cache_dir.to_owned();
+            let bld = base_log_dir.to_owned();
             let res =
-                tokio::task::spawn_blocking(move || module.load_routes(cccp, mcd, bld)).await?;
+                tokio::task::spawn_blocking(move || module.load_routes(&cccp, &mcd, &bld)).await?;
             match res {
                 Err(e) => {
                     // FIXME: I think we could do something better here.
@@ -307,13 +408,13 @@ fn is_default_host(default_host: &str, host: &str) -> bool {
 
 #[cfg(test)]
 mod test {
-
     use super::runtime::Module;
     use super::ModuleConfig;
+
     #[tokio::test]
     async fn handler_should_respect_host() {
-        let cache = "cache.toml".to_string();
-        let mod_cache = tempfile::tempdir().expect("temp dir created").into_path();
+        let cache = std::path::PathBuf::from("cache.toml");
+        let mod_cache = tempfile::tempdir().expect("temp dir created");
 
         let module = Module {
             route: "/".to_string(),
@@ -346,7 +447,7 @@ mod test {
 
         let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
 
-        mc.build_registry(cache, mod_cache, tempdir.path())
+        mc.build_registry(&cache, mod_cache.path(), tempdir.path())
             .await
             .expect("registry built cleanly");
 
