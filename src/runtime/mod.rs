@@ -10,6 +10,7 @@ use std::{
 };
 
 use cap_std::fs::Dir;
+use hyper::HeaderMap;
 use hyper::{
     header::HOST,
     http::header::{HeaderName, HeaderValue},
@@ -323,17 +324,11 @@ impl Module {
         content_length: usize,
         client_addr: SocketAddr,
     ) -> HashMap<String, String> {
+        let (host, port) = self.parse_host_header_uri(&req.headers, &req.uri);
         // Note that we put these first so that there is no chance that they overwrite
         // the built-in vars. IMPORTANT: This is also why some values have empty strings
         // deliberately set (as opposed to omiting the pair altogether).
         let mut headers = self.environment.clone().unwrap_or_default();
-
-        let host = req
-            .headers
-            .get(HOST)
-            .map(|val| val.to_str().unwrap_or("localhost"))
-            .unwrap_or("localhost")
-            .to_owned();
 
         // CGI headers from RFC
         headers.insert("AUTH_TYPE".to_owned(), "".to_owned()); // Not currently supported
@@ -369,14 +364,13 @@ impl Module {
         // NB: It is strange that there is not a way to do this already. The Display impl
         // seems to only provide the path.
         let uri = req.uri.clone();
+        let authority = format!("{}:{}", host, port);
         headers.insert(
             "X_FULL_URL".to_owned(),
             format!(
                 "{}://{}{}",
                 uri.scheme_str().unwrap_or("http"), // It is not clear if Hyper ever sets scheme.
-                uri.authority()
-                    .map(|a| a.as_str())
-                    .unwrap_or_else(|| host.as_str()),
+                authority, // We use the constructed authority because (a) it is more accurate, and (b) it will not leak credentials.
                 uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("")
             ),
         );
@@ -411,13 +405,7 @@ impl Module {
         // From the spec: "the server would use the contents of the request's Host header
         // field to select the correct virtual host."
         headers.insert("SERVER_NAME".to_owned(), host);
-        headers.insert(
-            "SERVER_PORT".to_owned(),
-            req.uri
-                .port()
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "80".to_owned()),
-        );
+        headers.insert("SERVER_PORT".to_owned(), port);
         headers.insert(
             "SERVER_PROTOCOL".to_owned(),
             req.uri
@@ -450,6 +438,59 @@ impl Module {
         });
 
         headers
+    }
+
+    /// Internal utility function for parsing a host header.
+    ///
+    /// This attempts to use three sources to construct a definitive host/port pair, ordering
+    /// by precedent.
+    ///
+    /// - The content of the host header is considered most authoritative.
+    /// - Next most authoritative is self.host, which is set at the CLI or in the config
+    /// - As a last resort, we use the host/port that Hyper gives us.
+    /// - If none of these provide sufficient data, which is definitely a possiblity,
+    ///   we go with `localhost` as host and `80` as port. This, of course, is problematic,
+    ///   but should only manifest if both the server and the client are behaving badly.
+    fn parse_host_header_uri(&self, headers: &HeaderMap, uri: &hyper::Uri) -> (String, String) {
+        let host_header = headers.get(HOST).and_then(|v| match v.to_str() {
+            Err(_) => None,
+            Ok(s) => Some(s.to_owned()),
+        });
+
+        let mut host = uri
+            .host()
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| "localhost".to_owned());
+        let mut port = uri.port_u16().unwrap_or(80).to_string();
+
+        let mut parse_host = |hdr: String| {
+            let mut parts = hdr.splitn(2, ':');
+            match parts.next() {
+                Some(h) if !h.is_empty() => host = h.to_owned(),
+                _ => {}
+            }
+            match parts.next() {
+                Some(p) if !p.is_empty() => {
+                    debug!("Overriding port: {}", p);
+                    port = p.to_owned()
+                }
+                _ => {}
+            }
+        };
+
+        // Override with local host field if set.
+        if let Some(hdr) = self.host.clone() {
+            parse_host(hdr);
+        }
+
+        // Finally, the value of the HOST header is considered authoritative.
+        // When it comes to port number, the HOST header isn't necessarily 100% trustworthy.
+        // But it appears that this is still the best behavior for the CGI spec.
+        if let Some(hdr) = host_header {
+            parse_host(hdr);
+        }
+
+        (host, port)
     }
 
     /// Resolve a relative path from the end of the matched path to the end of the string.
@@ -896,6 +937,7 @@ mod test {
 
     use std::io::Write;
     use std::path::PathBuf;
+    use std::str::FromStr;
     use tempfile::NamedTempFile;
     use wasi_cap_std_sync::WasiCtxBuilder;
     use wasmtime::Engine;
@@ -1243,5 +1285,78 @@ mod test {
         let uri = url::Url::parse("oci://example.com:9000/foo:dev").expect("parse URL");
         let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
         assert_eq!("example.com:9000/foo:dev", oci.whole().as_str());
+    }
+
+    #[test]
+    fn test_parse_host_header_uri() {
+        let mut module = Module {
+            route: "/base".to_string(),
+            module: "file:///no/such/path.wasm".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            host: Some("example.com:1234".to_owned()),
+            bindle_server: None,
+            allowed_hosts: None,
+        };
+
+        let hmap = |val: &str| {
+            let mut hm = hyper::HeaderMap::new();
+            hm.insert(
+                "HOST",
+                hyper::header::HeaderValue::from_str(val).expect("Made a header value"),
+            );
+            hm
+        };
+
+        {
+            // All should come from HOST header
+            let headers = hmap("wagi.net:31337");
+            let uri = hyper::Uri::from_str("http://localhost:443/foo/bar").expect("parsed URI");
+
+            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+            assert_eq!("wagi.net", host);
+            assert_eq!("31337", port);
+        }
+        {
+            // Name should come from HOST, port should come from self.host
+            let headers = hmap("wagi.net");
+            let uri = hyper::Uri::from_str("http://localhost:443/foo/bar").expect("parsed URI");
+
+            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+            assert_eq!("wagi.net", host);
+            assert_eq!("1234", port)
+        }
+        {
+            // Host and domain should come from self.host
+            let headers = hyper::HeaderMap::new();
+            let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
+
+            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+
+            assert_eq!("example.com", host);
+            assert_eq!("1234", port)
+        }
+        {
+            // Host and domain should come from self.host
+            let headers = hmap("");
+            let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
+
+            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+
+            assert_eq!("example.com", host);
+            assert_eq!("1234", port)
+        }
+        {
+            // Host and port should come from URI
+            module.host = None;
+            let headers = hyper::HeaderMap::new();
+            let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
+
+            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+
+            assert_eq!("localhost", host);
+            assert_eq!("8080", port)
+        }
     }
 }
