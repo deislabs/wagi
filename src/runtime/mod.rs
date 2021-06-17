@@ -27,7 +27,7 @@ use url::Url;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
-use wasmtime_wasi::Wasi;
+use wasmtime_wasi::*;
 
 use crate::version::*;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
@@ -253,25 +253,24 @@ impl Module {
         };
         let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
-        let store = self.new_store(cache_config_path)?;
-        let mut linker = Linker::new(&store);
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
-        let mut builder = WasiCtxBuilder::new();
 
-        builder = builder
-            .stderr(Box::new(stderr)) // STDERR goes to the console of the server
-            .stdout(Box::new(stdout));
+        let ctx = WasiCtxBuilder::new()
+            .stderr(Box::new(stderr))
+            .stdout(Box::new(stdout))
+            .build();
 
-        let ctx = builder.build()?;
-        let wasi = Wasi::new(&store, ctx);
-        wasi.add_to_linker(&mut linker)?;
+        let (mut store, engine) = self.new_store_and_engine(cache_config_path, ctx)?;
+        let mut linker = Linker::new(&engine);
+        wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
+
         let http = wasi_experimental_http_wasmtime::HttpCtx::new(None, None)?;
         http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, module_cache_dir)?;
-        let instance = linker.instantiate(&module)?;
+        let instance = linker.instantiate(&mut store, &module)?;
 
         let duration = start_time.elapsed();
         log::info!(
@@ -280,9 +279,9 @@ impl Module {
             duration
         );
 
-        match instance.get_func("_routes") {
+        match instance.get_func(&mut store, "_routes") {
             Some(func) => {
-                func.call(&[])?;
+                func.call(&mut store, &[])?;
             }
             None => return Ok(routes),
         }
@@ -504,8 +503,6 @@ impl Module {
 
         let start_time = Instant::now();
 
-        let store = self.new_store(cache_config_path)?;
-        let mut linker = Linker::new(&store);
         let uri_path = req.uri.path();
 
         let headers = self.build_headers(req, body.len(), client_addr);
@@ -546,8 +543,7 @@ impl Module {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        let mut builder = WasiCtxBuilder::new();
-        builder = builder
+        let mut builder = WasiCtxBuilder::new()
             .args(&args)?
             .envs(&headers)?
             .stderr(Box::new(stderr)) // STDERR goes to the console of the server
@@ -568,15 +564,17 @@ impl Module {
             }
         }
 
-        let ctx = builder.build()?;
-        let wasi = Wasi::new(&store, ctx);
-        wasi.add_to_linker(&mut linker)?;
+        let ctx = builder.build();
+
+        let (mut store, engine) = self.new_store_and_engine(cache_config_path, ctx)?;
+        let mut linker = Linker::new(&engine);
+        wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
         let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), None)?;
         http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, cache_dir)?;
-        let instance = linker.instantiate(&module)?;
+        let instance = linker.instantiate(&mut store, &module)?;
 
         let duration = start_time.elapsed();
         log::info!(
@@ -586,12 +584,12 @@ impl Module {
         );
 
         // This shouldn't error out, because we already know there is a match.
-        let start = instance.get_func(entrypoint).ok_or_else(|| {
+        let start = instance.get_func(&mut store, entrypoint).ok_or_else(|| {
             anyhow::anyhow!("No such function '{}' in {}", entrypoint, self.module)
         })?;
 
         log::trace!("Module::run_wasm: calling Wasm entry point");
-        start.call(&[])?;
+        start.call(&mut store, &[])?;
 
         // Okay, once we get here, all the information we need to send back in the response
         // should be written to the STDOUT buffer. We fetch that, format it, and send
@@ -679,7 +677,11 @@ impl Module {
     /// While `file` is a little lenient in its adherence to the URL spec, `bindle` and `oci` are not.
     /// For example, an `oci` URL that references `alpine:latest` should be `oci:alpine:latest`.
     /// It should NOT be `oci://alpine:latest` because `alpine` is not a host name.
-    async fn load_module(&self, store: &Store, cache: &Path) -> anyhow::Result<wasmtime::Module> {
+    async fn load_module(
+        &self,
+        store: &Store<WasiCtx>,
+        cache: &Path,
+    ) -> anyhow::Result<wasmtime::Module> {
         log::trace!(
             "Module::load_module: loading from source: module={}",
             &self.module
@@ -714,7 +716,7 @@ impl Module {
     /// Then we can just do `load_module` or refactor this to be async.
     fn load_cached_module(
         &self,
-        store: &Store,
+        store: &Store<WasiCtx>,
         cache_dir: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
         log::trace!("Module::load_cached_module: {}", &self.module);
@@ -857,15 +859,18 @@ impl Module {
         Ok(module)
     }
 
-    fn new_store(&self, cache_config_path: &Path) -> Result<Store, anyhow::Error> {
+    fn new_store_and_engine(
+        &self,
+        cache_config_path: &Path,
+        ctx: WasiCtx,
+    ) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
         let mut config = Config::default();
-
         if let Ok(p) = std::fs::canonicalize(cache_config_path) {
             config.cache_config_load(p)?;
         };
 
         let engine = Engine::new(&config)?;
-        Ok(Store::new(&engine))
+        Ok((Store::new(&engine, ctx), engine))
     }
 }
 
@@ -892,6 +897,9 @@ mod test {
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
+    use wasi_cap_std_sync::WasiCtxBuilder;
+    use wasmtime::Engine;
+    use wasmtime::Store;
 
     const ROUTES_WAT: &str = r#"
     (module
@@ -1093,8 +1101,9 @@ mod test {
             allowed_hosts: None,
         };
 
-        let store = super::Store::default();
-
+        let ctx = WasiCtxBuilder::new().build();
+        let engine = Engine::default();
+        let store = Store::new(&engine, ctx);
         let tempdir = tempfile::tempdir().expect("create a temp dir");
 
         module
@@ -1121,8 +1130,9 @@ mod test {
                 allowed_hosts: None,
             };
 
-            let store = super::Store::default();
-
+            let ctx = WasiCtxBuilder::new().build();
+            let engine = Engine::default();
+            let store = Store::new(&engine, ctx);
             let tempdir = tempfile::tempdir().expect("create a temp dir");
 
             module
