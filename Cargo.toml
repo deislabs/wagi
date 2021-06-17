@@ -19,8 +19,7 @@ wasmtime-cache = "0.28"
 wasi-common = "0.28"
 wasi-cap-std-sync = "0.28"
 cap-std = "0.13"
-# wasi-experimental-http-wasmtime = "0.4"
-wasi-experimental-http-wasmtime = { git = "https://github.com/radu-matei/wasi-experimental-http", branch = "update-wasmtime-v028" }
+wasi-experimental-http-wasmtime = "0.5"
 clap = "2.33.3"
 bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
 url = "2.2"

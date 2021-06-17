@@ -2850,8 +2850,9 @@ dependencies = [
 
 [[package]]
 name = "wasi-experimental-http-wasmtime"
-version = "0.4.0"
-source = "git+https://github.com/radu-matei/wasi-experimental-http?branch=update-wasmtime-v028#f18060991df1c340b423804ae5426b1423570708"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b207e13b7c228fd4626ee0bc1eb1d6cfb81473207c3b9521930404d2ee35790"
 dependencies = [
  "anyhow",
  "bytes 1.0.1",
