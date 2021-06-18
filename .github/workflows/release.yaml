@@ -1,0 +1,63 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+jobs:
+  build:
+    name: build release assets
+    runs-on: ${{ matrix.config.os }}
+    env: ${{ matrix.config.env }}
+    strategy:
+      matrix:
+        config:
+          - { os: "ubuntu-latest", arch: "amd64", extension: "", env: {} }
+          - { os: "macos-latest", arch: "amd64", extension: "", env: {} }
+          - { os: "windows-latest", arch: "amd64", extension: ".exe", env: {} }
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: set the release version (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: echo "RELEASE_VERSION=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
+
+      - name: set the release version (master)
+        if: github.ref == 'refs/heads/master'
+        shell: bash
+        run: echo "RELEASE_VERSION=canary" >> $GITHUB_ENV
+
+      - name: lowercase the runner OS name
+        shell: bash
+        run: |
+          OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          echo "RUNNER_OS=$OS" >> $GITHUB_ENV
+
+      # hack: install rustfmt to work around darwin toolchain issues
+      - name: "(macOS) install dev tools"
+        if: runner.os == 'macOS'
+        run: |
+          rustup component add rustfmt --toolchain stable-x86_64-apple-darwin
+          rustup component add clippy --toolchain stable-x86_64-apple-darwin
+          rustup update stable
+
+      - name: build release
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: "--all-features --release"
+
+      - name: package release assets
+        shell: bash
+        run: |
+          mkdir _dist
+          cp README.md LICENSE target/release/wagi${{ matrix.config.extension }} _dist/
+          cd _dist
+          tar czf wagi-${{ env.RELEASE_VERSION }}-${{ env.RUNNER_OS }}-${{ matrix.config.arch }}.tar.gz README.md LICENSE wagi${{ matrix.config.extension }}
+
+      - uses: actions/upload-artifact@v1
+        with:
+          name: wagi
+          path: _dist/wagi-${{ env.RELEASE_VERSION }}-${{ env.RUNNER_OS }}-${{ matrix.config.arch }}.tar.gz
