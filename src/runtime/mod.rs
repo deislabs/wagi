@@ -360,13 +360,13 @@ impl Module {
         // NB: It is strange that there is not a way to do this already. The Display impl
         // seems to only provide the path.
         let uri = req.uri.clone();
-        let authority = format!("{}:{}", host, port);
         headers.insert(
             "X_FULL_URL".to_owned(),
             format!(
-                "{}://{}{}",
+                "{}://{}:{}{}",
                 uri.scheme_str().unwrap_or("http"), // It is not clear if Hyper ever sets scheme.
-                authority, // We use the constructed authority because (a) it is more accurate, and (b) it will not leak credentials.
+                host,
+                port,
                 uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("")
             ),
         );
