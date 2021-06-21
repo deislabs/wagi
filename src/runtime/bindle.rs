@@ -302,7 +302,6 @@ pub async fn invoice_to_modules(
 
     // Finally, we return the module configuration
     let mc = ModuleConfig {
-        default_host: None, // Do not allow default host to be set from a bindle.
         route_cache: None, // This is built by ModuleConfig.build_registry(), which is called later.
         modules,
     };
@@ -341,7 +340,6 @@ fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
         .get("route")
         .map(|s| s.clone())
         .unwrap_or_else(|| "/".to_owned());
-    let host = features.get("host").map(|s| s.clone());
     let allowed_hosts = features
         .get("allowed_hosts")
         .map(|ah| ah.split(',').map(|v| v.to_owned()).collect())
@@ -351,7 +349,6 @@ fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
         entrypoint,
         bindle_server,
         route,
-        host,
         allowed_hosts,
         volumes: None,
         environment: None,

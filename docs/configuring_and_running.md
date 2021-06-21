@@ -15,11 +15,9 @@ The `wagi` server is run from the command line. It has a few flags:
   - If you specify both, it will use the `--bindle`
 - `--bindle-server`: The full URL to a Bindle server. Default is `http://localhost:8080/v1`
 - `--cache`: The path to an optional `cache.toml` configuration file (see the caching section below)
-- `--default-host`: The hostname (with port) to use when no `host` directive is declared in `modules.toml`. Default is `localhost:3000`
+- `--default-host`: The hostname (with port) to use when no HOST header is provided. Default is `localhost:3000`
 - `-l`|`--listen`: The IP address and port to listen on. Default is `127.0.0.1:3000`
 - `--module-cache`: The location to write cached binary Wasm modules. Default is a tempdir.
-
-
 
 At minimum, to start WAGI, run a command that looks like this:
 
@@ -50,16 +48,13 @@ By convention, this file is called `modules.toml`.
 
 In a nutshell, these are the fields that `modules.toml` supports.
 
-- Top-level fields
-  - `default_host`: By default, WAGI answers only to the hostname `localhost`. This allows you to specify a different default domain.
 - The `[[module]]` list: Each module starts with a `[[module]]` header. Inside of a module, the following fields are available:
   - `route` (REQUIRED): The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
   - `module` (REQUIRED): A module reference. See Module References below.
   - `environment`: A list of string/string environment variable pairs.
   - `repository`: RESERVED for future use
   - `entrypoint` (default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
-  - `host`: The hostname for this app. If set, the only clients that send this name in the `HOST` http header will be directed to this handler.
-
+  
 Here is a brief example of a `modules.toml` file that declares two routes:
 
 ```toml
@@ -92,7 +87,7 @@ Routes are paths relative to the WAGI HTTP root. Assuming the routes above are r
 A module reference is a URL. There are three supported module reference schemes:
 
 - `file://`: A path to a `.wasm` or `.wat` file on the filesystem. We recommend using absolute paths beginning with `file://`. Right now, there is legacy support for absolute and relative paths without the `file://` prefix (note that this is not working on Windows with absolute paths), but we discourage using that. Relative paths will be resolved from the current working directory in which `wagi` was started.
-- `bindle:`: A reference to a Bindle. This will be looked up in the configured Bindle server. Example: `bindle:example.com/foo/bar/1.2.3`. Bindle URLs do not ever have a `//` after `bindle:`.
+- `bindle:`: DEPRECATED: A reference to a Bindle. This will be looked up in the configured Bindle server. Example: `bindle:example.com/foo/bar/1.2.3`. Bindle URLs do not ever have a `//` after `bindle:`.
 - `oci`: A reference to an OCI image in an OCI registry. Example: `oci:foo/bar:1.2.3` (equivalent to the Docker image `foo/bar:1.2.3`). OCI URLs should not need `//` after `oci://`.
 
 #### Volume Mounting
@@ -166,55 +161,6 @@ route = "/entrypoint/goodbye"
 module = "/path/to/bar.wasm"
 entrypoint = "goodbye  # Executes the `goodbye()` function in the module (instead of `_start`)
 ```
-
-### Host Mapping
-
-HTTP applications often support "virtual hosting" in which one HTTP server can listen for multiple hostnames, and then use the hostname to direct traffic to the correct handler.
-
-WAGI supports this with the `host` directive:
-
-```toml
-# With no `entrypoint`, this will invoke `_start()`
-[[module]]
-route = "/"
-module = "/path/to/hello.wasm"
-host = "example.com"
-
-[[module]]
-route = "/"
-module = "/path/to/goodbye.wasm"
-host = "another.example.com"
-```
-
-The above shows two modules that each declare that they listen for the route `/`.
-However, they declare different `host` directives.
-WAGI will differentiate between these two requests based on the `Host` header in the incoming HTTP requests.
-
-If a client requests `https://example.com/`, WAGI will execute the `hello.wasm` module.
-If the client requests `https://another.example.com`, WAGI will execute the `goodbye.wasm` module.
-If no matching host is found, WAGI will serve an error.
-
-To provide a default host, set the `default_host` field at the top of your `modules.toml`.
-Any module that does not declare a `host` will automatically listen (only) on the
-`default_host`. If no `default_host` is specified and a module does not provide a `host`, then
-WAGI will use `localhost:3000` as the default host.
-
-```toml
-default_host = "my.example.com"
-
-# With no `entrypoint`, this will invoke `_start()`
-[[module]]
-route = "/"
-module = "/path/to/hello.wasm"
-host = "example.com"
-
-// This is the default host:
-[[module]]
-route = "/"
-module = "/path/to/goodbye.wasm"
-```
-
-Currently, there is no support for "wildcard" domain names. That is, you cannot specify `*.example.com` to match any domain that ends with `.example.com`.
 
 ### A Large Example
 
@@ -297,7 +243,6 @@ The following features are available for Wagi under `feature.wagi.FEATURE`:
 | entrypoint | The name of the entrypoint function |
 | bindle_server | RESERVED (to prevent using a deprecated feature) |
 | route | The relative path from the server route. e.g. "/foo" is mapped to http://example.com/foo |
-| host | The hostname that this module should listen on |
 | allowed_hosts | A comma-separated list of hosts that the HTTP client is allowed to access |
 | file | If this is "true", this parcel will be treated as a file for consumption by a Wagi module |
 

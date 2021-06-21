@@ -74,7 +74,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .long("default-host")
                 .value_name("HOSTNAME")
                 .takes_value(true)
-                .help("the hostname and port that is to be considered the default. Default: localhost:3000"),
+                .help("the hostname (and the port if not :80) that is to be considered the default. Default: localhost:3000"),
         )
         .arg(
             Arg::with_name("module_cache")
