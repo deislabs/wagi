@@ -73,10 +73,6 @@ impl Handler {
             module,
         }
     }
-
-    pub fn host(&self) -> Option<&String> {
-        self.module.host.as_ref()
-    }
 }
 
 /// Description of a single WAGI module
@@ -102,8 +98,6 @@ pub struct Module {
     /// The name of the function that is the entrypoint for executing the module.
     /// The default is `_start`.
     pub entrypoint: Option<String>,
-    /// The name of the host.
-    pub host: Option<String>,
     /// The URL fragment for the bindle server.
     ///
     /// If none is supplied, then http://localhost:8080/v1 is used
@@ -116,18 +110,17 @@ pub struct Module {
 }
 
 // For hashing, we don't need all of the fields to hash. A wasm module (not a `Module`) can be used
-// multiple times and configured different ways, but the route + host can only be used once per WAGI
+// multiple times and configured different ways, but the route can only be used once per WAGI
 // instance
 impl Hash for Module {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.route.hash(state);
-        self.host.hash(state);
     }
 }
 
 impl PartialEq for Module {
     fn eq(&self, other: &Self) -> bool {
-        self.route == other.route && self.host == other.host
+        self.route == other.route
     }
 }
 
@@ -148,6 +141,7 @@ impl Module {
         cache_config_path: &Path,
         module_cache_dir: &Path,
         base_log_dir: &Path,
+        default_host: String,
     ) -> Response<Body> {
         // Read the parts in here
         log::trace!(
@@ -168,7 +162,16 @@ impl Module {
         let mcd = module_cache_dir.to_owned();
         let bld = base_log_dir.to_owned();
         let res = match tokio::task::spawn_blocking(move || {
-            me.run_wasm(&ep, &parts, data, client_addr, &cccp, &mcd, &bld)
+            me.run_wasm(
+                &ep,
+                &parts,
+                data,
+                client_addr,
+                &cccp,
+                &mcd,
+                &bld,
+                default_host.as_str(),
+            )
         })
         .await
         {
@@ -204,9 +207,6 @@ impl Module {
     pub fn id(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&self.route);
-        if let Some(host) = self.host.as_ref() {
-            hasher.update(host);
-        }
         format!("{:x}", hasher.finalize())
     }
 
@@ -323,8 +323,9 @@ impl Module {
         req: &Parts,
         content_length: usize,
         client_addr: SocketAddr,
+        default_host: &str,
     ) -> HashMap<String, String> {
-        let (host, port) = self.parse_host_header_uri(&req.headers, &req.uri);
+        let (host, port) = self.parse_host_header_uri(&req.headers, &req.uri, default_host);
         // Note that we put these first so that there is no chance that they overwrite
         // the built-in vars. IMPORTANT: This is also why some values have empty strings
         // deliberately set (as opposed to omiting the pair altogether).
@@ -451,7 +452,12 @@ impl Module {
     /// - If none of these provide sufficient data, which is definitely a possiblity,
     ///   we go with `localhost` as host and `80` as port. This, of course, is problematic,
     ///   but should only manifest if both the server and the client are behaving badly.
-    fn parse_host_header_uri(&self, headers: &HeaderMap, uri: &hyper::Uri) -> (String, String) {
+    fn parse_host_header_uri(
+        &self,
+        headers: &HeaderMap,
+        uri: &hyper::Uri,
+        default_host: &str,
+    ) -> (String, String) {
         let host_header = headers.get(HOST).and_then(|v| match v.to_str() {
             Err(_) => None,
             Ok(s) => Some(s.to_owned()),
@@ -479,8 +485,8 @@ impl Module {
         };
 
         // Override with local host field if set.
-        if let Some(hdr) = self.host.clone() {
-            parse_host(hdr);
+        if !default_host.is_empty() {
+            parse_host(default_host.to_owned());
         }
 
         // Finally, the value of the HOST header is considered authoritative.
@@ -534,6 +540,7 @@ impl Module {
         cache_config_path: &Path,
         cache_dir: &Path,
         base_log_dir: &Path,
+        default_host: &str,
     ) -> Result<Response<Body>, anyhow::Error> {
         log::trace!(
             "Module::run_wasm: uri={}, module={}, entrypoint={}",
@@ -546,7 +553,7 @@ impl Module {
 
         let uri_path = req.uri.path();
 
-        let headers = self.build_headers(req, body.len(), client_addr);
+        let headers = self.build_headers(req, body.len(), client_addr, default_host);
 
         let stdin = ReadPipe::from(body);
 
@@ -933,7 +940,6 @@ fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
 mod test {
     use super::{url_to_oci, Module};
     use crate::ModuleConfig;
-    use crate::DEFAULT_HOST as LOCALHOST;
 
     use std::io::Write;
     use std::path::PathBuf;
@@ -985,7 +991,6 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: None,
             bindle_server: None,
             allowed_hosts: None,
         };
@@ -997,7 +1002,6 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: None,
             bindle_server: None,
             allowed_hosts: None,
         };
@@ -1005,7 +1009,6 @@ mod test {
         let mut mc = ModuleConfig {
             modules: vec![module.clone(), module2.clone()].into_iter().collect(),
             route_cache: None,
-            default_host: None,
         };
 
         let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
@@ -1024,14 +1027,14 @@ mod test {
 
         // Base route is from the config file
         let base = mc
-            .handler_for_host_path(LOCALHOST, "/base")
+            .handler_for_path("/base")
             .expect("Should get a /base route");
         assert_eq!("_start", base.entrypoint);
         assert_eq!(modpath, base.module.module);
 
         // Route one is from the module's _routes()
         let one = mc
-            .handler_for_host_path(LOCALHOST, "/base/one")
+            .handler_for_path("/base/one")
             .expect("Should get the /base/one route");
 
         assert_eq!("one", one.entrypoint);
@@ -1039,19 +1042,17 @@ mod test {
 
         // Route two is a wildcard.
         let two = mc
-            .handler_for_host_path(LOCALHOST, "/base/two/three")
+            .handler_for_path("/base/two/three")
             .expect("Should get the /base/two/... route");
 
         assert_eq!("two", two.entrypoint);
         assert_eq!(modpath, two.module.module);
 
         // This should fail
-        assert!(mc
-            .handler_for_host_path(LOCALHOST, "/base/no/such/path")
-            .is_err());
+        assert!(mc.handler_for_path("/base/no/such/path").is_err());
 
         // This should pass
-        mc.handler_for_host_path(LOCALHOST, "/another/path")
+        mc.handler_for_path("/another/path")
             .expect("The generic handler should have been returned for this");
     }
 
@@ -1064,7 +1065,6 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: None,
             bindle_server: None,
             allowed_hosts: None,
         };
@@ -1089,45 +1089,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn should_override_default_domain() {
-        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let urlish = format!("file:{}", tf.path().to_string_lossy());
-
-        let cache = PathBuf::from("cache.toml");
-
-        let module = Module {
-            route: "/base".to_string(),
-            module: urlish,
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            host: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
-
-        let mut mc = ModuleConfig {
-            modules: vec![module.clone()].into_iter().collect(),
-            route_cache: None,
-            default_host: Some("localhost.localdomain".to_owned()),
-        };
-
-        let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
-        let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
-
-        mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
-            .await
-            .expect("registry build cleanly");
-
-        // This should fail b/c default domain is localhost.localdomain
-        assert!(mc.handler_for_host_path("localhost", "/base").is_err());
-
-        assert!(mc
-            .handler_for_host_path("localhost.localdomain", "/base")
-            .is_ok())
-    }
-
-    #[tokio::test]
     async fn should_parse_file_uri() {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let urlish = format!("file:{}", tf.path().to_string_lossy());
@@ -1138,7 +1099,6 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: None,
             bindle_server: None,
             allowed_hosts: None,
         };
@@ -1167,7 +1127,6 @@ mod test {
                 volumes: None,
                 environment: None,
                 entrypoint: None,
-                host: None,
                 bindle_server: None,
                 allowed_hosts: None,
             };
@@ -1289,13 +1248,12 @@ mod test {
 
     #[test]
     fn test_parse_host_header_uri() {
-        let mut module = Module {
+        let module = Module {
             route: "/base".to_string(),
             module: "file:///no/such/path.wasm".to_owned(),
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: Some("example.com:1234".to_owned()),
             bindle_server: None,
             allowed_hosts: None,
         };
@@ -1309,12 +1267,14 @@ mod test {
             hm
         };
 
+        let default_host = "example.com:1234";
+
         {
             // All should come from HOST header
             let headers = hmap("wagi.net:31337");
             let uri = hyper::Uri::from_str("http://localhost:443/foo/bar").expect("parsed URI");
 
-            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+            let (host, port) = module.parse_host_header_uri(&headers, &uri, default_host);
             assert_eq!("wagi.net", host);
             assert_eq!("31337", port);
         }
@@ -1323,37 +1283,27 @@ mod test {
             let headers = hmap("wagi.net");
             let uri = hyper::Uri::from_str("http://localhost:443/foo/bar").expect("parsed URI");
 
-            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+            let (host, port) = module.parse_host_header_uri(&headers, &uri, default_host);
             assert_eq!("wagi.net", host);
             assert_eq!("1234", port)
         }
         {
-            // Host and domain should come from self.host
+            // Host and domain should come from default_host
             let headers = hyper::HeaderMap::new();
             let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
 
-            let (host, port) = module.parse_host_header_uri(&headers, &uri);
-
-            assert_eq!("example.com", host);
-            assert_eq!("1234", port)
-        }
-        {
-            // Host and domain should come from self.host
-            let headers = hmap("");
-            let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
-
-            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+            let (host, port) = module.parse_host_header_uri(&headers, &uri, default_host);
 
             assert_eq!("example.com", host);
             assert_eq!("1234", port)
         }
         {
             // Host and port should come from URI
-            module.host = None;
+            let empty_host = "";
             let headers = hyper::HeaderMap::new();
             let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
 
-            let (host, port) = module.parse_host_header_uri(&headers, &uri);
+            let (host, port) = module.parse_host_header_uri(&headers, &uri, empty_host);
 
             assert_eq!("localhost", host);
             assert_eq!("8080", port)

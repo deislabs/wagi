@@ -70,11 +70,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .help("the IP address and port to listen on. Default: 127.0.0.1:3000"),
         )
         .arg(
-            Arg::with_name("default_host")
-                .long("default-host")
+            Arg::with_name("hostname")
+                .long("hostnam")
                 .value_name("HOSTNAME")
                 .takes_value(true)
-                .help("the hostname and port that is to be considered the default. Default: localhost:3000"),
+                .help("the hostname (and the port if not :80) that is to be considered the default. Default: localhost:3000"),
         )
         .arg(
             Arg::with_name("module_cache")
@@ -122,7 +122,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .to_owned();
     let bindle = matches.value_of("bindle");
 
-    let default_host = matches.value_of("default_host").unwrap_or("localhost:3000");
+    let hostname = matches.value_of("hostname").unwrap_or("localhost:3000");
 
     let mc = match matches.value_of("module_cache") {
         Some(m) => std::path::PathBuf::from(m),
@@ -153,7 +153,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .cache_config_path(cache_config_path)
         .module_cache_dir(mc)
         .base_log_dir(log_dir)
-        .default_host(default_host)
+        .default_host(hostname)
         .global_env_vars(env_vars);
 
     let router = match bindle {

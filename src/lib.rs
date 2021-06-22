@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use hyper::{header::HOST, Body, Request, Response};
+use hyper::{Body, Request, Response};
 use serde::Deserialize;
 use tokio::sync::{Notify, RwLock};
 
@@ -26,6 +26,7 @@ pub struct Router {
     base_log_dir: PathBuf,
     cache_config_path: PathBuf,
     module_cache: PathBuf,
+    default_host: String,
 }
 
 impl Router {
@@ -60,18 +61,9 @@ impl Router {
         log::trace!("Processing request to {}", req.uri());
 
         let uri_path = req.uri().path();
-        let host = req
-            .headers()
-            .get(HOST)
-            .map(|val| val.to_str().unwrap_or(""))
-            .unwrap_or("");
         match uri_path {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self
-                .module_store
-                .handler_for_host_path(host.to_lowercase().as_str(), uri_path)
-                .await
-            {
+            _ => match self.module_store.handler_for_path(uri_path).await {
                 Ok(h) => {
                     let res = h
                         .module
@@ -82,6 +74,7 @@ impl Router {
                             &self.cache_config_path,
                             &self.module_cache,
                             &self.base_log_dir,
+                            self.default_host.to_owned(),
                         )
                         .await;
                     Ok(res)
@@ -157,8 +150,8 @@ impl RouterBuilder {
         self
     }
 
-    /// Sets the default host to use for virtual hosting. If this is already set in a
-    /// `ModulesConfig`, this will be ignored when the router is built
+    /// Sets the default host. This is used when the client does not specify
+    /// a HOST header.
     pub fn default_host(mut self, host: &str) -> Self {
         self.default_host = host.to_owned();
         self
@@ -238,16 +231,13 @@ impl RouterBuilder {
                 .collect();
         }
 
-        if config.default_host.is_none() {
-            config.default_host = Some(self.default_host);
-        }
-
         let module_store = ModuleStore::new(config);
         Router {
             module_store,
             base_log_dir: self.base_log_dir,
             cache_config_path: self.cache_config_path,
             module_cache: self.module_cache_dir,
+            default_host: self.default_host.clone(),
         }
     }
 }
@@ -266,32 +256,18 @@ impl ModuleStore {
         }
     }
 
-    async fn handler_for_host_path(
-        &self,
-        host: &str,
-        uri_fragment: &str,
-    ) -> anyhow::Result<Handler> {
+    async fn handler_for_path(&self, uri_fragment: &str) -> anyhow::Result<Handler> {
         self.module_config
             .read()
             .await
-            .handler_for_host_path(host, uri_fragment)
+            .handler_for_path(uri_fragment)
     }
 }
 
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Debug, Deserialize)]
 pub struct ModuleConfig {
-    /// The default hostname to use if none is supplied.
-    ///
-    /// If this is not set, the default hostname is `localhost`.
-    ///
-    /// Incoming HTTP requests MUST match a host name, or else they will not be processed.
-    /// That is, the `HOST` field of an HTTP 1.1 request must match either the default
-    /// host name specified in this paramter or match the `host` field on the module
-    /// that matches this request's path.
-    pub default_host: Option<String>,
-
-    /// this line de-serializes [[module]] as modules
+    /// De-serialize [[module]] as modules
     #[serde(rename = "module")]
     pub modules: IndexSet<crate::runtime::Module>,
 
@@ -341,48 +317,12 @@ impl ModuleConfig {
         Ok(())
     }
 
-    /// Given a URI fragment, find the handler that can execute this.
-    fn handler_for_host_path(
-        &self,
-        host: &str,
-        uri_fragment: &str,
-    ) -> Result<Handler, anyhow::Error> {
-        log::trace!(
-            "Module::handler_for_host_path: host={}, url_fragment={}",
-            host,
-            uri_fragment
-        );
-        let default_host = self
-            .default_host
-            .clone()
-            .unwrap_or_else(|| DEFAULT_HOST.to_owned());
+    /// Get a handler for a URI fragment (path) or return an error.
+    fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
+        log::trace!("Module::handler_for_path: url_fragment={}", uri_fragment);
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
-                log::trace!(
-                    "Module::handler_for_host_path: trying route host={:?} path={}",
-                    r.host(),
-                    r.path
-                );
-                // The request must match either the `host` of an entry or the `default_host`
-                // for this server.
-                match r.host() {
-                    // Host doesn't match. Skip.
-                    Some(h) if h != host => {
-                        log::trace!("Module::handler_for_host_path: host {} did not match", h);
-                        continue;
-                    }
-                    // This is not the default domain. Skip.
-                    None if !is_default_host(default_host.as_str(), host) => {
-                        log::trace!(
-                            "Module::handler_for_host_path: default host {} did not match",
-                            default_host
-                        );
-                        continue;
-                    }
-                    // Something matched, so continue our checks.
-                    _ => {}
-                }
-                log::trace!("Module::handler_for_host_path: host matched, examining path");
+                log::trace!("Module::handler_for_path: trying route path={}", r.path);
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
                 let route_match = r
@@ -399,15 +339,8 @@ impl ModuleConfig {
             }
         }
 
-        Err(anyhow::anyhow!("No handler for //{}{}", host, uri_fragment))
+        Err(anyhow::anyhow!("No handler for path {}", uri_fragment))
     }
-}
-
-fn is_default_host(default_host: &str, host: &str) -> bool {
-    if default_host.starts_with("localhost:") && host.starts_with("127.0.0.1:") {
-        return true;
-    }
-    default_host == host
 }
 
 #[cfg(test)]
@@ -416,7 +349,7 @@ mod test {
     use super::ModuleConfig;
 
     #[tokio::test]
-    async fn handler_should_respect_host() {
+    async fn handler_should_match_path() {
         let cache = std::path::PathBuf::from("cache.toml");
         let mod_cache = tempfile::tempdir().expect("temp dir created");
 
@@ -426,19 +359,17 @@ mod test {
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: None,
             bindle_server: None,
             allowed_hosts: None,
         };
 
         // We should be able to mount the same wasm at a separate route.
         let module2 = Module {
-            route: "/".to_string(),
+            route: "/foo".to_string(),
             module: "examples/hello.wasm".to_owned(),
             volumes: None,
             environment: None,
             entrypoint: None,
-            host: Some("example.com".to_owned()),
             bindle_server: None,
             allowed_hosts: None,
         };
@@ -446,7 +377,6 @@ mod test {
         let mut mc = ModuleConfig {
             modules: vec![module.clone(), module2.clone()].into_iter().collect(),
             route_cache: None,
-            default_host: None,
         };
 
         let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
@@ -457,17 +387,17 @@ mod test {
 
         // This should match a default handler
         let default_handler = mc
-            .handler_for_host_path(super::DEFAULT_HOST, "/")
+            .handler_for_path("/")
             .expect("foo.example.com handler found");
-        assert!(default_handler.module.host.is_none());
+        assert_eq!("examples/hello.wat", default_handler.module.module);
 
         // This should match a handler with host example.com
-        let example_handler = mc
-            .handler_for_host_path("example.com", "/")
+        let foo_handler = mc
+            .handler_for_path("/foo")
             .expect("example.com handler found");
-        assert!(example_handler.module.host.is_some());
+        assert_eq!("examples/hello.wasm", foo_handler.module.module);
 
         // This should not match any handlers
-        assert!(mc.handler_for_host_path("foo.example.com", "/").is_err());
+        assert!(mc.handler_for_path("/bar").is_err());
     }
 }
