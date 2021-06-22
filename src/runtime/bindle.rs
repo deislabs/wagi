@@ -5,8 +5,8 @@ use std::{
 
 use bindle::{client::Client, Id, Invoice, Parcel};
 use indexmap::IndexSet;
-use log::{debug, trace, warn};
 use sha2::{Digest, Sha256};
+use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::{runtime::Module, ModuleConfig};
@@ -24,6 +24,7 @@ pub(crate) fn bindle_cache_key(uri: &Url) -> String {
 ///
 /// TODO: this currently fetches the first application/wasm condition-less parcel from the bindle and tries
 /// to load it.
+#[instrument(level = "info", skip(engine))]
 pub(crate) async fn load_bindle(
     server: &str,
     uri: &Url,
@@ -32,10 +33,9 @@ pub(crate) async fn load_bindle(
 ) -> anyhow::Result<wasmtime::Module> {
     let bindle_name = uri.path();
 
-    log::debug!(
-        "load_bindle: Loading bindle {} from {}",
-        bindle_name,
-        server
+    tracing::debug!(
+        %bindle_name,
+        "Loading bindle",
     );
 
     let bindler = Client::new(server)?;
@@ -46,16 +46,16 @@ pub(crate) async fn load_bindle(
 
     // TODO: We should probably turn on the LRU.
 
-    log::trace!(
-        "load_bindle: All bindle parcels: [{}]",
-        invoice
+    tracing::trace!(
+        parcels = %invoice
             .parcel
             .clone()
             .unwrap_or_default()
             .iter()
             .map(|p| p.label.name.clone())
             .collect::<Vec<_>>()
-            .join(",")
+            .join(","),
+        "All bindle parcels",
     );
 
     // For now, we grab a list of parcels that have no conditions.
@@ -77,35 +77,35 @@ pub(crate) async fn load_bindle(
         .cloned()
         .collect();
 
-    log::trace!(
-        "load_bindle: Module candidates: [{}]",
-        to_fetch
+    tracing::trace!(
+        candidates = %to_fetch
             .clone()
             .iter()
             .map(|p| p.label.name.clone())
             .collect::<Vec<_>>()
-            .join(",")
+            .join(","),
+        "Module candidates",
     );
 
     if to_fetch.is_empty() {
-        log::error!("load_bindle: No parcels were module candidates");
+        tracing::error!("No parcels were module candidates");
         anyhow::bail!("No suitable parcel found");
     }
 
     let first = to_fetch.get(0).unwrap();
 
-    log::trace!("load_bindle: Fetching module parcel: {}", &first.label.name);
+    tracing::trace!(parcel_name = %first.label.name, "Fetching module parcel");
     let p = bindler
         .get_parcel(bindle_name, first.label.sha256.as_str())
         .await
         .map_err(|e| {
-            log::error!("load_bindle: Error downloading parcel: {}", e);
+            tracing::error!(error = %e, "Error downloading parcel");
             e
         })?;
 
-    log::trace!("load_bindle: Writing module parcel to cache");
+    tracing::trace!("Writing module parcel to cache");
     if let Err(e) = tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p).await {
-        log::warn!("load_bindle: Failed to cache bindle: {}", e)
+        tracing::warn!(error = %e, "Failed to cache bindle")
     }
     wasmtime::Module::new(engine, p)
 }
@@ -124,7 +124,7 @@ pub async fn load_parcel(
 
     let p = load_parcel_asset(&bindler, uri).await?;
     if let Err(e) = tokio::fs::write(cache.join(parcel_sha.unwrap()), &p).await {
-        log::warn!("Failed to cache bindle: {}", e)
+        tracing::warn!("Failed to cache bindle: {}", e)
     }
     wasmtime::Module::new(engine, p)
 }
@@ -233,7 +233,10 @@ pub async fn invoice_to_modules(
 
     // For each top-level entry, if it is a Wasm module, we create a Module.
     let top = top_modules(invoice);
-    debug!("loaded {} modules from the default group (parcels that do not have conditions.memberOf set)", top.len());
+    debug!(
+        default_modules = top.len(),
+        "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
+    );
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
@@ -261,7 +264,7 @@ pub async fn invoice_to_modules(
                     if is_file(&member) {
                         // Store the parcel at a local path
                         let purl = parcel_url(&bindle_id, member.label.sha256.clone());
-                        trace!("converting a parcel to an asset: {}", purl.clone());
+                        trace!(parcel = %purl, "converting a parcel to an asset");
                         let puri = purl.parse().unwrap();
                         let cached_path = cache_parcel_asset(
                             &bindler,
