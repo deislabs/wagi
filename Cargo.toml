@@ -29,6 +29,9 @@ tempfile = "3.2"
 wat = "1.0.37"
 async-trait = "0.1"
 indexmap = { version = "^1.6.2", features = ["serde"] }
+async-stream = "0.3"
+# This re-exports rustls, so we don't need to import it separately
+tokio-rustls = "0.22"
 
 [dev-dependencies]
 bindle = "0.3"

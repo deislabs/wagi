@@ -1,11 +1,15 @@
+mod tls;
+
 use clap::{App, Arg};
-use hyper::Server;
 use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
+use hyper::{Body, Response, Server};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use tokio::net::TcpStream;
+use tokio_rustls::server::TlsStream;
 use wagi::Router;
 
 const ABOUT: &str = r#"
@@ -91,6 +95,22 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("tls_cert_file")
+                .long("tls-cert-file")
+                .value_name("TLS_CERT_FILE")
+                .takes_value(true)
+                .help("the path to the certificate to use for https, if this is not set, normal http will be used. The cert should be in PEM format")
+                .requires("tls_key_file")
+        )
+        .arg(
+            Arg::with_name("tls_key_file")
+                .long("tls-key-file")
+                .value_name("TLS_KEY_FILE")
+                .takes_value(true)
+                .help("the path to the certificate key to use for https, if this is not set, normal http will be used. The key should be in PKCS#8 format")
+                .requires("tls_cert_file")
+        )
+        .arg(
             Arg::with_name("env_vars")
             .long("env")
             .short("e")
@@ -161,22 +181,67 @@ pub async fn main() -> Result<(), anyhow::Error> {
         None => builder.build_from_modules_toml(&module_config_path).await?,
     };
 
-    let mk_svc = make_service_fn(move |conn: &AddrStream| {
-        let addr = conn.remote_addr();
-        let r = router.clone();
-        async move {
-            Ok::<_, std::convert::Infallible>(service_fn(move |req| {
-                let r2 = r.clone();
-                async move { r2.route(req, addr).await }
-            }))
+    // NOTE(thomastaylor312): I apologize for the duplicated code here. I tried to work around this
+    // by creating a GetRemoteAddr trait, but you can't use an impl Trait in a closure. The return
+    // types for the service fns aren't exported and so I couldn't do a wrapper around the router
+    // either. This means these services are basically the same, but with different connection types
+    match (
+        matches.value_of("tls_cert_file"),
+        matches.value_of("tls_key_file"),
+    ) {
+        (Some(cert), Some(key)) => {
+            let mk_svc = make_service_fn(move |conn: &TlsStream<TcpStream>| {
+                let (inner, _) = conn.get_ref();
+                // We are mapping the error because the normal error types are not cloneable and
+                // service functions do not like captured vars, even when moved
+                let addr_res = inner.peer_addr().map_err(|e| e.to_string());
+                let r = router.clone();
+                Box::pin(async move {
+                    Ok::<_, std::convert::Infallible>(service_fn(move |req| {
+                        let r2 = r.clone();
+                        // NOTE: There isn't much in the way of error handling we can do here as
+                        // this function needs to return an infallible future. Based on the
+                        // documentation of the underlying getpeername function
+                        // (https://man7.org/linux/man-pages/man2/getpeername.2.html and
+                        // https://docs.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-getpeername)
+                        // the only error that will probably occur here is an interrupted connection
+                        let a_res = addr_res.clone();
+                        async move {
+                            match a_res {
+                                Ok(addr) => r2.route(req, addr).await,
+                                Err(e) => {
+                                    log::error!("Socket connection error on new connection: {}", e);
+                                    Ok(Response::builder()
+                                        .status(hyper::http::StatusCode::INTERNAL_SERVER_ERROR)
+                                        .body(Body::from("Socket connection error"))
+                                        .unwrap())
+                                }
+                            }
+                        }
+                    }))
+                })
+            });
+            Server::builder(tls::TlsHyperAcceptor::new(&addr, cert, key).await?)
+                .serve(mk_svc)
+                .await?;
         }
-    });
-
-    let srv = Server::bind(&addr).serve(mk_svc);
-
-    if let Err(e) = srv.await {
-        log::error!("server error: {}", e);
+        (None, None) => {
+            let mk_svc = make_service_fn(move |conn: &AddrStream| {
+                let addr = conn.remote_addr();
+                let r = router.clone();
+                async move {
+                    Ok::<_, std::convert::Infallible>(service_fn(move |req| {
+                        let r2 = r.clone();
+                        async move { r2.route(req, addr).await }
+                    }))
+                }
+            });
+            Server::bind(&addr).serve(mk_svc).await?;
+        }
+        // Shouldn't get here, but just in case, print a helpful warning
+        _ => anyhow::bail!("Both a cert and key file should be set or neither should be set"),
     }
+
     Ok(())
 }
 
