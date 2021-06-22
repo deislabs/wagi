@@ -71,7 +71,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         )
         .arg(
             Arg::with_name("hostname")
-                .long("hostnam")
+                .long("hostname")
                 .value_name("HOSTNAME")
                 .takes_value(true)
                 .help("the hostname (and the port if not :80) that is to be considered the default. Default: localhost:3000"),
