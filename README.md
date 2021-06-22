@@ -20,11 +20,11 @@ You can use any programming language that can compile to `WASM32-WASI`.
 
 ## Quickstart
 
-Here's the fastest way to try out WAGI. For details, checkout out the [documentation](docs/README.md).
+Here's the fastest way to try out WAGI.
+For details, checkout out the [documentation](docs/README.md).
+You will need a Rust environment to build Wagi.
 
-To run the WAGI server, use `cargo run -- --config examples/modules.toml`.
-
-This will start WAGI on `http://localhost:3000`.
+To run the WAGI server, use `make run`. This will start WAGI on `http://localhost:3000`.
 
 Use a browser or a tool like `curl` to test:
 
@@ -49,21 +49,23 @@ hello world
 ```
 
 To add your own modules, compile your code to `wasm32-wasi` format and add them to the `modules.toml` file.
+Check out our [Yo-Wasm](https://github.com/deislabs/yo-wasm/) project for a quick way to build Wasm modules in a variety of languages.
 
 ### Examples and Demos
+
+Wagi is an implementation of CGI for WebAssembly.
+That means that writing a Wagi module is as easy as sending properly formatted content to standard output.
+If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
 
 - [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
 - [hello-wagi-grain](https://github.com/deislabs/hello-wagi-grain): An easy-to-read Grain example for WAGI.
 - [hello-wagi-as](https://github.com/deislabs/hello-wagi-as): AssemblyScript example using environment variables and query params.
-
-If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
-While this is not an exact implementation, it is very close.
-See the "Differences" section below for the differences.
+- [Wagi Fileserver](https://github.com/deislabs/wagi-fileserver): A fileserver written in Grain, compiled to Wasm, and ready to run in Wagi.
 
 ## Contributing
 
+Want to chat?
 We hang out in the [#krustlet](https://kubernetes.slack.com/messages/krustlet) channel of the [Kubernetes Slack](https://kubernetes.slack.com).
-If WAGI gains popularity, we'll create a dedicated channel (probably on a more fitting Slack server).
 
 WAGI is experimental, and we welcome contributions to improve the project.
 In fact, we're delighted that you're even reading this section of the docs!
