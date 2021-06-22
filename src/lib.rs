@@ -150,8 +150,8 @@ impl RouterBuilder {
         self
     }
 
-    /// Sets the default host to use for virtual hosting. If this is already set in a
-    /// `ModulesConfig`, this will be ignored when the router is built
+    /// Sets the default host. This is used when the client does not specify
+    /// a HOST header.
     pub fn default_host(mut self, host: &str) -> Self {
         self.default_host = host.to_owned();
         self
