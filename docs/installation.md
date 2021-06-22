@@ -4,7 +4,7 @@ Currently there are no prebuilt binaries of WAGI. You will need to build your ow
 
 ## Prerequisites
 
-- Rust (a recent version. We suggest 1.47 or later)
+- Rust (a recent version. We suggest 1.52 or later)
 - A Linux/macOS/UNIX/WSL2/Windows environment
 
 We recently started testing WAGI on Windows, so please file an issue if you 
