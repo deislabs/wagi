@@ -43,7 +43,7 @@ impl TlsHyperAcceptor {
             // Select a certificate to use.
             cfg.set_single_cert(certs, key)
                 .map_err(|e| error(format!("{}", e)))?;
-            // Configure ALPN to accept HTTP/1.1 (and not http2 due differences in header
+            // Configure ALPN to accept HTTP/1.1 (and not http2 due to differences in header
             // requirements, namely the HOST header). If we want to add http2 in the future, we can
             // add `b"h2".to_vec()` to the list
             cfg.set_protocols(&[b"http/1.1".to_vec()]);

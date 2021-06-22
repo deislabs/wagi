@@ -95,20 +95,20 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("cert_file")
-                .long("cert-file")
-                .value_name("CERT_FILE")
+            Arg::with_name("tls_cert_file")
+                .long("tls-cert-file")
+                .value_name("TLS_CERT_FILE")
                 .takes_value(true)
                 .help("the path to the certificate to use for https, if this is not set, normal http will be used. The cert should be in PEM format")
-                .requires("key_file")
+                .requires("tls_key_file")
         )
         .arg(
-            Arg::with_name("key_file")
-                .long("key-file")
-                .value_name("KEY_FILE")
+            Arg::with_name("tls_key_file")
+                .long("tls-key-file")
+                .value_name("TLS_KEY_FILE")
                 .takes_value(true)
                 .help("the path to the certificate key to use for https, if this is not set, normal http will be used. The key should be in PKCS#8 format")
-                .requires("cert_file")
+                .requires("tls_cert_file")
         )
         .arg(
             Arg::with_name("env_vars")
@@ -183,9 +183,12 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     // NOTE(thomastaylor312): I apologize for the duplicated code here. I tried to work around this
     // by creating a GetRemoteAddr trait, but you can't use an impl Trait in a closure. The return
-    // types for the service fns aren't exported and so I could do a wrapper around the router
+    // types for the service fns aren't exported and so I couldn't do a wrapper around the router
     // either. This means these services are basically the same, but with different connection types
-    match (matches.value_of("cert_file"), matches.value_of("key_file")) {
+    match (
+        matches.value_of("tls_cert_file"),
+        matches.value_of("tls_key_file"),
+    ) {
         (Some(cert), Some(key)) => {
             let mk_svc = make_service_fn(move |conn: &TlsStream<TcpStream>| {
                 let (inner, _) = conn.get_ref();
