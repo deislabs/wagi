@@ -172,12 +172,16 @@ pub async fn main() -> Result<(), anyhow::Error> {
         None => HashMap::new(),
     };
 
+    let tls_cert = matches.value_of("tls_cert_file");
+    let tls_key = matches.value_of("tls_key_file");
+
     let builder = Router::builder()
         .cache_config_path(cache_config_path)
         .module_cache_dir(mc)
         .base_log_dir(log_dir)
         .default_host(hostname)
-        .global_env_vars(env_vars);
+        .global_env_vars(env_vars)
+        .uses_tls(tls_cert.is_some() && tls_key.is_some());
 
     let router = match bindle {
         Some(name) => builder.build_from_bindle(name, &bindle_server).await?,
@@ -188,10 +192,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
     // by creating a GetRemoteAddr trait, but you can't use an impl Trait in a closure. The return
     // types for the service fns aren't exported and so I couldn't do a wrapper around the router
     // either. This means these services are basically the same, but with different connection types
-    match (
-        matches.value_of("tls_cert_file"),
-        matches.value_of("tls_key_file"),
-    ) {
+    match (tls_cert, tls_key) {
         (Some(cert), Some(key)) => {
             let mk_svc = make_service_fn(move |conn: &TlsStream<TcpStream>| {
                 let (inner, _) = conn.get_ref();
