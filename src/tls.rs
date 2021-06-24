@@ -139,7 +139,10 @@ fn load_private_key(filename: impl AsRef<Path>) -> io::Result<rustls::PrivateKey
     let keys = pemfile::pkcs8_private_keys(&mut reader)
         .map_err(|_| error("failed to load private key".into()))?;
     if keys.len() != 1 {
-        return Err(error("expected a single private key".into()));
+        return Err(error(format!(
+            "expected a single private key. Got {}",
+            keys.len()
+        )));
     }
     Ok(keys[0].clone())
 }

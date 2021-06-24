@@ -5,19 +5,21 @@ BINDLE ?= example.com/hello/1.3.3
 BINDLE_HOST_URL ?= http://localhost:8080/v1
 WAGI_IFACE ?= 127.0.0.1:3000
 WAGI_HOST ?= localhost:3000
+CERT_NAME ?= ./ssl-example
+TLS_OPTS ?= --tls-cert ${CERT_NAME}.crt.pem --tls-key ${CERT_NAME}.key.pem
 
 .PHONY: build
 build:
 	cargo build --release
 
-.PHONY: run
-run:
-	mkdir -p $(MODULE_CACHE)
-	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -c $(MODULES_TOML) --module-cache $(MODULE_CACHE)
-
-# For compat with other projects, where we use "run" for CLI and "serve" for server
 .PHONY: serve
-serve: run
+serve: TLS_OPTS = 
+serve: serve-tls
+
+.PHONY: serve-tls
+serve-tls:
+	mkdir -p $(MODULE_CACHE)
+	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -c $(MODULES_TOML) --module-cache $(MODULE_CACHE) ${TLS_OPTS}
 
 .PHONY: run-bindle
 run-bindle:
@@ -28,3 +30,6 @@ run-bindle:
 test:
 	cargo test
 
+.PHONY: gen-cert
+gen-cert:
+	openssl req -newkey rsa:2048 -nodes -keyout ${CERT_NAME}.key.pem -x509 -days 365 -out ${CERT_NAME}.crt.pem 
