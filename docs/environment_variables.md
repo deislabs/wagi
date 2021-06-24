@@ -24,9 +24,8 @@ SCRIPT_NAME="/path/to/env_wagi.wasm"
 SERVER_SOFTWARE="WAGI/1"
 # The port upon which the server received its request
 SERVER_PORT="3000"
-# The host and port that the server answered to. This usually matches the HOST
-# header.
-SERVER_NAME="localhost:3000"
+# The host and port that the server answered to. This does not contain the port.
+SERVER_NAME="localhost"
 # The auth type (e.g. basic/digest)
 AUTH_TYPE=""
 # The client's IP address
@@ -35,7 +34,7 @@ REMOTE_ADDR="127.0.0.1"
 REMOTE_HOST="127.0.0.1"
 # The path portion of the URL. E.g. http://example.com/envwasm becomes /envwasm
 PATH_INFO="/envwasm"
-# The client-supplied query string, E.g. http://example.com?foo=bar becomes ?foo=bar
+# The client-supplied query string, E.g. http://example.com?foo=bar becomes foo=bar
 QUERY_STRING=""
 # Currently, this is always the same as PATH_INFO, but is supplied for compatibility with
 # the CGI specification. It is not recommended that you use this variable.

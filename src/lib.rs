@@ -28,6 +28,7 @@ pub struct Router {
     cache_config_path: PathBuf,
     module_cache: PathBuf,
     default_host: String,
+    use_tls: bool,
 }
 
 impl Router {
@@ -40,6 +41,7 @@ impl Router {
             base_log_dir: PathBuf::default(),
             default_host: String::default(),
             global_env_vars: HashMap::new(),
+            use_tls: false,
         }
     }
 
@@ -77,6 +79,7 @@ impl Router {
                             &self.module_cache,
                             &self.base_log_dir,
                             self.default_host.to_owned(),
+                            self.use_tls,
                         )
                         .await;
                     Ok(res)
@@ -97,6 +100,7 @@ pub struct RouterBuilder {
     base_log_dir: PathBuf,
     default_host: String,
     global_env_vars: HashMap<String, String>,
+    use_tls: bool,
 }
 
 impl Default for RouterBuilder {
@@ -125,6 +129,7 @@ impl Default for RouterBuilder {
                 .unwrap_or_default(),
             default_host: String::from("localhost:3000"),
             global_env_vars: HashMap::new(),
+            use_tls: false,
         }
     }
 }
@@ -158,6 +163,11 @@ impl RouterBuilder {
 
     pub fn global_env_vars(mut self, vars: HashMap<String, String>) -> Self {
         self.global_env_vars = vars;
+        self
+    }
+
+    pub fn uses_tls(mut self, enabled: bool) -> Self {
+        self.use_tls = enabled;
         self
     }
 
@@ -237,6 +247,7 @@ impl RouterBuilder {
             cache_config_path: self.cache_config_path,
             module_cache: self.module_cache_dir,
             default_host: self.default_host,
+            use_tls: self.use_tls,
         }
     }
 }

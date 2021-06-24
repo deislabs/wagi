@@ -14,7 +14,6 @@ use hyper::{
     header::HOST,
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
-    http::uri::Scheme,
     Body, Request, Response, StatusCode,
 };
 use oci_distribution::client::{Client, ClientConfig};
@@ -143,6 +142,7 @@ impl Module {
         module_cache_dir: &Path,
         base_log_dir: &Path,
         default_host: String,
+        use_tls: bool,
     ) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
@@ -166,6 +166,7 @@ impl Module {
                 &mcd,
                 &bld,
                 default_host.as_str(),
+                use_tls,
             )
         })
         .await
@@ -319,6 +320,7 @@ impl Module {
         content_length: usize,
         client_addr: SocketAddr,
         default_host: &str,
+        use_tls: bool,
     ) -> HashMap<String, String> {
         let (host, port) = self.parse_host_header_uri(&req.headers, &req.uri, default_host);
         // Note that we put these first so that there is no chance that they overwrite
@@ -356,6 +358,8 @@ impl Module {
                 .to_owned(),
         );
 
+        let protocol = if use_tls { "https" } else { "http" };
+
         // Since this is not in the specification, an X_ is prepended, per spec.
         // NB: It is strange that there is not a way to do this already. The Display impl
         // seems to only provide the path.
@@ -364,7 +368,7 @@ impl Module {
             "X_FULL_URL".to_owned(),
             format!(
                 "{}://{}:{}{}",
-                uri.scheme_str().unwrap_or("http"), // It is not clear if Hyper ever sets scheme.
+                protocol,
                 host,
                 port,
                 uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("")
@@ -402,14 +406,7 @@ impl Module {
         // field to select the correct virtual host."
         headers.insert("SERVER_NAME".to_owned(), host);
         headers.insert("SERVER_PORT".to_owned(), port);
-        headers.insert(
-            "SERVER_PROTOCOL".to_owned(),
-            req.uri
-                .scheme()
-                .unwrap_or(&Scheme::HTTP)
-                .as_str()
-                .to_owned(),
-        );
+        headers.insert("SERVER_PROTOCOL".to_owned(), protocol.to_owned());
 
         headers.insert(
             "SERVER_SOFTWARE".to_owned(),
@@ -426,7 +423,7 @@ impl Module {
                 header.0.as_str().to_uppercase().replace("-", "_")
             );
             // Per spec 4.1.18, skip some headers
-            if key == "HTTP_AUHTORIZATION" || key == "HTTP_CONNECTION" {
+            if key == "HTTP_AUTHORIZATION" || key == "HTTP_CONNECTION" {
                 return;
             }
             let val = header.1.to_str().unwrap_or("CORRUPT VALUE").to_owned();
@@ -537,12 +534,13 @@ impl Module {
         cache_dir: &Path,
         base_log_dir: &Path,
         default_host: &str,
+        use_tls: bool,
     ) -> Result<Response<Body>, anyhow::Error> {
         let startup_span = tracing::info_span!("module instantiation").entered();
 
         let uri_path = req.uri.path();
 
-        let headers = self.build_headers(req, body.len(), client_addr, default_host);
+        let headers = self.build_headers(req, body.len(), client_addr, default_host, use_tls);
 
         let stdin = ReadPipe::from(body);
 
@@ -916,7 +914,9 @@ mod test {
     use super::{url_to_oci, Module};
     use crate::ModuleConfig;
 
+    use hyper::http::request::Request;
     use std::io::Write;
+    use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::str::FromStr;
     use tempfile::NamedTempFile;
@@ -1282,5 +1282,74 @@ mod test {
             assert_eq!("localhost", host);
             assert_eq!("8080", port)
         }
+    }
+
+    #[test]
+    fn test_headers() {
+        let module = Module {
+            route: "/path/...".to_string(),
+            module: "file:///no/such/path.wasm".to_owned(),
+            volumes: None,
+            environment: None,
+            entrypoint: None,
+            bindle_server: None,
+            allowed_hosts: None,
+        };
+        let (req, _) = Request::builder()
+            .uri("https://example.com:3000/path/test?foo=bar")
+            .header("X-Test-Header", "hello")
+            .header("Accept", "text/html")
+            .header("User-agent", "test")
+            .header("Host", "example.com:3000")
+            .header("Authorization", "supersecret")
+            .header("Connection", "sensitive")
+            .method("POST")
+            .body(())
+            .unwrap()
+            .into_parts();
+        let content_length = 1234;
+        let client_addr = "192.168.0.1:3000".parse().expect("Should parse IP");
+        let default_host = "example.com:3000";
+        let use_tls = true;
+        let headers =
+            module.build_headers(&req, content_length, client_addr, default_host, use_tls);
+
+        let want = |key: &str, expect: &str| {
+            let v = headers
+                .get(&key.to_owned())
+                .unwrap_or_else(|| panic!("expected to find key {}", key));
+
+            assert_eq!(expect, v)
+        };
+
+        // Content-type is set on output, so we don't test here.
+        want("X_MATCHED_ROUTE", "/path/...");
+        want("HTTP_ACCEPT", "text/html");
+        want("REQUEST_METHOD", "POST");
+        want("SERVER_PROTOCOL", "https");
+        want("HTTP_USER_AGENT", "test");
+        want("SCRIPT_NAME", "file:///no/such/path.wasm");
+        want("SERVER_SOFTWARE", "WAGI/1");
+        want("SERVER_PORT", "3000");
+        want("SERVER_NAME", "example.com");
+        want("AUTH_TYPE", "");
+        want("REMOTE_ADDR", "192.168.0.1");
+        want("REMOTE_ADDR", "192.168.0.1");
+        want("PATH_INFO", "/path/test");
+        want("QUERY_STRING", "foo=bar");
+        want("PATH_TRANSLATED", "/path/test");
+        want("CONTENT_LENGTH", "1234");
+        want("HTTP_HOST", "example.com:3000");
+        want("GATEWAY_INTERFACE", "CGI/1.1");
+        want("REMOTE_USER", "");
+        want("X_FULL_URL", "https://example.com:3000/path/test?foo=bar");
+        want("X_RELATIVE_PATH", "test");
+
+        // Extra header should be passed through
+        want("HTTP_X_TEST_HEADER", "hello");
+
+        // Finally, security-sensitive headers should be removed.
+        assert!(headers.get("HTTP_AUTHORIZATION").is_none());
+        assert!(headers.get("HTTP_CONNECTION").is_none());
     }
 }
