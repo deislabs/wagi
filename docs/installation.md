@@ -30,7 +30,7 @@ You can move the binary to any location you choose. Just make sure it has execut
 ## Running from Source
 
 If you prefer to run from source without building, you can use `make serve` (which runs `cargo run` with all the settings).
-You can test out SSL/TLS with `make gen-cert` to generate a testing certificate, and `make serve-tls` to serve with that certificate.
+You can test out SSL/TLS with `make serve-tls`, which will automatically generate a self-signed certificate for WAGI to use.
 
 > Note that if you are using a self-signed certificate, you will need to supply the `-k` flag to curl.
 

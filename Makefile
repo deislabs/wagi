@@ -14,10 +14,14 @@ build:
 
 .PHONY: serve
 serve: TLS_OPTS = 
-serve: serve-tls
+serve: _run
 
 .PHONY: serve-tls
-serve-tls:
+serve-tls: gen-cert
+serve-tls: _run
+
+.PHONY: _run
+_run:
 	mkdir -p $(MODULE_CACHE)
 	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -c $(MODULES_TOML) --module-cache $(MODULE_CACHE) ${TLS_OPTS}
 
@@ -30,6 +34,7 @@ run-bindle:
 test:
 	cargo test
 
-.PHONY: gen-cert
-gen-cert:
-	openssl req -newkey rsa:2048 -nodes -keyout ${CERT_NAME}.key.pem -x509 -days 365 -out ${CERT_NAME}.crt.pem 
+gen-cert: ${CERT_NAME}.crt.pem
+
+${CERT_NAME}.crt.pem:
+	openssl req -newkey rsa:2048 -nodes -keyout ${CERT_NAME}.key.pem -x509 -days 365 -out ${CERT_NAME}.crt.pem
