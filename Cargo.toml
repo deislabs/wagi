@@ -5,8 +5,6 @@ authors = ["Matt Butcher <matt.butcher@microsoft.com>"]
 edition = "2018"
 
 [dependencies]
-log = "0.4"
-env_logger = "0.8"
 hyper = {version = "0.14", features = ["full"]}
 tokio = { version = "1.1", features = ["full"] }
 futures = "0.3"
@@ -32,6 +30,9 @@ indexmap = { version = "^1.6.2", features = ["serde"] }
 async-stream = "0.3"
 # This re-exports rustls, so we don't need to import it separately
 tokio-rustls = "0.22"
+tracing-subscriber = "0.2"
+tracing = { version = "0.1", features = ["log"] }
+tracing-futures = "0.2"
 
 [dev-dependencies]
 bindle = "0.3"

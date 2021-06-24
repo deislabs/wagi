@@ -31,7 +31,10 @@ const ENV_VAR_HELP: &str = "specifies an environment variable that should be use
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
     let matches = App::new("WAGI Server")
         .version("0.1.0")
         .author("DeisLabs")
@@ -127,7 +130,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .parse()
         .unwrap();
 
-    log::info!("=> Starting server on {}", addr.to_string());
+    tracing::info!(?addr, "Starting server");
 
     // We have to pass a cache file configuration path to a Wasmtime engine.
     let cache_config_path = matches.value_of("cache").unwrap_or("cache.toml").to_owned();
@@ -210,7 +213,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
                             match a_res {
                                 Ok(addr) => r2.route(req, addr).await,
                                 Err(e) => {
-                                    log::error!("Socket connection error on new connection: {}", e);
+                                    tracing::error!(error = %e, "Socket connection error on new connection");
                                     Ok(Response::builder()
                                         .status(hyper::http::StatusCode::INTERNAL_SERVER_ERROR)
                                         .body(Body::from("Socket connection error"))

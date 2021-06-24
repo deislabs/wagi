@@ -67,11 +67,11 @@ impl hyper::server::accept::Accept for TlsHyperAcceptor {
     ) -> Poll<Option<Result<Self::Conn, Self::Error>>> {
         let mut accept = match self.in_progress_stream.take() {
             Some(s) => {
-                log::trace!("TLS handshake currently in progress. Polling for current status");
+                tracing::trace!("TLS handshake currently in progress. Polling for current status");
                 s
             }
             None => {
-                log::trace!("No handshake in progress, checking for new connection");
+                tracing::trace!("No handshake in progress, checking for new connection");
                 let socket = match Pin::new(&mut self.listener).poll_accept(cx) {
                     Poll::Ready(Ok((socket, _))) => socket,
                     Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
@@ -83,7 +83,7 @@ impl hyper::server::accept::Accept for TlsHyperAcceptor {
 
         match Pin::new(&mut accept).poll(cx) {
             Poll::Ready(Ok(i)) => {
-                log::trace!("TLS handshake complete, returning active connection");
+                tracing::trace!("TLS handshake complete, returning active connection");
                 Poll::Ready(Some(Ok(i)))
             }
             // Based on my testing, it seems like when someone passes an invalid certificate or you
@@ -91,7 +91,7 @@ impl hyper::server::accept::Accept for TlsHyperAcceptor {
             // Perhaps we can eventually just swallow all errors, but this seems to be the most
             // common one
             Poll::Ready(Err(e)) if matches!(e.kind(), std::io::ErrorKind::InvalidData) => {
-                log::trace!("Got invalid https request: {:?}", e);
+                tracing::trace!(error = ?e, "Got invalid https request");
                 // We are explicitly not setting the in_progress_stream because there is nothing
                 // more we can do with this connection as it is invalid. Wake the task so it can
                 // poll for a new connection

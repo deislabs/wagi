@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
 use std::{collections::HashMap, net::SocketAddr};
 use std::{
     hash::{Hash, Hasher},
@@ -18,12 +17,12 @@ use hyper::{
     http::uri::Scheme,
     Body, Request, Response, StatusCode,
 };
-use log::debug;
 use oci_distribution::client::{Client, ClientConfig};
 use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tracing::{debug, instrument};
 use url::Url;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
@@ -133,6 +132,8 @@ impl Module {
     /// executing a module, a subdirectory will be created in this directory with the ID (from the
     /// [`id` method](Module::id)) for its name. The log will be placed in that directory at
     /// `module.stderr`
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(level = "trace", skip(self, entrypoint, req, client_addr, cache_config_path, module_cache_dir, base_log_dir, default_host), fields(route = %self.route, module = %self.module))]
     pub async fn execute(
         &self,
         entrypoint: &str,
@@ -144,12 +145,6 @@ impl Module {
         default_host: String,
     ) -> Response<Body> {
         // Read the parts in here
-        log::trace!(
-            "Module::execute: route={}, module={}",
-            self.route,
-            self.module
-        );
-
         let (parts, body) = req.into_parts();
         let data = hyper::body::to_bytes(body)
             .await
@@ -177,18 +172,18 @@ impl Module {
         {
             Ok(res) => res,
             Err(e) if e.is_panic() => {
-                log::error!("Recoverable panic on Wasm Runner thread: {}", e);
+                tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
                 return internal_error("Module run error");
             }
             Err(e) => {
-                log::error!("Recoverable panic on Wasm Runner thread: {}", e);
+                tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
                 return internal_error("module run was cancelled");
             }
         };
         match res {
             Ok(res) => res,
             Err(e) => {
-                log::error!("error running WASM module: {}", e);
+                tracing::error!(error = %e, "error running WASM module");
                 // A 500 error makes sense here
                 let mut srv_err = Response::default();
                 *srv_err.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
@@ -216,13 +211,17 @@ impl Module {
     /// be a directory where all module logs will be stored. When executing a module, a subdirectory
     /// will be created in this directory with the ID (from the [`id` method](Module::id)) for its
     /// name. The log will be placed in that directory at `module.stderr`
+    #[instrument(
+        level = "trace",
+        skip(self, cache_config_path, module_cache_dir, base_log_dir)
+    )]
     pub(crate) fn load_routes(
         &self,
         cache_config_path: &Path,
         module_cache_dir: &Path,
         base_log_dir: &Path,
     ) -> Result<Vec<RouteEntry>, anyhow::Error> {
-        let start_time = Instant::now();
+        let startup_span = tracing::info_span!("route_instantiation").entered();
 
         let prefix = self
             .route
@@ -273,12 +272,8 @@ impl Module {
         let module = self.load_cached_module(&store, module_cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
 
-        let duration = start_time.elapsed();
-        log::info!(
-            "(load_routes) instantiation time for module {}: {:#?}",
-            self.module.as_str(),
-            duration
-        );
+        // Manually drop the span to get the instantiation time
+        drop(startup_span);
 
         match instance.get_func(&mut store, "_routes") {
             Some(func) => {
@@ -477,7 +472,7 @@ impl Module {
             }
             match parts.next() {
                 Some(p) if !p.is_empty() => {
-                    debug!("Overriding port: {}", p);
+                    debug!(port = p, "Overriding port");
                     port = p.to_owned()
                 }
                 _ => {}
@@ -531,6 +526,7 @@ impl Module {
     //
     // TODO: Waaaay too many args
     #[allow(clippy::too_many_arguments)]
+    #[instrument(level = "info", skip(self, req, body, client_addr, cache_config_path, cache_dir, base_log_dir, default_host), fields(uri = %req.uri, module = %self.module))]
     fn run_wasm(
         &self,
         entrypoint: &str,
@@ -542,14 +538,7 @@ impl Module {
         base_log_dir: &Path,
         default_host: &str,
     ) -> Result<Response<Body>, anyhow::Error> {
-        log::trace!(
-            "Module::run_wasm: uri={}, module={}, entrypoint={}",
-            req.uri,
-            &self.module,
-            &entrypoint
-        );
-
-        let start_time = Instant::now();
+        let startup_span = tracing::info_span!("module instantiation").entered();
 
         let uri_path = req.uri.path();
 
@@ -563,7 +552,7 @@ impl Module {
 
         // Make sure the directory exists
         let log_dir = base_log_dir.join(self.id());
-        println!("Using {} for log dir", log_dir.display());
+        tracing::info!(log_dir = %log_dir.display(), "Using log dir");
         std::fs::create_dir_all(&log_dir)?;
         // Open a file for appending. Right now this will just keep appending as there is no log
         // rotation or cleanup
@@ -601,13 +590,13 @@ impl Module {
         // Map all of the volumes.
         if let Some(dirs) = self.volumes.as_ref() {
             for (guest, host) in dirs.iter() {
-                debug!("Mapping volume from {} (host) to {} (guest)", host, guest);
+                debug!(%host, %guest, "Mapping volume from host to guest");
                 // Try to open the dir or log an error.
                 match unsafe { Dir::open_ambient_dir(host) } {
                     Ok(dir) => {
                         builder = builder.preopened_dir(dir, guest)?;
                     }
-                    Err(e) => log::error!("Error opening {} -> {}: {}", host, guest, e),
+                    Err(e) => tracing::error!(%host, %guest, error = %e, "Error opening directory"),
                 };
             }
         }
@@ -624,19 +613,15 @@ impl Module {
         let module = self.load_cached_module(&store, cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
 
-        let duration = start_time.elapsed();
-        log::info!(
-            "instantiation time for module {}: {:#?}",
-            self.module.as_str(),
-            duration
-        );
+        // Manually drop the span so we get instantiation time
+        drop(startup_span);
 
         // This shouldn't error out, because we already know there is a match.
         let start = instance.get_func(&mut store, entrypoint).ok_or_else(|| {
             anyhow::anyhow!("No such function '{}' in {}", entrypoint, self.module)
         })?;
 
-        log::trace!("Module::run_wasm: calling Wasm entry point");
+        tracing::trace!("Calling Wasm entry point");
         start.call(&mut store, &[])?;
 
         // Okay, once we get here, all the information we need to send back in the response
@@ -678,7 +663,7 @@ impl Module {
                     }
                     "status" => {
                         if let Ok(status) = h.1.parse::<hyper::StatusCode>() {
-                            log::info!("Setting status to {}", status);
+                            tracing::info!(%status, "Setting status");
                             *res.status_mut() = status;
                         }
                     }
@@ -696,7 +681,9 @@ impl Module {
                                 res.headers_mut()
                                     .insert(hdr, HeaderValue::from_str(h.1).unwrap());
                             }
-                            Err(e) => log::error!("Invalid header name '{}': {}", h.0.as_str(), e),
+                            Err(e) => {
+                                tracing::error!(error = %e, header_name = %h.0, "Invalid header name")
+                            }
                         }
                     }
                 }
@@ -730,15 +717,15 @@ impl Module {
         store: &Store<WasiCtx>,
         cache: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
-        log::trace!(
-            "Module::load_module: loading from source: module={}",
-            &self.module
+        tracing::trace!(
+            module = %self.module,
+            "Loading from source"
         );
         match Url::parse(self.module.as_str()) {
             Err(e) => {
-                log::debug!(
-                    "Error parsing module URI {}. Assuming this is a local file.",
-                    e
+                tracing::debug!(
+                    error = %e,
+                    "Error parsing module URI. Assuming this is a local file"
                 );
                 wasmtime::Module::from_file(store.engine(), self.module.as_str())
             }
@@ -762,17 +749,17 @@ impl Module {
     /// This is synchronous right now because Wasmtime on the runner needs to be run synchronously.
     /// This will change when the new version of Wasmtime adds Send + Sync to all the things.
     /// Then we can just do `load_module` or refactor this to be async.
+    #[instrument(level = "info", skip(self, store, cache_dir), fields(cache = %cache_dir.display(), module = %self.module))]
     fn load_cached_module(
         &self,
         store: &Store<WasiCtx>,
         cache_dir: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
-        log::trace!("Module::load_cached_module: {}", &self.module);
         let canonical_path = match Url::parse(self.module.as_str()) {
             Err(e) => {
-                log::debug!(
-                    "Error parsing module URI {}. Assuming this is a local file.",
-                    e
+                tracing::debug!(
+                    error = %e,
+                    "Error parsing module URI. Assuming this is a local file."
                 );
                 PathBuf::from(self.module.as_str())
             }
@@ -785,19 +772,12 @@ impl Module {
                 "parcel" => cache_dir.join(uri.path()), // parcel:SHA256 becomes cache_dir/SHA256
                 "oci" => cache_dir.join(self.hash_name()),
                 s => {
-                    log::error!(
-                        "Module::load_cached_module: unknown scheme {} in module {}",
-                        s,
-                        &self.module
-                    );
+                    tracing::error!(scheme = s, "unknown scheme in module");
                     anyhow::bail!("Unknown scheme {}", s)
                 }
             },
         };
-        log::trace!(
-            "Module::load_cached_module: canonical_path={:?}",
-            canonical_path
-        );
+        tracing::trace!(?canonical_path);
 
         // If there is a module at this path, load it.
         // Right now, _any_ problem loading the module will result in us trying to
@@ -805,10 +785,7 @@ impl Module {
         match wasmtime::Module::from_file(store.engine(), canonical_path) {
             Ok(module) => Ok(module),
             Err(_e) => {
-                log::debug!(
-                    "module cache miss. Loading module {} from remote.",
-                    self.module
-                );
+                tracing::debug!("module cache miss. Loading module from remote.");
                 // TODO: This could be reallllllllly dangerous as we are for sure going to block at this
                 // point on this current thread. This _should_ be ok given that we run this as a
                 // spawn_blocking, but those sound like famous last words waiting to happen. Refactor this
@@ -825,17 +802,13 @@ impl Module {
         format!("{:x}", result)
     }
 
+    #[instrument(level = "info", skip(self, engine, cache), fields(server = ?self.bindle_server))]
     async fn load_bindle(
         &self,
         uri: &Url,
         engine: &Engine,
         cache: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
-        log::trace!(
-            "Module::load_bindle: server={:?}, uri={}",
-            self.bindle_server,
-            uri
-        );
         bindle::load_bindle(
             self.bindle_server
                 .clone()
@@ -847,6 +820,8 @@ impl Module {
         )
         .await
     }
+
+    #[instrument(level = "info", skip(self, engine, cache))]
     async fn load_parcel(
         &self,
         uri: &Url,
@@ -859,13 +834,14 @@ impl Module {
             .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned());
         bindle::load_parcel(bs.as_str(), uri, engine, cache).await
     }
+
+    #[instrument(level = "info", skip(self, engine, cache))]
     async fn load_oci(
         &self,
         uri: &Url,
         engine: &Engine,
         cache: &Path,
     ) -> anyhow::Result<wasmtime::Module> {
-        log::trace!("Module::load_oci: uri={}", uri);
         let config = ClientConfig {
             protocol: oci_distribution::client::ClientProtocol::HttpsExcept(vec![
                 "localhost:5000".to_owned(),
@@ -876,10 +852,9 @@ impl Module {
         let auth = RegistryAuth::Anonymous;
 
         let img = url_to_oci(uri).map_err(|e| {
-            log::error!(
-                "Module::load_oci: could not convert {} to OCI reference: {}",
-                uri,
-                e
+            tracing::error!(
+                error = %e,
+                "Could not convert uri to OCI reference"
             );
             e
         })?;
@@ -887,21 +862,21 @@ impl Module {
             .pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE])
             .await
             .map_err(|e| {
-                log::error!("Module::load_oci: pull failed: {}", e);
+                tracing::error!(error = %e, "Pull failed");
                 e
             })?;
         if data.layers.is_empty() {
-            log::error!("Module::load_oci: image {} has no layers", &img);
+            tracing::error!(image = %img, "Image has no layers");
             anyhow::bail!("image has no layers");
         }
         let first_layer = data.layers.get(0).unwrap();
 
         // If a cache write fails, log it but continue on.
-        log::trace!("Module::load_oci: writing layer to module cache");
+        tracing::trace!("writing layer to module cache");
         if let Err(e) =
             tokio::fs::write(cache.join(self.hash_name()), first_layer.data.as_slice()).await
         {
-            log::warn!("failed to write module to cache: {}", e);
+            tracing::warn!(error = %e, "failed to write module to cache");
         }
         let module = wasmtime::Module::new(engine, first_layer.data.as_slice())?;
         Ok(module)
@@ -1018,7 +993,7 @@ mod test {
             .await
             .expect("registry build cleanly");
 
-        log::debug!("{:#?}", mc.route_cache);
+        tracing::debug!(route_cache = ?mc.route_cache);
 
         // Three routes for each module.
         assert_eq!(6, mc.route_cache.as_ref().expect("routes are set").len());
@@ -1117,7 +1092,6 @@ mod test {
     #[cfg(target_os = "windows")]
     #[tokio::test]
     async fn should_parse_file_with_all_the_windows_slashes() {
-        env_logger::init();
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let testcases = possible_slashes_for_paths(tf.path().to_string_lossy().to_string());
         for test in testcases {

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use hyper::{Body, Request, Response};
 use serde::Deserialize;
 use tokio::sync::{Notify, RwLock};
+use tracing::instrument;
 
 mod http_util;
 pub mod runtime;
@@ -46,6 +47,7 @@ impl Router {
     ///
     /// Some routes are built in (like healthz), while others are dynamically
     /// dispatched.
+    #[instrument(level = "info", skip(self, req), fields(uri = %req.uri()))]
     pub async fn route(
         &self,
         req: Request<Body>,
@@ -58,7 +60,7 @@ impl Router {
         // drawbacks: (a) it would be different than CGI, and (b) it would involve a cache
         // clear during debugging, which could be a bit annoying.
 
-        log::trace!("Processing request to {}", req.uri());
+        tracing::trace!("Processing request");
 
         let uri_path = req.uri().path();
         match uri_path {
@@ -80,7 +82,7 @@ impl Router {
                     Ok(res)
                 }
                 Err(e) => {
-                    log::error!("error: {}", e);
+                    tracing::error!(error = %e, "error when routing");
                     Ok(not_found())
                 }
             },
@@ -106,17 +108,14 @@ impl Default for RouterBuilder {
             cache_config_path: PathBuf::from("cache.toml"),
             module_cache_dir: tempfile::tempdir()
                 .map_err(|e| {
-                    log::warn!(
-                        "Error while trying to create temporary directory for module cache: {}",
-                        e
-                    );
+                    tracing::warn!(error = %e, "Error while trying to create temporary directory for module cache");
                     e
                 })
                 .map(|td| td.into_path())
                 .unwrap_or_default(),
             base_log_dir: tempfile::tempdir()
                 .map_err(|e| {
-                    log::warn!(
+                    tracing::warn!(
                         "Error while trying to create temporary directory for logging: {}",
                         e
                     );
@@ -196,7 +195,7 @@ impl RouterBuilder {
         name: &str,
         bindle_server: &str,
     ) -> anyhow::Result<Router> {
-        log::info!("Loading bindle {}", name);
+        tracing::info!(name, "Loading bindle");
         let cache_dir = self.module_cache_dir.join("_ASSETS");
         let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
             .await
@@ -237,7 +236,7 @@ impl RouterBuilder {
             base_log_dir: self.base_log_dir,
             cache_config_path: self.cache_config_path,
             module_cache: self.module_cache_dir,
-            default_host: self.default_host.clone(),
+            default_host: self.default_host,
         }
     }
 }
@@ -318,18 +317,18 @@ impl ModuleConfig {
     }
 
     /// Get a handler for a URI fragment (path) or return an error.
+    #[instrument(level = "trace", skip(self))]
     fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
-        log::trace!("Module::handler_for_path: url_fragment={}", uri_fragment);
         if let Some(routes) = self.route_cache.as_ref() {
             for r in routes {
-                log::trace!("Module::handler_for_path: trying route path={}", r.path);
+                tracing::trace!(path = %r.path, "Trying route path");
                 // The important detail here is that strip_suffix returns None if the suffix
                 // does not exist. So ONLY paths that end with /... are substring-matched.
                 let route_match = r
                     .path
                     .strip_suffix("/...")
                     .map(|i| {
-                        log::info!("Comparing {} to {}", uri_fragment, r.path.as_str());
+                        tracing::trace!(path = %r.path, "Comparing uri fragment to path");
                         uri_fragment.starts_with(i)
                     })
                     .unwrap_or_else(|| r.path == uri_fragment);
