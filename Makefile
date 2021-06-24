@@ -14,11 +14,14 @@ build:
 
 .PHONY: serve
 serve: TLS_OPTS = 
-serve: serve-tls
+serve: _run
 
 .PHONY: serve-tls
 serve-tls: ${CERT_NAME}.crt.pem
-serve-tls:
+serve-tls: _run
+
+.PHONY: _run
+_run:
 	mkdir -p $(MODULE_CACHE)
 	RUST_LOG=$(LOG_LEVEL) cargo run --release -- -c $(MODULES_TOML) --module-cache $(MODULE_CACHE) $(TLS_OPTS)
 
