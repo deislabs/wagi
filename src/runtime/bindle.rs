@@ -142,6 +142,55 @@ pub async fn load_parcel_asset(bindler: &Client, uri: &Url) -> anyhow::Result<Ve
     Ok(r)
 }
 
+/// Copy a parcel from a bindle directory into cache and then return the path to the cached
+/// version.
+///
+/// Wagi creates a local cache of all of the file assets for a particular bindle.  These assets are
+/// stored in a directory, and then during exection of a module, the directory is mounted to the
+/// wasm module as `/`.
+///
+/// This is part of a workaround for Wasmtime. When Wasmtime can mount files directly, this method
+/// will be removed and the runtime will mount files directly from the parcel.
+pub async fn copy_parcel_asset(
+    local_path: PathBuf,
+    uri: &Url,
+    asset_cache: PathBuf,
+    guest_path: String,
+) -> anyhow::Result<PathBuf> {
+    trace!("caching parcel as asset");
+    let hash = bindle_cache_key(&uri);
+    let dest = asset_cache.join(hash);
+
+    // Now we can create the cache directory.
+    // If it already exists, create_dir_all will not return an error.
+    tokio::fs::create_dir_all(&dest).await.map_err(|e| {
+        anyhow::anyhow!(
+            "Could not create asset cache directory at {}: {}",
+            dest.display(),
+            e
+        )
+    })?;
+
+    // Next, we dump the parcel into the cache directory, creating directories as needed.
+    let internal_path = dest.join(guest_path);
+    if !internal_path.starts_with(&dest) {
+        anyhow::bail!(
+            "Attempt to breakout of cache: Parcel tried to write to {}",
+            internal_path.display()
+        );
+    }
+
+    // We have already checked to make sure there is no breakout.
+    // So now we are just looking to make sure that the parent directory exists.
+    let parent = internal_path.parent().unwrap_or(&dest);
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create asset subdirectories: {}", e))?;
+
+    tokio::fs::copy(local_path, internal_path).await?;
+    Ok(dest)
+}
+
 /// Load a parcel, cache it locally on disk, and then return the path to the cached version.
 ///
 /// Wagi creates a local cache of all of the file assets for a particular bindle.
@@ -222,6 +271,93 @@ fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
     )
 }
 
+/// Given a bindle's invoice and parcel directory, build a module configuration.
+pub async fn standalone_invoice_to_modules(
+    invoice: &Invoice,
+    parcel_dir: PathBuf,
+    asset_cache: PathBuf,
+) -> anyhow::Result<ModuleConfig> {
+    let mut modules = IndexSet::new();
+    let bindle_id = invoice.bindle.id.clone();
+
+    // For each top-level entry, if it is a Wasm module, we create a Module.
+    let top = top_modules(invoice);
+    debug!(
+        default_modules = top.len(),
+        "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
+    );
+
+    for parcel in top {
+        // Create a basic module definition from the features section on this parcel.
+        let mut def = wagi_features(&invoice.bindle.id, &parcel);
+
+        def.module = parcel_dir
+            .join(format!("{}.dat", parcel.label.sha256))
+            .to_string_lossy()
+            .to_string();
+
+        // If the parcel has a group, get the group.
+        // Then we have to figure out how to map the group onto a Wagi configuration.
+        if let Some(c) = parcel.conditions.clone() {
+            let groups = c.requires.unwrap_or_default();
+            for name in groups.into_iter() {
+                let members = group_members(invoice, name.as_str());
+
+                // If it is a file, then we will mount it as a volume
+                for member in members {
+                    if is_file(&member) {
+                        // Store the parcel at a local path
+                        let purl = parcel_url(&bindle_id, member.label.sha256.clone());
+                        trace!(parcel = %purl, "converting a parcel to an asset");
+                        let puri = purl.parse().unwrap();
+
+                        let local_path = parcel_dir.join(format!("{}.dat", member.label.sha256));
+
+                        let cached_path = copy_parcel_asset(
+                            local_path,
+                            &puri,
+                            asset_cache.clone(),
+                            member.label.name.clone(),
+                        )
+                        .await?;
+
+                        // Right now, we have to cache all of the files locally in one
+                        // directory and then mount that entire directory synchronously
+                        // (as a detail of how wasmtime currently works).
+                        // So for now, all we need to do is point Wagi to the directory
+                        // and have it mount that directory as root.
+                        //
+                        // The directory that cache_parcel_asset returns is the directory
+                        // that we expect all files to be written to. So we map
+                        // that to `/`
+                        if def.volumes.is_none() {
+                            let mut volumes = HashMap::new();
+                            volumes
+                                .insert("/".to_owned(), cached_path.to_str().unwrap().to_owned());
+                            def.volumes = Some(volumes);
+                        }
+                        trace!("Done with conversion");
+                    }
+                }
+
+                // Currently, there are no other defined behaviors for parcels.
+            }
+        }
+
+        // For each group required by the module entry, we try to map its parts to one
+        // or more of the Bindle module details
+
+        modules.insert(def);
+    }
+
+    // Finally, we return the module configuration
+    let mc = ModuleConfig {
+        route_cache: None, // This is built by ModuleConfig.build_registry(), which is called later.
+        modules,
+    };
+
+    Ok(mc)
+}
 /// Given a bindle's invoice, build a module configuration.
 pub async fn invoice_to_modules(
     invoice: &Invoice,
