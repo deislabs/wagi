@@ -55,6 +55,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("bindle_path")
+                .long("bindle-path")
+                .help("A base bath for standalone bindles")
+                .takes_value(true)
+                .requires("bindle"),
+        )
+        .arg(
             Arg::with_name("bindle_server_url")
                 .long("bindle-server")
                 .value_name("BINDLE_SERVER_URL")
@@ -144,6 +151,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .unwrap_or("http://localhost:8080/v1")
         .to_owned();
     let bindle = matches.value_of("bindle");
+    let bindle_path = matches.value_of("bindle_path");
 
     let hostname = matches.value_of("hostname").unwrap_or("localhost:3000");
 
@@ -184,6 +192,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .uses_tls(tls_cert.is_some() && tls_key.is_some());
 
     let router = match bindle {
+        Some(name) if bindle_path.is_some() => {
+            builder
+                .build_from_standalone_bindle(name, bindle_path.unwrap())
+                .await?
+        }
         Some(name) => builder.build_from_bindle(name, &bindle_server).await?,
         None => builder.build_from_modules_toml(&module_config_path).await?,
     };

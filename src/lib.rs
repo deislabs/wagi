@@ -12,6 +12,9 @@ use serde::Deserialize;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
 
+use ::bindle::standalone::StandaloneRead;
+use ::bindle::Invoice;
+
 mod http_util;
 pub mod runtime;
 pub mod version;
@@ -196,6 +199,36 @@ impl RouterBuilder {
             .await?;
 
         Ok(self.build(modules))
+    }
+
+    /// Build the router, loading the config from a bindle with the given name from a standalone
+    /// bindle.
+    pub async fn build_from_standalone_bindle(
+        self,
+        name: &str,
+        base_path: &str,
+    ) -> anyhow::Result<Router> {
+        tracing::info!(name, "Loading standalone bindle");
+        let reader = StandaloneRead::new(base_path, name).await?;
+
+        let data = tokio::fs::read(&reader.invoice_file).await?;
+        let invoice: Invoice = toml::from_slice(&data)?;
+
+        let cache_dir = self.module_cache_dir.join("_ASSETS");
+        let mut mods = runtime::bindle::standalone_invoice_to_modules(&invoice, reader.parcel_dir, cache_dir)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
+            })?;
+
+        mods.build_registry(
+            &self.cache_config_path,
+            &self.module_cache_dir,
+            &self.base_log_dir,
+        )
+        .await?;
+
+        Ok(self.build(mods))
     }
 
     /// Build the router, loading the config from a bindle with the given name fetched from the
