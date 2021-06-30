@@ -215,11 +215,14 @@ impl RouterBuilder {
         let invoice: Invoice = toml::from_slice(&data)?;
 
         let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods = runtime::bindle::standalone_invoice_to_modules(&invoice, reader.parcel_dir, cache_dir)
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
-            })?;
+        let mut mods = runtime::bindle::standalone_invoice_to_modules(
+            &invoice,
+            reader.parcel_dir,
+            cache_dir,
+            &self.global_env_vars,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
 
         mods.build_registry(
             &self.cache_config_path,
@@ -240,11 +243,14 @@ impl RouterBuilder {
     ) -> anyhow::Result<Router> {
         tracing::info!(name, "Loading bindle");
         let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
-            })?;
+        let mut mods = runtime::bindle::bindle_to_modules(
+            name,
+            bindle_server,
+            cache_dir,
+            &self.global_env_vars,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
 
         mods.build_registry(
             &self.cache_config_path,
