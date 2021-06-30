@@ -11,8 +11,8 @@ async fn main() -> Result<(), anyhow::Error> {
     // Start with the invoice in the examples directory
     let data = std::fs::read_to_string("examples/invoice.toml")?;
     let inv: bindle::Invoice = toml::from_str(data.as_str())?;
-    let bindle_server = std::env::var("BINDLE_SERVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080/v1".to_owned());
+    let bindle_server =
+        std::env::var("BINDLE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/v1".to_owned());
 
     // Connect to our Bindle server
     let bindler = bindle::client::Client::new(bindle_server.as_str())?;

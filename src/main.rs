@@ -62,9 +62,9 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .requires("bindle"),
         )
         .arg(
-            Arg::with_name("bindle_server_url")
+            Arg::with_name("BINDLE_URL")
                 .long("bindle-server")
-                .value_name("BINDLE_SERVER_URL")
+                .value_name("BINDLE_URL")
                 .help("The Bindle server URL, e.g. https://example.com:8080/v1. Note that the version path (v1) is required.")
                 .takes_value(true),
         )
@@ -147,7 +147,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .to_owned();
 
     let bindle_server = matches
-        .value_of("bindle_server_url")
+        .value_of("BINDLE_URL")
         .unwrap_or("http://localhost:8080/v1")
         .to_owned();
     let bindle = matches.value_of("bindle");
