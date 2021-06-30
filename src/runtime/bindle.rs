@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::{ModuleConfig, runtime::Module};
+use crate::{runtime::Module, ModuleConfig};
 
 const WASM_MEDIA_TYPE: &str = "application/wasm";
 
