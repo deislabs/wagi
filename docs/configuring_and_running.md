@@ -31,7 +31,7 @@ $ wagi -c examples/modules.toml
 
 If you would prefer to load the application from a bindle, use the bindle name:
 ```console
-$ export BINDLE_SERVER_URL=http://localhost:8080/v1
+$ export BINDLE_URL=http://localhost:8080/v1
 $ wagi -b example.com/hello/1.0.0
 => Starting server
 (load_routes) instantiation time for module examples/hello.wat: 101.840297ms
@@ -211,14 +211,14 @@ Instead of using a `modules.toml`, it is possible to directly use a bindle.
 To do this, you will need to configure the following:
 
 - You will need access to a Bindle server. See the [Bindle project](https://github.com/deislabs/bindle) for instructions.
-- You will need to set the environment variable `BINDLE_SERVER_URL`
+- You will need to set the environment variable `BINDLE_URL`
   - The default value is `http://localhost:8080/v1`
   - The version identifier is required. You cannot omit `/v1`
 - You will need a bindle that has your app. We cover this below.
 - When starting up `wagi`, use the `--bindle` argument to specify the bindle that holds your app
 
 ```console
-$ export BINDLE_SERVER_URL="http://localhost:8080/v1"
+$ export BINDLE_URL="http://localhost:8080/v1"
 $ wagi -b example.com/hello/1.3.3
 ```
 

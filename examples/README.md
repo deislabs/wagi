@@ -26,7 +26,7 @@ $ wagi -b example.com/hello/1.3.3
 ```
 
 If your Bindle server isn't running at "http://localhost:8080/v1",
-you can use the `BINDLE_SERVER_URL` environment variable or the `--bindle-server` argument
+you can use the `BINDLE_URL` environment variable or the `--bindle-server` argument
 to Wagi.
 
 Take a look at the `Makefile` and `make run-bindle` for more examples.
