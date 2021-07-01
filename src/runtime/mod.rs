@@ -767,7 +767,11 @@ impl Module {
                     Err(e) => anyhow::bail!("Cannot get path to file: {:#?}", e),
                 },
                 "bindle" => cache_dir.join(bindle_cache_key(&uri)),
-                "parcel" => cache_dir.join(uri.path()), // parcel:SHA256 becomes cache_dir/SHA256
+                "parcel" => {
+                    // parcel: bindle_uri#SHA256 becomes cache_dir/SHA256
+                    let cache_file = uri.fragment().unwrap_or_else(|| uri.path()); // should always have fragment
+                    cache_dir.join(cache_file)
+                }
                 "oci" => cache_dir.join(self.hash_name()),
                 s => {
                     tracing::error!(scheme = s, "unknown scheme in module");
