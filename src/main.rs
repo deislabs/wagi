@@ -28,6 +28,7 @@ cache, which will cause all modules to be preloaded and cached on startup.
 "#;
 
 const ENV_VAR_HELP: &str = "specifies an environment variable that should be used for every module WAGI runs. These will override any set by the module config. Multiple environment variables can be set per flag (e.g. -e FOO=bar BAR=baz) or the flag can be used multiple times (e.g. `-e FOO=bar -e BAR=baz`). Variables can be quoted (e.g. FOO=\"my bar\")";
+const BINDLE_URL: &str = "BINDLE_URL";
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
@@ -62,9 +63,10 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .requires("bindle"),
         )
         .arg(
-            Arg::with_name("BINDLE_URL")
+            Arg::with_name(BINDLE_URL)
                 .long("bindle-server")
-                .value_name("BINDLE_URL")
+                .value_name(BINDLE_URL)
+                .env(BINDLE_URL)
                 .help("The Bindle server URL, e.g. https://example.com:8080/v1. Note that the version path (v1) is required.")
                 .takes_value(true),
         )
@@ -101,6 +103,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             Arg::with_name("log_dir")
                 .long("log-dir")
                 .value_name("LOG_DIR")
+                .env("WAGI_LOG_DIR")
                 .help("the path to a directory where module logs should be stored. This directory will have a separate subdirectory created within it per running module. Default is to create a tempdir.")
                 .takes_value(true),
         )
@@ -108,6 +111,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             Arg::with_name("tls_cert_file")
                 .long("tls-cert")
                 .value_name("TLS_CERT")
+                .env("WAGI_TLS_CERT")
                 .takes_value(true)
                 .help("the path to the certificate to use for https, if this is not set, normal http will be used. The cert should be in PEM format")
                 .requires("tls_key_file")
@@ -116,6 +120,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             Arg::with_name("tls_key_file")
                 .long("tls-key")
                 .value_name("TLS_KEY")
+                .env("WAGI_TLS_KEY")
                 .takes_value(true)
                 .help("the path to the certificate key to use for https, if this is not set, normal http will be used. The key should be in PKCS#8 format")
                 .requires("tls_cert_file")
