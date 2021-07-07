@@ -1074,16 +1074,7 @@ mod test {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let testcases = possible_slashes_for_paths(tf.path().to_string_lossy().to_string());
         for test in testcases {
-            let module = Module {
-                route: "/base".to_string(),
-                module: test,
-                volumes: None,
-                environment: None,
-                entrypoint: None,
-                bindle_server: None,
-                allowed_hosts: None,
-            };
-
+            let module = Module::new("/base".to_string(), test);
             let ctx = WasiCtxBuilder::new().build();
             let engine = Engine::default();
             let store = Store::new(&engine, ctx);
