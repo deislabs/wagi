@@ -60,4 +60,4 @@ X_FULL_URL="http://localhost:3000/envwasm"
 X_RELATIVE_PATH=""    
 ```
 
-In addition, if a `[[module]]` section that matches the route also declares `environment` variables, those will be added.
+In addition, any values set at the command line with `--env` or `--env-file` will be loaded into all modules as well.
