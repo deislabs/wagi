@@ -64,7 +64,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         )
         .arg(
             Arg::with_name(BINDLE_URL)
-                .long("bindle-server")
+                .long("bindle-url")
                 .value_name(BINDLE_URL)
                 .env(BINDLE_URL)
                 .help("The Bindle server URL, e.g. https://example.com:8080/v1. Note that the version path (v1) is required.")
