@@ -134,6 +134,13 @@ pub async fn main() -> Result<(), anyhow::Error> {
             .takes_value(true)
             .multiple(true)
         )
+        .arg(Arg::with_name("env_files")
+            .long("env-file")
+            .takes_value(true)
+            .value_name("ENV_FILE")
+            .multiple(true)
+            .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. See also '--env'.")
+        )
         .get_matches();
 
     let addr: SocketAddr = matches
@@ -177,13 +184,20 @@ pub async fn main() -> Result<(), anyhow::Error> {
         }
     };
 
-    let env_vars: HashMap<String, String> = match matches.values_of("env_vars") {
-        Some(v) => v
-            .into_iter()
-            .map(parse_env_var)
-            .collect::<anyhow::Result<_>>()?,
+    let mut env_vars: HashMap<String, String> = match matches.values_of("env_files") {
+        Some(v) => env_file_reader::read_files(&v.into_iter().collect::<Vec<&str>>())?,
         None => HashMap::new(),
     };
+
+    if let Some(v) = matches.values_of("env_vars") {
+        let extras: HashMap<String, String> = v
+            .into_iter()
+            .map(parse_env_var)
+            .collect::<anyhow::Result<_>>()?;
+        env_vars.extend(extras);
+    }
+
+    tracing::debug!(?env_vars, "Env vars are set");
 
     let tls_cert = matches.value_of("tls_cert_file");
     let tls_key = matches.value_of("tls_key_file");
