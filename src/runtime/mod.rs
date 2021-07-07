@@ -124,14 +124,14 @@ impl Eq for Module {}
 
 impl Module {
     pub fn new(route: String, module_uri: String) -> Self {
-        return Module {
+        Module {
             route,
             module: module_uri,
             volumes: None,
             entrypoint: None,
             allowed_hosts: None,
             bindle_server: None,
-        };
+        }
     }
 
     /// Execute the WASM module in a WAGI
@@ -338,7 +338,7 @@ impl Module {
         // Note that we put these first so that there is no chance that they overwrite
         // the built-in vars. IMPORTANT: This is also why some values have empty strings
         // deliberately set (as opposed to omiting the pair altogether).
-        let mut headers = environment.clone();
+        let mut headers = environment;
 
         // CGI headers from RFC
         headers.insert("AUTH_TYPE".to_owned(), "".to_owned()); // Not currently supported
@@ -929,7 +929,6 @@ mod test {
 
     use hyper::http::request::Request;
     use std::io::Write;
-    use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::str::FromStr;
     use tempfile::NamedTempFile;

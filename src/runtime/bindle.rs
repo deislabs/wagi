@@ -250,7 +250,6 @@ pub(crate) async fn bindle_to_modules(
     name: &str,
     server_url: &str,
     asset_cache: PathBuf,
-    environment: &HashMap<String, String>,
 ) -> anyhow::Result<ModuleConfig> {
     let bindler = Client::new(server_url)?;
     let invoice = bindler.get_invoice(name).await?;
