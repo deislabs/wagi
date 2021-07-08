@@ -250,12 +250,11 @@ pub(crate) async fn bindle_to_modules(
     name: &str,
     server_url: &str,
     asset_cache: PathBuf,
-    environment: &HashMap<String, String>,
 ) -> anyhow::Result<ModuleConfig> {
     let bindler = Client::new(server_url)?;
     let invoice = bindler.get_invoice(name).await?;
 
-    invoice_to_modules(&invoice, server_url, asset_cache, environment).await
+    invoice_to_modules(&invoice, server_url, asset_cache).await
 }
 
 /// Convenience function for generating an internal Parcel URL.
@@ -277,7 +276,6 @@ pub async fn standalone_invoice_to_modules(
     invoice: &Invoice,
     parcel_dir: PathBuf,
     asset_cache: PathBuf,
-    environment: &HashMap<String, String>,
 ) -> anyhow::Result<ModuleConfig> {
     let mut modules = IndexSet::new();
     let bindle_id = invoice.bindle.id.clone();
@@ -291,7 +289,7 @@ pub async fn standalone_invoice_to_modules(
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
-        let mut def = wagi_features(&invoice.bindle.id, &parcel, environment);
+        let mut def = wagi_features(&invoice.bindle.id, &parcel);
 
         def.module = parcel_dir
             .join(format!("{}.dat", parcel.label.sha256))
@@ -365,7 +363,6 @@ pub async fn invoice_to_modules(
     invoice: &Invoice,
     bindle_server: &str,
     asset_cache: PathBuf,
-    environment: &HashMap<String, String>,
 ) -> anyhow::Result<ModuleConfig> {
     let mut modules = IndexSet::new();
     let bindle_id = invoice.bindle.id.clone();
@@ -379,7 +376,7 @@ pub async fn invoice_to_modules(
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
-        let mut def = wagi_features(&invoice.bindle.id, &parcel, environment);
+        let mut def = wagi_features(&invoice.bindle.id, &parcel);
 
         // FIXME: This should get refactored out. Right now, every module needs its own
         // reference to a bindle server. This is because in the older modules.toml
@@ -468,7 +465,7 @@ fn top_modules(inv: &Invoice) -> Vec<Parcel> {
 }
 
 #[allow(clippy::map_clone)]
-fn wagi_features(inv_id: &Id, parcel: &Parcel, environment: &HashMap<String, String>) -> Module {
+fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
     let label = parcel.label.clone();
     let module = parcel_url(inv_id, label.sha256);
     let all_features = label.feature.unwrap_or_default();
@@ -493,7 +490,6 @@ fn wagi_features(inv_id: &Id, parcel: &Parcel, environment: &HashMap<String, Str
         route,
         allowed_hosts,
         volumes: None,
-        environment: Some(environment.clone()),
     }
 }
 

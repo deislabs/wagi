@@ -633,6 +633,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "env-file-reader"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d00bb0c3f782b0967b28b4fd608ad3ce331817bdd120bbb193b3958a7a4a87b1"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2665,6 +2674,7 @@ dependencies = [
  "bindle",
  "cap-std",
  "clap",
+ "env-file-reader",
  "futures",
  "hyper",
  "indexmap",

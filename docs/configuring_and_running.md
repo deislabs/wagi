@@ -19,6 +19,8 @@ The `wagi` server is run from the command line. It has a few flags:
 - `--default-host`: The hostname (with port) to use when no HOST header is provided. Default is `localhost:3000`
 - `-l`|`--listen`: The IP address and port to listen on. Default is `127.0.0.1:3000`
 - `--module-cache`: The location to write cached binary Wasm modules. Default is a tempdir.
+- `--env`|`-e`: Set one or more environment variables that will be passed to all guest modules.
+- `--env-file`: Load environment variables from a file and pass the variables to all guest modules. Lower precedence than `--env`.
 
 At minimum, to start WAGI, run a command that looks like this:
 
@@ -52,7 +54,6 @@ In a nutshell, these are the fields that `modules.toml` supports.
 - The `[[module]]` list: Each module starts with a `[[module]]` header. Inside of a module, the following fields are available:
   - `route` (REQUIRED): The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
   - `module` (REQUIRED): A module reference. See Module References below.
-  - `environment`: A list of string/string environment variable pairs.
   - `repository`: RESERVED for future use
   - `entrypoint` (default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
   
@@ -119,20 +120,35 @@ in the `volumes` directive.
 #### Environment Variables
 
 Similarly to volumes, by default a WebAssembly module cannot access the host's environment variables.
-However, WAGI provides a way for you to pass in environment variables:
+However, WAGI provides a way for you to pass in environment variables from the command line:
+
+```console
+$ wagi --env TEST_NAME="test value" ....
+```
+
+Assume we have a `modules.toml` with content like this:
 
 ```toml
 [[module]]
 route = "/hello"
 module = "/path/to/hello.wasm"
-# You can put static environment variables in the TOML file
-environment.TEST_NAME = "test value"
 ```
 
 In this case, the environment variable `TEST_NAME` will be set to `test value` for the `hello.wasm` module.
 When the module starts up, it will be able to access the `TEST_NAME` variable.
 
 Note that while the module will not be able to access the host environment variables, WAGI does provide a wealth of other environment variables. See [Environment Variables](environment_variables.toml) for details.
+
+It is also possible to load environment variables from a file. For example, consider a file named `env.txt`:
+
+```bash
+TEST_NAME = "test value"
+ANOTHER_NAME = "another value"
+```
+
+This file can be loaded into Wagi and shared with all of the guest modules using `wagi --env-file env.txt ...`.
+
+> Note: At this time, there is no way to load environment variables that go to only one module, but not others.
 
 #### Entrypoint
 
@@ -182,8 +198,6 @@ route = "/bar/..."
 module = "/path/to/bar.wasm"
 # You can give WAGI access to particular directories on the filesystem.
 volumes = {"/path/inside/wasm" = "/path/on/host"}
-# You can also put static environment variables in the TOML file
-environment.TEST_NAME = "test value" 
 
 [[module]]
 # You can also execute a WAT file directly

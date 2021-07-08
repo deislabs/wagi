@@ -91,8 +91,6 @@ pub struct Module {
     /// the location OUTSIDE the WASM. Two inside locations can map to the same outside
     /// location.
     pub volumes: Option<HashMap<String, String>>,
-    /// Set additional environment variables
-    pub environment: Option<HashMap<String, String>>,
     /// The name of the function that is the entrypoint for executing the module.
     /// The default is `_start`.
     pub entrypoint: Option<String>,
@@ -125,6 +123,17 @@ impl PartialEq for Module {
 impl Eq for Module {}
 
 impl Module {
+    pub fn new(route: String, module_uri: String) -> Self {
+        Module {
+            route,
+            module: module_uri,
+            volumes: None,
+            entrypoint: None,
+            allowed_hosts: None,
+            bindle_server: None,
+        }
+    }
+
     /// Execute the WASM module in a WAGI
     ///
     /// The given `base_log_dir` should be a directory where all module logs will be stored. When
@@ -143,6 +152,7 @@ impl Module {
         base_log_dir: &Path,
         default_host: String,
         use_tls: bool,
+        env_vars: HashMap<String, String>,
     ) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
@@ -167,6 +177,7 @@ impl Module {
                 &bld,
                 default_host.as_str(),
                 use_tls,
+                env_vars,
             )
         })
         .await
@@ -321,12 +332,13 @@ impl Module {
         client_addr: SocketAddr,
         default_host: &str,
         use_tls: bool,
+        environment: HashMap<String, String>,
     ) -> HashMap<String, String> {
         let (host, port) = self.parse_host_header_uri(&req.headers, &req.uri, default_host);
         // Note that we put these first so that there is no chance that they overwrite
         // the built-in vars. IMPORTANT: This is also why some values have empty strings
         // deliberately set (as opposed to omiting the pair altogether).
-        let mut headers = self.environment.clone().unwrap_or_default();
+        let mut headers = environment;
 
         // CGI headers from RFC
         headers.insert("AUTH_TYPE".to_owned(), "".to_owned()); // Not currently supported
@@ -535,15 +547,12 @@ impl Module {
         base_log_dir: &Path,
         default_host: &str,
         use_tls: bool,
+        env: HashMap<String, String>,
     ) -> Result<Response<Body>, anyhow::Error> {
         let startup_span = tracing::info_span!("module instantiation").entered();
-
         let uri_path = req.uri.path();
-
-        let headers = self.build_headers(req, body.len(), client_addr, default_host, use_tls);
-
+        let headers = self.build_headers(req, body.len(), client_addr, default_host, use_tls, env);
         let stdin = ReadPipe::from(body);
-
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
@@ -920,7 +929,6 @@ mod test {
 
     use hyper::http::request::Request;
     use std::io::Write;
-    use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::str::FromStr;
     use tempfile::NamedTempFile;
@@ -964,26 +972,9 @@ mod test {
 
         let cache = PathBuf::from("cache.toml");
 
-        let module = Module {
-            route: "/base".to_string(),
-            module: urlish.clone(),
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
-
         // We should be able to mount the same wasm at a separate route.
-        let module2 = Module {
-            route: "/another/...".to_string(),
-            module: urlish,
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
+        let module = Module::new("/base".to_string(), urlish.clone());
+        let module2 = Module::new("/another/...".to_string(), urlish);
 
         let mut mc = ModuleConfig {
             modules: vec![module.clone(), module2.clone()].into_iter().collect(),
@@ -1038,15 +1029,7 @@ mod test {
     #[test]
     fn should_produce_relative_path() {
         let uri_path = "/static/images/icon.png";
-        let mut m = Module {
-            route: "/static/...".to_owned(),
-            module: "/tmp/fake".to_owned(),
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
+        let mut m = Module::new("/static/...".to_owned(), "/tmp/fake".to_owned());
         assert_eq!("images/icon.png", m.x_relative_path(uri_path));
 
         m.route = "/static/images/icon.png".to_owned();
@@ -1072,15 +1055,7 @@ mod test {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let urlish = format!("file:{}", tf.path().to_string_lossy());
 
-        let module = Module {
-            route: "/base".to_string(),
-            module: urlish,
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
+        let module = Module::new("/base".to_string(), urlish);
 
         let ctx = WasiCtxBuilder::new().build();
         let engine = Engine::default();
@@ -1099,16 +1074,7 @@ mod test {
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let testcases = possible_slashes_for_paths(tf.path().to_string_lossy().to_string());
         for test in testcases {
-            let module = Module {
-                route: "/base".to_string(),
-                module: test,
-                volumes: None,
-                environment: None,
-                entrypoint: None,
-                bindle_server: None,
-                allowed_hosts: None,
-            };
-
+            let module = Module::new("/base".to_string(), test);
             let ctx = WasiCtxBuilder::new().build();
             let engine = Engine::default();
             let store = Store::new(&engine, ctx);
@@ -1226,15 +1192,7 @@ mod test {
 
     #[test]
     fn test_parse_host_header_uri() {
-        let module = Module {
-            route: "/base".to_string(),
-            module: "file:///no/such/path.wasm".to_owned(),
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
+        let module = Module::new("/base".to_string(), "file:///no/such/path.wasm".to_owned());
 
         let hmap = |val: &str| {
             let mut hm = hyper::HeaderMap::new();
@@ -1290,15 +1248,10 @@ mod test {
 
     #[test]
     fn test_headers() {
-        let module = Module {
-            route: "/path/...".to_string(),
-            module: "file:///no/such/path.wasm".to_owned(),
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
+        let module = Module::new(
+            "/path/...".to_string(),
+            "file:///no/such/path.wasm".to_owned(),
+        );
         let (req, _) = Request::builder()
             .uri("https://example.com:3000/path/test?foo=bar")
             .header("X-Test-Header", "hello")
@@ -1315,8 +1268,15 @@ mod test {
         let client_addr = "192.168.0.1:3000".parse().expect("Should parse IP");
         let default_host = "example.com:3000";
         let use_tls = true;
-        let headers =
-            module.build_headers(&req, content_length, client_addr, default_host, use_tls);
+        let env = std::collections::HashMap::with_capacity(0);
+        let headers = module.build_headers(
+            &req,
+            content_length,
+            client_addr,
+            default_host,
+            use_tls,
+            env,
+        );
 
         let want = |key: &str, expect: &str| {
             let v = headers

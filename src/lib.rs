@@ -32,6 +32,7 @@ pub struct Router {
     module_cache: PathBuf,
     default_host: String,
     use_tls: bool,
+    global_env_vars: HashMap<String, String>,
 }
 
 impl Router {
@@ -83,6 +84,7 @@ impl Router {
                             &self.base_log_dir,
                             self.default_host.to_owned(),
                             self.use_tls,
+                            self.global_env_vars.clone(),
                         )
                         .await;
                     Ok(res)
@@ -215,14 +217,12 @@ impl RouterBuilder {
         let invoice: Invoice = toml::from_slice(&data)?;
 
         let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods = runtime::bindle::standalone_invoice_to_modules(
-            &invoice,
-            reader.parcel_dir,
-            cache_dir,
-            &self.global_env_vars,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
+        let mut mods =
+            runtime::bindle::standalone_invoice_to_modules(&invoice, reader.parcel_dir, cache_dir)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
+                })?;
 
         mods.build_registry(
             &self.cache_config_path,
@@ -243,14 +243,11 @@ impl RouterBuilder {
     ) -> anyhow::Result<Router> {
         tracing::info!(name, "Loading bindle");
         let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods = runtime::bindle::bindle_to_modules(
-            name,
-            bindle_server,
-            cache_dir,
-            &self.global_env_vars,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e))?;
+        let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
+            })?;
 
         mods.build_registry(
             &self.cache_config_path,
@@ -262,23 +259,7 @@ impl RouterBuilder {
         Ok(self.build(mods))
     }
 
-    fn build(self, mut config: ModuleConfig) -> Router {
-        // Apply the global variables on top of the user defined ones. This will overwrite existing
-        // user variables and add any ones that don't exist
-        if !self.global_env_vars.is_empty() {
-            config.modules = config
-                .modules
-                .into_iter()
-                .map(|mut module| {
-                    match module.environment.as_mut() {
-                        Some(current) => current.extend(self.global_env_vars.clone()),
-                        None => module.environment = Some(self.global_env_vars.clone()),
-                    }
-                    module
-                })
-                .collect();
-        }
-
+    fn build(self, config: ModuleConfig) -> Router {
         let module_store = ModuleStore::new(config);
         Router {
             module_store,
@@ -287,6 +268,7 @@ impl RouterBuilder {
             module_cache: self.module_cache_dir,
             default_host: self.default_host,
             use_tls: self.use_tls,
+            global_env_vars: self.global_env_vars,
         }
     }
 }
@@ -402,26 +384,9 @@ mod test {
         let cache = std::path::PathBuf::from("cache.toml");
         let mod_cache = tempfile::tempdir().expect("temp dir created");
 
-        let module = Module {
-            route: "/".to_string(),
-            module: "examples/hello.wat".to_owned(),
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
-
+        let module = Module::new("/".to_string(), "examples/hello.wat".to_owned());
         // We should be able to mount the same wasm at a separate route.
-        let module2 = Module {
-            route: "/foo".to_string(),
-            module: "examples/hello.wasm".to_owned(),
-            volumes: None,
-            environment: None,
-            entrypoint: None,
-            bindle_server: None,
-            allowed_hosts: None,
-        };
+        let module2 = Module::new("/foo".to_string(), "examples/hello.wasm".to_owned());
 
         let mut mc = ModuleConfig {
             modules: vec![module.clone(), module2.clone()].into_iter().collect(),
