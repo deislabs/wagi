@@ -1,6 +1,6 @@
 # WAGI: WebAssembly Gateway Interface
 
-_WAGI is the easiest way to get started doing cloud-side WebAssembly apps._
+_WAGI is the easiest way to get started writing WebAssembly microservices and web apps._
 
 **WARNING:** This is experimental code.
 It is not considered production-grade by its developers, neither is it "supported" software.
@@ -22,11 +22,20 @@ You can use any programming language that can compile to `WASM32-WASI`.
 
 Here's the fastest way to try out WAGI.
 For details, checkout out the [documentation](docs/README.md).
-You will need a Rust environment to build Wagi.
 
-To run the WAGI server, use `make run`. This will start WAGI on `http://localhost:3000`.
+1. Get the [latest binary release](https://github.com/deislabs/wagi/releases)
+2. Unpack it `tar -zxf wagi-VERSION-OS.tar.gz`
+3. Run the `wagi --help` command
 
-Use a browser or a tool like `curl` to test:
+If you would like to try out a few simple configurations, we recommend cloning this repository
+and then using the `examples` directory:
+
+```console
+$ wagi -c examples/modules.toml
+No log_dir specified, using temporary directory /var/folders/hk/l1mlxz1x01x9yl33ll9vh9980000gp/T/.tmpx55XkJ for logs
+```
+
+This will start WAGI on `http://localhost:3000`. Use a browser or a tool like `curl` to test:
 
 ```
 $ curl -v http://localhost:3000/hello/world
@@ -57,10 +66,9 @@ Wagi is an implementation of CGI for WebAssembly.
 That means that writing a Wagi module is as easy as sending properly formatted content to standard output.
 If you want to understand the details, read the [Common Gateway Interface 1.1](https://tools.ietf.org/html/rfc3875) specification.
 
-- [env_wagi](https://github.com/deislabs/env_wagi): Dump the environment that WAGI sets up, including env vars and args.
-- [hello-wagi-grain](https://github.com/deislabs/hello-wagi-grain): An easy-to-read Grain example for WAGI.
-- [hello-wagi-as](https://github.com/deislabs/hello-wagi-as): AssemblyScript example using environment variables and query params.
-- [Wagi Fileserver](https://github.com/deislabs/wagi-fileserver): A fileserver written in Grain, compiled to Wasm, and ready to run in Wagi.
+Take a look at the [Wagi Examples Repository](https://github.com/deislabs/wagi-examples) for examples in various languages.
+
+For a "production grade" (whatever that means for a pre-release project) module, checkout out the [Wagi Fileserver](https://github.com/deislabs/wagi-fileserver): A fileserver written in Grain, compiled to Wasm, and ready to run in Wagi.
 
 ## Contributing
 

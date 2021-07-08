@@ -1,8 +1,29 @@
 # Installing the WAGI Server
 
-Currently there are no prebuilt binaries of WAGI. You will need to build your own.
+## Prebuilt Binaries
 
-## Prerequisites
+To get started with a binary release, head to the [releases page](https://github.com/deislabs/wagi/releases)
+and download the desired release. Usually, the most recent release is the one you want.
+
+You can generate and compare the SHA with `shasum`:
+
+```console
+$ shasum wagi-v0.2.0-linux-amd64.tar.gz
+ad4114b2ed9e510a8c24348d5ea544da55c685f5  wagi-v0.2.0-linux-amd64.tar.gz
+```
+
+You can then compare that SHA with the one present in the release notes.
+
+Unpack the `.tar.gz`. The `wagi` file is the binary server.
+You may wish to put it on your `PATH` at a location such as `/usr/local/bin`.
+But that is up to you.
+On some systems, you may need to set the execute bit (`chmod 755 wagi`).
+
+From there, you can run `wagi` directly. We recommend starting with `wagi --help`.
+
+The rest of this document deals with building and running Wagi from source.
+
+## Prerequisites for Working With Source
 
 - Rust (a recent version. We suggest 1.52 or later)
 - A Linux/macOS/UNIX/WSL2/Windows environment
@@ -13,7 +34,7 @@ encounter any issues.
 
 > On Windows, you may prefer to use `just` instead of `make` to run the `Makefile` commands.
 
-## Building
+## Building from Source
 
 To build a static binary, run the following command:
 

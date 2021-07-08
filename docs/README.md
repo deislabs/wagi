@@ -7,3 +7,4 @@ WAGI is a system for building HTTP services with simple WASM+WASI modules. No ex
 - [Writing WAGI Modules](writing_modules.md)
 - [Environment Variable Reference](environment_variables.md)
 - [Architectural Overview](architecture.md)
+- [Release Guide](release-process.md)
