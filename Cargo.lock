@@ -634,9 +634,9 @@ dependencies = [
 
 [[package]]
 name = "env-file-reader"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f15ebd94eaa872d64d5ded8c5157bcde21dd19f2aa432be26f22b204fd1e809"
+checksum = "d00bb0c3f782b0967b28b4fd608ad3ce331817bdd120bbb193b3958a7a4a87b1"
 dependencies = [
  "regex",
 ]

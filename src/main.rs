@@ -1,6 +1,6 @@
 mod tls;
 
-use clap::{App, Arg};
+use clap::{App, Arg, ArgMatches};
 use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
@@ -139,7 +139,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             .takes_value(true)
             .value_name("ENV_FILE")
             .multiple(true)
-            .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. See also '--env'.")
+            .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. Multiple files can be specified. See also '--env'.")
         )
         .get_matches();
 
@@ -184,18 +184,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         }
     };
 
-    let mut env_vars: HashMap<String, String> = match matches.values_of("env_files") {
-        Some(v) => env_file_reader::read_files(&v.into_iter().collect::<Vec<&str>>())?,
-        None => HashMap::new(),
-    };
-
-    if let Some(v) = matches.values_of("env_vars") {
-        let extras: HashMap<String, String> = v
-            .into_iter()
-            .map(parse_env_var)
-            .collect::<anyhow::Result<_>>()?;
-        env_vars.extend(extras);
-    }
+    let env_vars = merge_env_vars(&matches)?;
 
     tracing::debug!(?env_vars, "Env vars are set");
 
@@ -281,6 +270,23 @@ pub async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Merge environment variables defined in a file with those defined on the CLI.
+fn merge_env_vars(matches: &ArgMatches) -> anyhow::Result<HashMap<String, String>> {
+    let mut env_vars: HashMap<String, String> = match matches.values_of("env_files") {
+        Some(v) => env_file_reader::read_files(&v.into_iter().collect::<Vec<&str>>())?,
+        None => HashMap::new(),
+    };
+
+    if let Some(v) = matches.values_of("env_vars") {
+        let extras: HashMap<String, String> = v
+            .into_iter()
+            .map(parse_env_var)
+            .collect::<anyhow::Result<_>>()?;
+        env_vars.extend(extras);
+    }
+    Ok(env_vars)
+}
+
 fn parse_env_var(val: &str) -> anyhow::Result<(String, String)> {
     let (key, value) = val
         .split_once('=')
@@ -309,6 +315,8 @@ fn parse_env_var(val: &str) -> anyhow::Result<(String, String)> {
 
 #[cfg(test)]
 mod test {
+    use tokio::fs::write;
+
     use super::*;
 
     #[test]
@@ -368,5 +376,62 @@ mod test {
         parse_env_var("FOO").expect_err("Missing '=' should fail");
 
         parse_env_var("=bar").expect_err("Missing key should fail");
+    }
+
+    #[tokio::test]
+    async fn test_env_var_merge() {
+        // Make sure that env vars are correctly merged together.
+        let td = tempfile::tempdir().expect("created a temp dir");
+        let evfile = td.path().join("test.env");
+
+        write(&evfile, "FIRST=1\nSECOND=2\n")
+            .await
+            .expect("wrote env var file");
+
+        let ev_opt = format!("--env-file={}", evfile.display());
+
+        let matches = App::new("env var test")
+        .arg(
+            Arg::with_name("env_vars")
+            .long("env")
+            .short("e")
+            .value_name("ENV_VARS")
+            .help(ENV_VAR_HELP)
+            .takes_value(true)
+            .multiple(true)
+        )
+        .arg(Arg::with_name("env_files")
+            .long("env-file")
+            .takes_value(true)
+            .value_name("ENV_FILE")
+            .multiple(true)
+            .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. See also '--env'.")
+        )
+        .get_matches_from(vec!["wagi", "--env", "SECOND=two", "--env", "THIRD=3", ev_opt.as_str()]);
+
+        let env_vars = merge_env_vars(&matches).expect("env vars parsed");
+
+        assert_eq!(
+            &"two".to_owned(),
+            env_vars
+                .get(&"SECOND".to_owned())
+                .expect("Found a value for SECOND"),
+        );
+        assert_eq!(
+            &"1".to_owned(),
+            env_vars
+                .get(&"FIRST".to_owned())
+                .expect("Found a value for FIRST"),
+        );
+        assert_eq!(
+            &"3".to_owned(),
+            env_vars
+                .get(&"THIRD".to_owned())
+                .expect("Found a value for THIRD"),
+        );
+
+        assert_eq!(3, env_vars.len());
+
+        drop(td);
     }
 }
