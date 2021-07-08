@@ -402,7 +402,7 @@ pub async fn invoice_to_modules(
                         let purl = parcel_url(&bindle_id, member.label.sha256.clone());
                         trace!(parcel = %purl, "converting a parcel to an asset");
                         let puri = purl.parse().unwrap();
-                        let cached_path = cache_parcel_asset(
+                        cache_parcel_asset(
                             &bindler,
                             &puri,
                             asset_cache.clone(),
@@ -422,7 +422,7 @@ pub async fn invoice_to_modules(
                         if def.volumes.is_none() {
                             let mut volumes = HashMap::new();
                             volumes
-                                .insert("/".to_owned(), cached_path.to_str().unwrap().to_owned());
+                                .insert("/".to_owned(), asset_cache.to_str().unwrap().to_owned());
                             def.volumes = Some(volumes);
                         }
                         trace!("Done with conversion");
