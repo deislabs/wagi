@@ -19,7 +19,7 @@ To build a static binary, run the following command:
 
 ```console
 $ make build
-   Compiling wagi v0.1.0 (/Users/technosophos/Code/Rust/wagi)
+   Compiling wagi v0.2.0 (/Users/technosophos/Code/Rust/wagi)
     Finished release [optimized] target(s) in 18.47s
 ```
 

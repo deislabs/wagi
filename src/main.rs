@@ -37,7 +37,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let matches = App::new("WAGI Server")
-        .version("0.1.0")
+        .version("0.2.0")
         .author("DeisLabs")
         .about(ABOUT)
         .arg(
