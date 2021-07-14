@@ -402,7 +402,12 @@ pub async fn invoice_to_modules(
                         let purl = parcel_url(&bindle_id, member.label.sha256.clone());
                         trace!(parcel = %purl, "converting a parcel to an asset");
                         let puri = purl.parse().unwrap();
-                        cache_parcel_asset(
+
+                        // The returned cache path is the asset cache path PLUS the SHA256 of
+                        // the parcel that contains this asset. Essentially, we are mapping
+                        // the `/` path to `_ASSETS/$PARCEL_SHA` and then storing all the
+                        // files for that parcel in the same directory.
+                        let cache_path = cache_parcel_asset(
                             &bindler,
                             &puri,
                             asset_cache.clone(),
@@ -421,8 +426,7 @@ pub async fn invoice_to_modules(
                         // that to `/`
                         if def.volumes.is_none() {
                             let mut volumes = HashMap::new();
-                            volumes
-                                .insert("/".to_owned(), asset_cache.to_str().unwrap().to_owned());
+                            volumes.insert("/".to_owned(), cache_path.to_str().unwrap().to_owned());
                             def.volumes = Some(volumes);
                         }
                         trace!("Done with conversion");
