@@ -58,7 +58,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .arg(
             Arg::with_name("bindle_path")
                 .long("bindle-path")
-                .help("A base bath for standalone bindles")
+                .help("A base path for standalone bindles")
                 .takes_value(true)
                 .requires("bindle"),
         )
