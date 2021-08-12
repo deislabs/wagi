@@ -50,31 +50,6 @@ pub struct RouterInfo {
     pub env_vars: HashMap<String, String>,
 }
 
-impl RouterInfo {
-    pub fn new(
-        entrypoint: &str,
-        client_addr: SocketAddr,
-        cache_config_path: PathBuf,
-        module_cache_dir: PathBuf,
-        base_log_dir: PathBuf,
-        default_host: String,
-        use_tls: bool,
-        env_vars: HashMap<String, String>,  
-    ) -> Self {
-
-        RouterInfo {
-            entrypoint: String::from(entrypoint),
-            client_addr,
-            cache_config_path,
-            module_cache_dir,
-            base_log_dir,
-            default_host,
-            use_tls,
-            env_vars,
-        }
-    }
-}
-
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
 pub struct RouteEntry {
