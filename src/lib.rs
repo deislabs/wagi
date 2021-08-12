@@ -73,7 +73,7 @@ impl Router {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
             _ => match self.module_store.handler_for_path(uri_path).await {
                 Ok(h) => {
-                    let info = ModuleInfo::new(
+                    let info = RouterInfo::new(
                         h.entrypoint.as_str(),
                         client_addr,
                         self.cache_config_path.clone(),

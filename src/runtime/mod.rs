@@ -39,7 +39,7 @@ pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
 const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
 const STDERR_FILE: &str = "module.stderr";
 
-pub struct ModuleInfo {
+pub struct RouterInfo {
     pub entrypoint: String,
     pub client_addr: SocketAddr,
     pub cache_config_path: PathBuf,
@@ -50,7 +50,7 @@ pub struct ModuleInfo {
     pub env_vars: HashMap<String, String>,
 }
 
-impl ModuleInfo {
+impl RouterInfo {
     pub fn new(
         entrypoint: &str,
         client_addr: SocketAddr,
@@ -62,7 +62,7 @@ impl ModuleInfo {
         env_vars: HashMap<String, String>,  
     ) -> Self {
 
-        ModuleInfo {
+        RouterInfo {
             entrypoint: String::from(entrypoint),
             client_addr,
             cache_config_path,
@@ -178,7 +178,7 @@ impl Module {
     /// `module.stderr`
     #[allow(clippy::too_many_arguments)]
     #[instrument(level = "trace", skip(self, req, info), fields(route = %self.route, module = %self.module))]
-    pub async fn execute(&self, req: Request<Body>, info: ModuleInfo) -> Response<Body> {
+    pub async fn execute(&self, req: Request<Body>, info: RouterInfo) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
         let data = hyper::body::to_bytes(body)
@@ -565,7 +565,7 @@ impl Module {
         &self,
         req: &Parts,
         body: Vec<u8>,
-        info: ModuleInfo,
+        info: RouterInfo,
     ) -> Result<Response<Body>, anyhow::Error> {
         let startup_span = tracing::info_span!("module instantiation").entered();
         let uri_path = req.uri.path();
