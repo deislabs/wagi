@@ -46,6 +46,7 @@ pub struct RouterInfo {
     pub module_cache_dir: PathBuf,
     pub base_log_dir: PathBuf,
     pub default_host: String,
+    pub http_concurrency: Option<u32>,
     pub use_tls: bool,
     pub env_vars: HashMap<String, String>,
 }
@@ -221,6 +222,7 @@ impl Module {
         cache_config_path: &Path,
         module_cache_dir: &Path,
         base_log_dir: &Path,
+        http_concurrency: &Option<u32>,
     ) -> Result<Vec<RouteEntry>, anyhow::Error> {
         let startup_span = tracing::info_span!("route_instantiation").entered();
 
@@ -607,7 +609,7 @@ impl Module {
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
-        let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), None)?;
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), info.http_concurrency.clone())?;
         http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, &info.module_cache_dir)?;
@@ -977,8 +979,8 @@ mod test {
 
         let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
         let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
-
-        mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
+        let http_conc = None;
+        mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path(), &http_conc)
             .await
             .expect("registry build cleanly");
 
