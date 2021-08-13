@@ -161,7 +161,6 @@ impl Module {
             .unwrap_or_default()
             .to_vec();
         let me = self.clone();
-        // Get owned copies of the various paths to pass into the thread
         let res = match tokio::task::spawn_blocking(move || {
             me.run_wasm(
                 &parts,
@@ -524,7 +523,7 @@ impl Module {
     //
 
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "info", skip(self, req, body, info), fields(uri = %req.uri, module = %self.module))]
+    #[instrument(level = "info", skip(self, req, body, info), fields(uri = %req.uri, module = %self.module, use_tls = %info.use_tls))]
     fn run_wasm(
         &self,
         req: &Parts,
@@ -604,11 +603,10 @@ impl Module {
 
         // Manually drop the span so we get instantiation time
         drop(startup_span);
-
-        let ep = info.entrypoint.to_owned();
+        let ep = &info.entrypoint;
         // This shouldn't error out, because we already know there is a match.
-        let start = instance.get_func(&mut store, info.entrypoint.as_str()).ok_or_else(|| {
-            anyhow::anyhow!("No such function '{}' in {}", ep, self.module)
+        let start = instance.get_func(&mut store, ep).ok_or_else(|| {
+            anyhow::anyhow!("No such function '{}' in {}", &ep, self.module)
         })?;
 
         tracing::trace!("Calling Wasm entry point");
