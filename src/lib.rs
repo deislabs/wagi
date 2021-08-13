@@ -31,7 +31,7 @@ pub struct Router {
     cache_config_path: PathBuf,
     module_cache: PathBuf,
     default_host: String,
-    http_concurrency: Option<u32>,
+    http_max_concurrency: Option<u32>,
     use_tls: bool,
     global_env_vars: HashMap<String, String>,
 }
@@ -45,7 +45,7 @@ impl Router {
             module_cache_dir: PathBuf::default(),
             base_log_dir: PathBuf::default(),
             default_host: String::default(),
-            http_concurrency: Option::None,
+            http_max_concurrency: None,
             global_env_vars: HashMap::new(),
             use_tls: false,
         }
@@ -82,7 +82,7 @@ impl Router {
                         module_cache_dir: self.module_cache.clone(),
                         base_log_dir: self.base_log_dir.clone(),
                         default_host: self.default_host.to_owned(),
-                        http_concurrency: self.http_concurrency.clone(),
+                        http_max_concurrency: self.http_max_concurrency.clone(),
                         use_tls : self.use_tls,
                         env_vars: self.global_env_vars.clone(),
                     };
@@ -111,7 +111,7 @@ pub struct RouterBuilder {
     module_cache_dir: PathBuf,
     base_log_dir: PathBuf,
     default_host: String,
-    http_concurrency: Option<u32>,
+    http_max_concurrency: Option<u32>,
     global_env_vars: HashMap<String, String>,
     use_tls: bool,
 }
@@ -141,7 +141,7 @@ impl Default for RouterBuilder {
                 .map(|td| td.into_path())
                 .unwrap_or_default(),
             default_host: String::from("localhost:3000"),
-            http_concurrency: Some(1),
+            http_max_concurrency: None,
             global_env_vars: HashMap::new(),
             use_tls: false,
         }
@@ -206,7 +206,7 @@ impl RouterBuilder {
                 &self.cache_config_path,
                 &self.module_cache_dir,
                 &self.base_log_dir,
-                &self.http_concurrency,
+                self.http_max_concurrency,
             )
             .await?;
 
@@ -238,7 +238,7 @@ impl RouterBuilder {
             &self.cache_config_path,
             &self.module_cache_dir,
             &self.base_log_dir,
-            &self.http_concurrency,
+            self.http_max_concurrency,
         )
         .await?;
 
@@ -264,7 +264,7 @@ impl RouterBuilder {
             &self.cache_config_path,
             &self.module_cache_dir,
             &self.base_log_dir,
-            &self.http_concurrency,
+            self.http_max_concurrency,
         )
         .await?;
 
@@ -279,7 +279,7 @@ impl RouterBuilder {
             cache_config_path: self.cache_config_path,
             module_cache: self.module_cache_dir,
             default_host: self.default_host,
-            http_concurrency: self.http_concurrency,
+            http_max_concurrency: self.http_max_concurrency,
             use_tls: self.use_tls,
             global_env_vars: self.global_env_vars,
         }
@@ -329,7 +329,7 @@ impl ModuleConfig {
         cache_config_path: &Path,
         module_cache_dir: &Path,
         base_log_dir: &Path,
-        http_concurrency: &Option<u32>,
+        http_max_concurrency: Option<u32>,
     ) -> anyhow::Result<()> {
         let mut routes = vec![];
 
@@ -340,7 +340,7 @@ impl ModuleConfig {
             let module = m.clone();
             let mcd = module_cache_dir.to_owned();
             let bld = base_log_dir.to_owned();
-            let http_conc = http_concurrency.to_owned();
+            let http_conc = http_max_concurrency.to_owned();
             let res =
                 tokio::task::spawn_blocking(move || module.load_routes(&cccp, &mcd, &bld, &http_conc)).await?;
             match res {
@@ -411,7 +411,7 @@ mod test {
         let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
         let http_conc: Option<u32> = Some(1);
 
-        mc.build_registry(&cache, mod_cache.path(), tempdir.path(), &http_conc)
+        mc.build_registry(&cache, mod_cache.path(), tempdir.path(), http_conc)
             .await
             .expect("registry built cleanly");
 
