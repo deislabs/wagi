@@ -522,17 +522,6 @@ impl Module {
     // contains an HTTP error. This can occur, for example, if the WASM module sets
     // the status code on its own.
     //
-    // TODO: Waaaay too many args
-    /*
-    pub entrypoint: String,
-    pub client_addr: SocketAddr,
-    pub cache_config_path: PathBuf,
-    pub module_cache_dir: PathBuf,
-    pub base_log_dir: PathBuf,
-    pub default_host: String,
-    pub use_tls: bool,
-    pub env_vars: HashMap<String, String>,
-    */
 
     #[allow(clippy::too_many_arguments)]
     #[instrument(level = "info", skip(self, req, body, info), fields(uri = %req.uri, module = %self.module))]
