@@ -38,8 +38,8 @@ route = "/hello-wat"
 [parcel.label]
 name = "examples/mkbindle.rs"
 mediaType = "text/plain"
-size = 1463
-sha256 = "b4f3f3d8c86ae4ee2dbc2e7633ce8bd128dfb32e42f3e9c5e06477fb252d0368"
+size = 1455
+sha256 = "e9f06d122c0c0b9f6a06cd776aa0257400b8913ae008f0f0bced1cf4e5113146"
 [parcel.label.feature.wagi]
 file = "true"
 [parcel.conditions]
