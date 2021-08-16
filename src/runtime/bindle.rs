@@ -494,6 +494,7 @@ fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
         route,
         allowed_hosts,
         volumes: None,
+        http_max_concurrency: None,
     }
 }
 
