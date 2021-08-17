@@ -114,6 +114,11 @@ pub struct Module {
     /// If none or an empty vector is supplied, the guest module cannot send
     /// requests to any server.
     pub allowed_hosts: Option<Vec<String>>,
+    
+    /// Max http concurrency that the guest module configures for the HTTP
+    /// client. If none, the guest module uses the default concurrency provided
+    /// by the WASM HTTP client module.
+    pub http_max_concurrency: Option<u32>,
 }
 
 // For hashing, we don't need all of the fields to hash. A wasm module (not a `Module`) can be used
@@ -142,6 +147,7 @@ impl Module {
             entrypoint: None,
             allowed_hosts: None,
             bindle_server: None,
+            http_max_concurrency: None,
         }
     }
 
@@ -595,7 +601,7 @@ impl Module {
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
-        let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), None)?;
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), self.http_max_concurrency.clone())?;
         http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, &info.module_cache_dir)?;
@@ -964,7 +970,6 @@ mod test {
 
         let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
         let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
-
         mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
             .await
             .expect("registry build cleanly");

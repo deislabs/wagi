@@ -14,6 +14,7 @@ module = "examples/hello.wasm"
 route = "/http-example"
 module = "examples/http-example.wasm"
 allowed_hosts = ["https://api.brigade.sh"]
+http_max_concurrency = 2
 
 [[module]]
 # Example error.
