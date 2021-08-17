@@ -523,7 +523,7 @@ impl Module {
     //
 
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "info", skip(self, req, body, info), fields(uri = %req.uri, module = %self.module, use_tls = %info.use_tls))]
+    #[instrument(level = "info", skip(self, req, body, info), fields(uri = %req.uri, module = %self.module, use_tls = %info.use_tls, env = ?info.env_vars))]
     fn run_wasm(
         &self,
         req: &Parts,
