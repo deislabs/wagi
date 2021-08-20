@@ -114,7 +114,7 @@ pub struct Module {
     /// If none or an empty vector is supplied, the guest module cannot send
     /// requests to any server.
     pub allowed_hosts: Option<Vec<String>>,
-    
+
     /// Max http concurrency that the guest module configures for the HTTP
     /// client. If none, the guest module uses the default concurrency provided
     /// by the WASM HTTP client module.
@@ -167,15 +167,7 @@ impl Module {
             .unwrap_or_default()
             .to_vec();
         let me = self.clone();
-        let res = match tokio::task::spawn_blocking(move || {
-            me.run_wasm(
-                &parts,
-                data,
-                info, 
-            )
-        })
-        .await
-        {
+        let res = match tokio::task::spawn_blocking(move || me.run_wasm(&parts, data, info)).await {
             Ok(res) => res,
             Err(e) if e.is_panic() => {
                 tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
@@ -412,7 +404,7 @@ impl Module {
         // field to select the correct virtual host."
         headers.insert("SERVER_NAME".to_owned(), host);
         headers.insert("SERVER_PORT".to_owned(), port);
-        headers.insert("SERVER_PROTOCOL".to_owned(), protocol.to_owned());
+        headers.insert("SERVER_PROTOCOL".to_owned(), format!("{:?}", req.version));
 
         headers.insert(
             "SERVER_SOFTWARE".to_owned(),
@@ -538,7 +530,14 @@ impl Module {
     ) -> Result<Response<Body>, anyhow::Error> {
         let startup_span = tracing::info_span!("module instantiation").entered();
         let uri_path = req.uri.path();
-        let headers = self.build_headers(req, body.len(), info.client_addr, info.default_host.as_str(), info.use_tls, info.env_vars);
+        let headers = self.build_headers(
+            req,
+            body.len(),
+            info.client_addr,
+            info.default_host.as_str(),
+            info.use_tls,
+            info.env_vars,
+        );
         let stdin = ReadPipe::from(body);
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
@@ -601,7 +600,10 @@ impl Module {
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
-        let http = wasi_experimental_http_wasmtime::HttpCtx::new(self.allowed_hosts.clone(), self.http_max_concurrency.clone())?;
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(
+            self.allowed_hosts.clone(),
+            self.http_max_concurrency.clone(),
+        )?;
         http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, &info.module_cache_dir)?;
@@ -611,9 +613,9 @@ impl Module {
         drop(startup_span);
         let ep = &info.entrypoint;
         // This shouldn't error out, because we already know there is a match.
-        let start = instance.get_func(&mut store, ep).ok_or_else(|| {
-            anyhow::anyhow!("No such function '{}' in {}", &ep, self.module)
-        })?;
+        let start = instance
+            .get_func(&mut store, ep)
+            .ok_or_else(|| anyhow::anyhow!("No such function '{}' in {}", &ep, self.module))?;
 
         tracing::trace!("Calling Wasm entry point");
         start.call(&mut store, &[])?;
@@ -1276,7 +1278,7 @@ mod test {
         want("X_MATCHED_ROUTE", "/path/...");
         want("HTTP_ACCEPT", "text/html");
         want("REQUEST_METHOD", "POST");
-        want("SERVER_PROTOCOL", "https");
+        want("SERVER_PROTOCOL", "HTTP/1.1");
         want("HTTP_USER_AGENT", "test");
         want("SCRIPT_NAME", "file:///no/such/path.wasm");
         want("SERVER_SOFTWARE", "WAGI/1");
