@@ -399,7 +399,26 @@ impl Module {
         headers.insert("REMOTE_HOST".to_owned(), client_addr.ip().to_string()); // The server MAY substitute it with REMOTE_ADDR
         headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Parse this out of uri.authority?
         headers.insert("REQUEST_METHOD".to_owned(), req.method.to_string());
-        headers.insert("SCRIPT_NAME".to_owned(), self.module.to_owned());
+
+        // Construct a safe path of the form / + FILE_NAME.
+        // This should not be a real path b/c that would disclose to the (untrusted)
+        // guest module some information about the underlying filesystem. We can
+        // assume, though, that the module author knows the name of the module.
+        // and currenlty Wagi does not attempt to obscure that.
+        //
+        // TODO: Is there any case where this comes in as `file:///` instead of `/some/path`?
+        let module_path = PathBuf::from(&self.module);
+        headers.insert(
+            "SCRIPT_NAME".to_owned(),
+            format!(
+                "/{}",
+                module_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ),
+        );
+
         // From the spec: "the server would use the contents of the request's Host header
         // field to select the correct virtual host."
         headers.insert("SERVER_NAME".to_owned(), host);
@@ -602,7 +621,7 @@ impl Module {
 
         let http = wasi_experimental_http_wasmtime::HttpCtx::new(
             self.allowed_hosts.clone(),
-            self.http_max_concurrency.clone(),
+            self.http_max_concurrency,
         )?;
         http.add_to_linker(&mut linker)?;
 
@@ -1280,7 +1299,7 @@ mod test {
         want("REQUEST_METHOD", "POST");
         want("SERVER_PROTOCOL", "HTTP/1.1");
         want("HTTP_USER_AGENT", "test");
-        want("SCRIPT_NAME", "file:///no/such/path.wasm");
+        want("SCRIPT_NAME", "/path.wasm");
         want("SERVER_SOFTWARE", "WAGI/1");
         want("SERVER_PORT", "3000");
         want("SERVER_NAME", "example.com");
