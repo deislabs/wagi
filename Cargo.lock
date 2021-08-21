@@ -2635,6 +2635,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "url-escape"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55c7bdc6152ebf118ddb53188af83c07b586778661434a21a3c475f06335771c"
+dependencies = [
+ "percent-encoding 2.1.0",
+]
+
+[[package]]
 name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2689,6 +2698,7 @@ dependencies = [
  "tracing-futures",
  "tracing-subscriber",
  "url 2.2.2",
+ "url-escape",
  "wasi-cap-std-sync",
  "wasi-common",
  "wasi-experimental-http-wasmtime",

@@ -133,11 +133,11 @@ In general, you can use your language's built-in libraries to access this inform
 Consider the following HTTP request:
 
 ```console
-$ curl -vvv -H "HOST:foo.example.com" localhost:3000/env?greet=matt\&foo=bar
+$ curl -vvv -H "HOST:foo.example.com" localhost:3000/env/foo?greet=matt\&foo=bar
 *   Trying 127.0.0.1...
 * TCP_NODELAY set
 * Connected to localhost (127.0.0.1) port 3000 (#0)
-> GET /env?greet=matt&foo=bar HTTP/1.1
+> GET /env/foo?greet=matt&foo=bar HTTP/1.1
 > Host:foo.example.com
 > User-Agent: curl/7.64.1
 > Accept: */*
@@ -162,10 +162,8 @@ The above request will result in a whole bunch of environment variables being se
 
 ```
 REMOTE_ADDR = 127.0.0.1
-X_MATCHED_ROUTE = /env
 HTTP_HOST = foo.example.com
 SERVER_PORT = 80
-SCRIPT_NAME = /Users/technosophos/Code/Rust/env_wagi/target/wasm32-wasi/release/env_wagi.wasm
 CONTENT_LENGTH = 0
 CONTENT_TYPE =
 TEST_NAME = test value
@@ -175,15 +173,16 @@ GATEWAY_INTERFACE = CGI/1.1
 SERVER_NAME = foo.example.com
 HTTP_USER_AGENT = curl/7.64.1
 AUTH_TYPE =
-PATH_TRANSLATED = /env
-PATH_INFO = /env
+X_MATCHED_ROUTE = /env/...
+SCRIPT_NAME = /env
+PATH_INFO = /foo
+PATH_TRANSLATED = /foo
 HTTP_ACCEPT = */*
 SERVER_PROTOCOL = http
 REQUEST_METHOD = GET
 REMOTE_HOST = localhost
 X_FULL_URL = http://foo.example.com/env?greet=matt&foo=bar
 QUERY_STRING = greet=matt&foo=bar
-X_RELATIVE_PATH = ""
 ```
 
 See the [Environment Variables Reference](environment_variables.md) for a description of
