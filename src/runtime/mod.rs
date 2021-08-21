@@ -395,7 +395,7 @@ impl Module {
         let script_name = self
             .route
             .strip_suffix("/...")
-            .map(|i| i.to_string())
+            .map(|i| format!("/{}", i)) // At the bare minimum, SCRIPT_NAME must be '/'
             .unwrap_or_else(|| self.route.clone());
         headers.insert("SCRIPT_NAME".to_owned(), script_name);
         // PATH_INFO is any path information after SCRIPT_NAME
