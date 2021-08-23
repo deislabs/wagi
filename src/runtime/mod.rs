@@ -376,7 +376,7 @@ impl Module {
         headers.insert("GATEWAY_INTERFACE".to_owned(), WAGI_VERSION.to_owned());
 
         // This is the Wagi route. This is different from PATH_INFO in that it may
-        // have a trailing '/..'
+        // have a trailing '/...'
         headers.insert("X_MATCHED_ROUTE".to_owned(), self.route.to_owned());
 
         headers.insert(
@@ -395,17 +395,30 @@ impl Module {
         let script_name = self
             .route
             .strip_suffix("/...")
-            .map(|i| format!("/{}", i)) // At the bare minimum, SCRIPT_NAME must be '/'
+            .map(|i| {
+                if i.starts_with('/') {
+                    i.to_owned()
+                } else {
+                    format!("/{}", i)
+                }
+            }) // At the bare minimum, SCRIPT_NAME must be '/'
             .unwrap_or_else(|| self.route.clone());
         headers.insert("SCRIPT_NAME".to_owned(), script_name);
         // PATH_INFO is any path information after SCRIPT_NAME
+        //
+        // I am intentionally ignoring the PATH_INFO rule that says that a PATH_INFO
+        // cannot have a path seperator in it. If it becomes important to distinguish
+        // between what was decoded out of the path and what is encoded in the path,
+        // the X_RAW_PATH_INFO can be used.
+        //
         // https://datatracker.ietf.org/doc/html/rfc3875#section-4.1.5
-        let pathinfo = self.path_info(req.uri.path());
-        let path_translated = url_escape::decode(&pathinfo);
-        headers.insert("PATH_INFO".to_owned(), pathinfo.clone());
+        let pathsegment = self.path_info(req.uri.path());
+        let pathinfo = url_escape::decode(&pathsegment);
+        headers.insert("X_RAW_PATH_INFO".to_owned(), pathsegment.clone());
+        headers.insert("PATH_INFO".to_owned(), pathinfo.to_string());
         // PATH_TRANSLATED is the url-decoded version of PATH_INFO
         // https://datatracker.ietf.org/doc/html/rfc3875#section-4.1.6
-        headers.insert("PATH_TRANSLATED".to_owned(), path_translated.to_string());
+        headers.insert("PATH_TRANSLATED".to_owned(), pathinfo.to_string());
 
         // From the spec: "the server would use the contents of the request's Host header
         // field to select the correct virtual host."
@@ -1308,7 +1321,7 @@ mod test {
         want("AUTH_TYPE", "");
         want("REMOTE_ADDR", "192.168.0.1");
         want("REMOTE_ADDR", "192.168.0.1");
-        want("PATH_INFO", "/test%3brun");
+        want("PATH_INFO", "/test;run");
         want("PATH_TRANSLATED", "/test;run");
         want("QUERY_STRING", "foo=bar");
         want("CONTENT_LENGTH", "1234");

@@ -34,12 +34,15 @@ REMOTE_ADDR="127.0.0.1"
 # The server's IP address
 REMOTE_HOST="127.0.0.1"
 # The path info after the SCRIPT_NAME. If the route is /envwasm/... and the 
-# request is /envwasm/foo, the PathInfo is /foo
+# request is /envwasm/foo, the PathInfo is /foo. This value is run through a URL decoder
 PATH_INFO="/foo"
+# Wagi-specific: Same as PATH_INFO, but without being url-decoded. This can disambiguate
+# cases where things like '.', '+', and '/' appear in the path segment.
+X_RAW_PATH_INFO="/foo"
+# In Wagi, this is always the same as PATH_INFO.
+PATH_TRANSLATED="/foo"
 # The client-supplied query string, E.g. http://example.com?foo=bar becomes foo=bar
 QUERY_STRING=""
-# This is PATH_INFO after it has been run through a url-decode
-PATH_TRANSLATED="/foo"
 # The length of the body sent by the client. This is >0 only if the client sends a
 # non-empty body.
 CONTENT_LENGTH="0"
