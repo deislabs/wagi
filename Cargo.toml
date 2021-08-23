@@ -34,7 +34,6 @@ tracing-subscriber = "0.2"
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
 env-file-reader = "0.2"
-url-escape = "0.1"
 
 [dev-dependencies]
 bindle = "0.3"

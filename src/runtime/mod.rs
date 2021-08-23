@@ -374,11 +374,22 @@ impl Module {
         );
 
         headers.insert("GATEWAY_INTERFACE".to_owned(), WAGI_VERSION.to_owned());
+        headers.insert("X_MATCHED_ROUTE".to_owned(), self.route.to_owned()); // Specific to WAGI (not CGI)
+        headers.insert("PATH_INFO".to_owned(), req.uri.path().to_owned()); // TODO: Does this get trimmed?
 
-        // This is the Wagi route. This is different from PATH_INFO in that it may
-        // have a trailing '/..'
-        headers.insert("X_MATCHED_ROUTE".to_owned(), self.route.to_owned());
+        // This also does not appear in the specification for CGI (largely because CGI did
+        // not necessarily "know about" URL rewrites). But it is very useful when combined
+        // with wildcard pattern matching.
+        headers.insert(
+            "X_RELATIVE_PATH".to_owned(),
+            self.x_relative_path(req.uri.path()),
+        );
 
+        // NOTE: The security model of WAGI means that we do not give the actual
+        // translated path on the host filesystem, as that is off limits to the runtime.
+        // Right now, this just returns the same as PATH_INFO, but we could attempt to
+        // map it to something if we know what that "something" is.
+        headers.insert("PATH_TRANSLATED".to_owned(), req.uri.path().to_owned());
         headers.insert(
             "QUERY_STRING".to_owned(),
             req.uri.query().unwrap_or("").to_owned(),
@@ -389,23 +400,24 @@ impl Module {
         headers.insert("REMOTE_USER".to_owned(), "".to_owned()); // TODO: Parse this out of uri.authority?
         headers.insert("REQUEST_METHOD".to_owned(), req.method.to_string());
 
-        // The Path component is /$SCRIPT_NAME/$PATH_INFO
-        // SCRIPT_NAME is the route that matched.
-        // https://datatracker.ietf.org/doc/html/rfc3875#section-4.1.13
-        let script_name = self
-            .route
-            .strip_suffix("/...")
-            .map(|i| format!("/{}", i)) // At the bare minimum, SCRIPT_NAME must be '/'
-            .unwrap_or_else(|| self.route.clone());
-        headers.insert("SCRIPT_NAME".to_owned(), script_name);
-        // PATH_INFO is any path information after SCRIPT_NAME
-        // https://datatracker.ietf.org/doc/html/rfc3875#section-4.1.5
-        let pathinfo = self.path_info(req.uri.path());
-        let path_translated = url_escape::decode(&pathinfo);
-        headers.insert("PATH_INFO".to_owned(), pathinfo.clone());
-        // PATH_TRANSLATED is the url-decoded version of PATH_INFO
-        // https://datatracker.ietf.org/doc/html/rfc3875#section-4.1.6
-        headers.insert("PATH_TRANSLATED".to_owned(), path_translated.to_string());
+        // Construct a safe path of the form / + FILE_NAME.
+        // This should not be a real path b/c that would disclose to the (untrusted)
+        // guest module some information about the underlying filesystem. We can
+        // assume, though, that the module author knows the name of the module.
+        // and currenlty Wagi does not attempt to obscure that.
+        //
+        // TODO: Is there any case where this comes in as `file:///` instead of `/some/path`?
+        let module_path = PathBuf::from(&self.module);
+        headers.insert(
+            "SCRIPT_NAME".to_owned(),
+            format!(
+                "/{}",
+                module_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ),
+        );
 
         // From the spec: "the server would use the contents of the request's Host header
         // field to select the correct virtual host."
@@ -500,7 +512,7 @@ impl Module {
     ///
     /// For example, if the match is `/foo/...` and the path is `/foo/bar`, it should return `"bar"`,
     /// but if the match is `/foo/bar` and the path is `/foo/bar`, it should return `""`.
-    fn path_info(&self, uri_path: &str) -> String {
+    fn x_relative_path(&self, uri_path: &str) -> String {
         uri_path
             .strip_prefix(
                 // Chop the `/...` off of the end if there is one.
@@ -508,6 +520,8 @@ impl Module {
                     .strip_suffix("/...")
                     .unwrap_or_else(|| self.route.as_str()),
             )
+            // Remove a leading `/` if there is one.
+            .map(|r| r.strip_prefix("/").unwrap_or(r))
             // It is possible that a root path request matching /... returns a None here,
             // so in that case the appropriate return is "".
             .unwrap_or("")
@@ -663,21 +677,9 @@ impl Module {
                         res.headers_mut().insert(CONTENT_TYPE, h.1.parse().unwrap());
                     }
                     "status" => {
-                        // The spec does not say that status is a sufficient response.
-                        // (It says that it may be added along with Content-Type, because
-                        // a status has a content type). However, CGI libraries in the wild
-                        // do not set content type correctly if a status is an error.
-                        // See https://datatracker.ietf.org/doc/html/rfc3875#section-6.2
-                        sufficient_response = true;
-                        // Status can be `Status CODE [STRING]`, and we just want the CODE.
-                        let status_code = h.1.split_once(' ').map(|(code, _)| code).unwrap_or(h.1);
-                        tracing::debug!(status_code, "Raw status code");
-                        match status_code.parse::<StatusCode>() {
-                            Ok(code) => *res.status_mut() = code,
-                            Err(e) => {
-                                tracing::log::warn!("Failed to parse code: {}", e);
-                                *res.status_mut() = StatusCode::BAD_GATEWAY;
-                            }
+                        if let Ok(status) = h.1.parse::<hyper::StatusCode>() {
+                            tracing::info!(%status, "Setting status");
+                            *res.status_mut() = status;
                         }
                     }
                     "location" => {
@@ -706,8 +708,6 @@ impl Module {
         // or a location header. Failure to return one of these is a 500 error.
         if !sufficient_response {
             return Ok(internal_error(
-                // Technically, we let `status` be sufficient, but this is more lenient
-                // than the specification.
                 "Exactly one of 'location' or 'content-type' must be specified",
             ));
         }
@@ -1037,18 +1037,16 @@ mod test {
     fn should_produce_relative_path() {
         let uri_path = "/static/images/icon.png";
         let mut m = Module::new("/static/...".to_owned(), "/tmp/fake".to_owned());
-        assert_eq!("/images/icon.png", m.path_info(uri_path));
+        assert_eq!("images/icon.png", m.x_relative_path(uri_path));
 
         m.route = "/static/images/icon.png".to_owned();
-        assert_eq!("", m.path_info(uri_path));
+        assert_eq!("", m.x_relative_path(uri_path));
 
-        // According to the spec, if "/" matches "/...", then a single "/" should be set
         m.route = "/...".to_owned();
-        assert_eq!("/", m.path_info("/"));
+        assert_eq!("", m.x_relative_path("/"));
 
-        // According to the spec, if "/" matches the SCRIPT_NAME, then "" should be set
         m.route = "/".to_owned();
-        assert_eq!("", m.path_info("/"));
+        assert_eq!("", m.x_relative_path("/"));
 
         // As a degenerate case, if the path does not match the prefix,
         // then it should return an empty path because this is not
@@ -1056,7 +1054,7 @@ mod test {
         // current Wagi, conceivably we could some day have to alter this
         // behavior. So this test is a canary for a breaking change.
         m.route = "/foo".to_owned();
-        assert_eq!("", m.path_info("/bar"));
+        assert_eq!("", m.x_relative_path("/bar"));
     }
 
     #[tokio::test]
@@ -1262,7 +1260,7 @@ mod test {
             "file:///no/such/path.wasm".to_owned(),
         );
         let (req, _) = Request::builder()
-            .uri("https://example.com:3000/path/test%3brun?foo=bar")
+            .uri("https://example.com:3000/path/test?foo=bar")
             .header("X-Test-Header", "hello")
             .header("Accept", "text/html")
             .header("User-agent", "test")
@@ -1292,7 +1290,7 @@ mod test {
                 .get(&key.to_owned())
                 .unwrap_or_else(|| panic!("expected to find key {}", key));
 
-            assert_eq!(expect, v, "Key: {}", key)
+            assert_eq!(expect, v)
         };
 
         // Content-type is set on output, so we don't test here.
@@ -1301,24 +1299,22 @@ mod test {
         want("REQUEST_METHOD", "POST");
         want("SERVER_PROTOCOL", "HTTP/1.1");
         want("HTTP_USER_AGENT", "test");
-        want("SCRIPT_NAME", "/path");
+        want("SCRIPT_NAME", "/path.wasm");
         want("SERVER_SOFTWARE", "WAGI/1");
         want("SERVER_PORT", "3000");
         want("SERVER_NAME", "example.com");
         want("AUTH_TYPE", "");
         want("REMOTE_ADDR", "192.168.0.1");
         want("REMOTE_ADDR", "192.168.0.1");
-        want("PATH_INFO", "/test%3brun");
-        want("PATH_TRANSLATED", "/test;run");
+        want("PATH_INFO", "/path/test");
         want("QUERY_STRING", "foo=bar");
+        want("PATH_TRANSLATED", "/path/test");
         want("CONTENT_LENGTH", "1234");
         want("HTTP_HOST", "example.com:3000");
         want("GATEWAY_INTERFACE", "CGI/1.1");
         want("REMOTE_USER", "");
-        want(
-            "X_FULL_URL",
-            "https://example.com:3000/path/test%3brun?foo=bar",
-        );
+        want("X_FULL_URL", "https://example.com:3000/path/test?foo=bar");
+        want("X_RELATIVE_PATH", "test");
 
         // Extra header should be passed through
         want("HTTP_X_TEST_HEADER", "hello");

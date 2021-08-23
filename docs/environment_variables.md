@@ -6,21 +6,20 @@ These are the environment variables set on every WAGI requests:
 
 ```bash
 # The name of the route that matched
-X_MATCHED_ROUTE="/envwasm/..."  # for example.com/envwasm
+X_MATCHED_ROUTE="/envwasm"  # for example.com/envwasm
 # The value of the HTTP Accept header from the client. This could be empty.
 HTTP_ACCEPT="*/*"
 # The HTTP method (GET/POST/PUT/etc) sent by the client
 REQUEST_METHOD="GET"
-# The protocol that the server is using. Usually it is HTTP/1.1
-SERVER_PROTOCOL="HTTP/1.1"
+# The protocol that the server is using. Normally this is "http" or "https"
+SERVER_PROTOCOL="http"
 # The value of the HTTP User-Agent header. This could be empty.
 HTTP_USER_AGENT="curl/7.64.1"
 # If the client sent a body (in a POST/PUT), the value of the client's
 # Content-Type header is here. This could be empty, even on a POST/PUT/PATCH.
 CONTENT_TYPE=""             # Usually set on POST/PUT
-# The URL path portion that goes to the top level of the script.
-# Note that the /... is not present here, though it is on X_MATCHED_ROUTE
-SCRIPT_NAME="/envwasm"
+# The name of the module requested. In a Bindle, this is the parcel name.
+SCRIPT_NAME="/path/to/env_wagi.wasm"
 # The name of the server software and it's MAJOR version.
 SERVER_SOFTWARE="WAGI/1"
 # The port upon which the server received its request
@@ -33,13 +32,13 @@ AUTH_TYPE=""
 REMOTE_ADDR="127.0.0.1"
 # The server's IP address
 REMOTE_HOST="127.0.0.1"
-# The path info after the SCRIPT_NAME. If the route is /envwasm/... and the 
-# request is /envwasm/foo, the PathInfo is /foo
-PATH_INFO="/foo"
+# The path portion of the URL. E.g. http://example.com/envwasm becomes /envwasm
+PATH_INFO="/envwasm"
 # The client-supplied query string, E.g. http://example.com?foo=bar becomes foo=bar
 QUERY_STRING=""
-# This is PATH_INFO after it has been run through a url-decode
-PATH_TRANSLATED="/foo"
+# Currently, this is always the same as PATH_INFO, but is supplied for compatibility with
+# the CGI specification. It is not recommended that you use this variable.
+PATH_TRANSLATED="/envwasm"
 # The length of the body sent by the client. This is >0 only if the client sends a
 # non-empty body.
 CONTENT_LENGTH="0"
@@ -55,6 +54,10 @@ REMOTE_USER=""
 # http://localhost:3000/foo/../envwasm, it will be normalized to
 # http://localhost:3000/envwasm.
 X_FULL_URL="http://localhost:3000/envwasm"
+# If a route containing /... matches, this is the part that matched "...".
+# For example, if the route is "/static/..." and the request comes for "/static/icon.png",
+# this will contain "icon.png"
+X_RELATIVE_PATH=""    
 ```
 
 In addition, any values set at the command line with `--env` or `--env-file` will be loaded into all modules as well.
