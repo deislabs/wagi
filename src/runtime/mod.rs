@@ -27,6 +27,8 @@ use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
+use docker_credential;
+use docker_credential::DockerCredential;
 
 use crate::version::*;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
@@ -881,7 +883,14 @@ impl Module {
             ]),
         };
         let mut oc = Client::new(config);
-        let auth = RegistryAuth::Anonymous;
+
+        let mut auth = RegistryAuth::Anonymous;
+        
+        if let Ok(credential ) = docker_credential::get_credential(uri.as_str()) {
+                if let DockerCredential::UsernamePassword(user_name, password) = credential {
+                    auth = RegistryAuth::Basic(user_name, password);
+                };
+        };
 
         let img = url_to_oci(uri).map_err(|e| {
             tracing::error!(

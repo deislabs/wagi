@@ -595,6 +595,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "docker_credential"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a40af8b38f4a4e72f314a29dfe3ce37a530585e85bc9acfd8b01faccaadfc130"
+dependencies = [
+ "base64 0.10.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ed25519"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2683,6 +2694,7 @@ dependencies = [
  "bindle",
  "cap-std",
  "clap",
+ "docker_credential",
  "env-file-reader",
  "futures",
  "hyper",
