@@ -30,6 +30,29 @@ cache, which will cause all modules to be preloaded and cached on startup.
 const ENV_VAR_HELP: &str = "specifies an environment variable that should be used for every module WAGI runs. These will override any set by the module config. Multiple environment variables can be set per flag (e.g. -e FOO=bar BAR=baz) or the flag can be used multiple times (e.g. `-e FOO=bar -e BAR=baz`). Variables can be quoted (e.g. FOO=\"my bar\")";
 const BINDLE_URL: &str = "BINDLE_URL";
 
+// Arguments for serving from a bindle
+const ARG_BINDLE_ID: &str = "bindle";
+const ARG_BINDLE_URL: &str = "BINDLE_URL";
+const ARG_BINDLE_STANDALONE_DIR: &str = "bindle_path";
+
+// Arguments for serving from local Wasm files specified in a modules.toml
+const ARG_MODULES_CONFIG: &str = "config";
+
+// Wasm execution environment
+const ARG_ENV_VARS: &str = "env_vars";
+const ARG_ENV_FILES: &str = "env_files";
+
+// HTTP configuration
+const ARG_LISTEN_ON: &str = "listen";
+const ARG_DEFAULT_HOSTNAME: &str = "hostname";
+const ARG_TLS_CERT_FILE: &str = "tls_cert_file";
+const ARG_TLS_KEY_FILE: &str = "tls_key_file";
+
+// Program configuration
+const ARG_WASM_CACHE_CONFIG_FILE: &str = "cache";
+const ARG_REMOTE_MODULE_CACHE_DIR: &str = "module_cache";
+const ARG_LOG_DIR: &str = "log_dir";
+
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt()
@@ -41,7 +64,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .author("DeisLabs")
         .about(ABOUT)
         .arg(
-            Arg::with_name("config")
+            Arg::with_name(ARG_MODULES_CONFIG)
                 .short("c")
                 .long("config")
                 .value_name("MODULES_TOML")
@@ -49,21 +72,21 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("bindle")
+            Arg::with_name(ARG_BINDLE_ID)
                 .short("b")
                 .long("bindle")
-                .help("A bindle URL, such as bindle:foo/bar/1.2.3")
+                .help("A bindle URL, such as bindle:foo/bar/1.2.3")  // TODO: is the bindle: prefix correct/needed?
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("bindle_path")
+            Arg::with_name(ARG_BINDLE_STANDALONE_DIR)
                 .long("bindle-path")
                 .help("A base path for standalone bindles")
                 .takes_value(true)
-                .requires("bindle"),
+                .requires(ARG_BINDLE_ID),
         )
         .arg(
-            Arg::with_name(BINDLE_URL)
+            Arg::with_name(ARG_BINDLE_URL)
                 .long("bindle-url")
                 .value_name(BINDLE_URL)
                 .env(BINDLE_URL)
@@ -71,14 +94,14 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("cache")
+            Arg::with_name(ARG_WASM_CACHE_CONFIG_FILE)
                 .long("cache")
                 .value_name("CACHE_TOML")
                 .help("the path to the cache.toml configuration file for configuring the Wasm optimization cache")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("listen")
+            Arg::with_name(ARG_LISTEN_ON)
                 .short("l")
                 .long("listen")
                 .value_name("IP_PORT")
@@ -86,21 +109,21 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .help("the IP address and port to listen on. Default: 127.0.0.1:3000"),
         )
         .arg(
-            Arg::with_name("hostname")
+            Arg::with_name(ARG_DEFAULT_HOSTNAME)
                 .long("hostname")
                 .value_name("HOSTNAME")
                 .takes_value(true)
                 .help("the hostname (and the port if not :80) that is to be considered the default. Default: localhost:3000"),
         )
         .arg(
-            Arg::with_name("module_cache")
+            Arg::with_name(ARG_REMOTE_MODULE_CACHE_DIR)
                 .long("module-cache")
                 .value_name("MODULE_CACHE_DIR")
                 .help("the path to a directory where modules can be cached after fetching from remote locations. Default is to create a tempdir.")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("log_dir")
+            Arg::with_name(ARG_LOG_DIR)
                 .long("log-dir")
                 .value_name("LOG_DIR")
                 .env("WAGI_LOG_DIR")
@@ -108,25 +131,25 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("tls_cert_file")
+            Arg::with_name(ARG_TLS_CERT_FILE)
                 .long("tls-cert")
                 .value_name("TLS_CERT")
                 .env("WAGI_TLS_CERT")
                 .takes_value(true)
                 .help("the path to the certificate to use for https, if this is not set, normal http will be used. The cert should be in PEM format")
-                .requires("tls_key_file")
+                .requires(ARG_TLS_KEY_FILE)
         )
         .arg(
-            Arg::with_name("tls_key_file")
+            Arg::with_name(ARG_TLS_KEY_FILE)
                 .long("tls-key")
                 .value_name("TLS_KEY")
                 .env("WAGI_TLS_KEY")
                 .takes_value(true)
                 .help("the path to the certificate key to use for https, if this is not set, normal http will be used. The key should be in PKCS#8 format")
-                .requires("tls_cert_file")
+                .requires(ARG_TLS_CERT_FILE)
         )
         .arg(
-            Arg::with_name("env_vars")
+            Arg::with_name(ARG_ENV_VARS)
             .long("env")
             .short("e")
             .value_name("ENV_VARS")
@@ -134,7 +157,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
             .takes_value(true)
             .multiple(true)
         )
-        .arg(Arg::with_name("env_files")
+        .arg(Arg::with_name(ARG_ENV_FILES)
             .long("env-file")
             .takes_value(true)
             .value_name("ENV_FILE")
@@ -144,7 +167,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
         .get_matches();
 
     let addr: SocketAddr = matches
-        .value_of("listen")
+        .value_of(ARG_LISTEN_ON)
         .unwrap_or("127.0.0.1:3000")
         .parse()
         .unwrap();
@@ -152,27 +175,27 @@ pub async fn main() -> Result<(), anyhow::Error> {
     tracing::info!(?addr, "Starting server");
 
     // We have to pass a cache file configuration path to a Wasmtime engine.
-    let cache_config_path = matches.value_of("cache").unwrap_or("cache.toml").to_owned();
+    let cache_config_path = matches.value_of(ARG_WASM_CACHE_CONFIG_FILE).unwrap_or("cache.toml").to_owned();
     let module_config_path = matches
-        .value_of("config")
+        .value_of(ARG_MODULES_CONFIG)
         .unwrap_or("modules.toml")
         .to_owned();
 
     let bindle_server = matches
-        .value_of("BINDLE_URL")
+        .value_of(ARG_BINDLE_URL)
         .unwrap_or("http://localhost:8080/v1")
         .to_owned();
-    let bindle = matches.value_of("bindle");
-    let bindle_path = matches.value_of("bindle_path");
+    let bindle = matches.value_of(ARG_BINDLE_ID);
+    let bindle_path = matches.value_of(ARG_BINDLE_STANDALONE_DIR);
 
-    let hostname = matches.value_of("hostname").unwrap_or("localhost:3000");
+    let hostname = matches.value_of(ARG_DEFAULT_HOSTNAME).unwrap_or("localhost:3000");
 
-    let mc = match matches.value_of("module_cache") {
+    let mc = match matches.value_of(ARG_REMOTE_MODULE_CACHE_DIR) {
         Some(m) => std::path::PathBuf::from(m),
         None => tempfile::tempdir()?.into_path(),
     };
 
-    let log_dir = match matches.value_of("log_dir") {
+    let log_dir = match matches.value_of(ARG_LOG_DIR) {
         Some(m) => std::path::PathBuf::from(m),
         None => {
             let tempdir = tempfile::tempdir()?;
@@ -188,8 +211,8 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     tracing::debug!(?env_vars, "Env vars are set");
 
-    let tls_cert = matches.value_of("tls_cert_file");
-    let tls_key = matches.value_of("tls_key_file");
+    let tls_cert = matches.value_of(ARG_TLS_CERT_FILE);
+    let tls_key = matches.value_of(ARG_TLS_KEY_FILE);
 
     let builder = Router::builder()
         .cache_config_path(cache_config_path)
@@ -272,12 +295,12 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
 /// Merge environment variables defined in a file with those defined on the CLI.
 fn merge_env_vars(matches: &ArgMatches) -> anyhow::Result<HashMap<String, String>> {
-    let mut env_vars: HashMap<String, String> = match matches.values_of("env_files") {
+    let mut env_vars: HashMap<String, String> = match matches.values_of(ARG_ENV_FILES) {
         Some(v) => env_file_reader::read_files(&v.into_iter().collect::<Vec<&str>>())?,
         None => HashMap::new(),
     };
 
-    if let Some(v) = matches.values_of("env_vars") {
+    if let Some(v) = matches.values_of(ARG_ENV_VARS) {
         let extras: HashMap<String, String> = v
             .into_iter()
             .map(parse_env_var)
