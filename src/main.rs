@@ -1,6 +1,7 @@
 mod tls;
 
 use clap::{App, Arg, ArgMatches};
+use core::convert::TryFrom;
 use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
@@ -11,6 +12,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 use wagi::Router;
+use wagi::wagi_config::{HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration};
 
 const ABOUT: &str = r#"
 Run an HTTP WAGI server
@@ -176,17 +178,6 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     // We have to pass a cache file configuration path to a Wasmtime engine.
     let cache_config_path = matches.value_of(ARG_WASM_CACHE_CONFIG_FILE).unwrap_or("cache.toml").to_owned();
-    let module_config_path = matches
-        .value_of(ARG_MODULES_CONFIG)
-        .unwrap_or("modules.toml")
-        .to_owned();
-
-    let bindle_server = matches
-        .value_of(ARG_BINDLE_URL)
-        .unwrap_or("http://localhost:8080/v1")
-        .to_owned();
-    let bindle = matches.value_of(ARG_BINDLE_ID);
-    let bindle_path = matches.value_of(ARG_BINDLE_STANDALONE_DIR);
 
     let hostname = matches.value_of(ARG_DEFAULT_HOSTNAME).unwrap_or("localhost:3000");
 
@@ -214,23 +205,23 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let tls_cert = matches.value_of(ARG_TLS_CERT_FILE);
     let tls_key = matches.value_of(ARG_TLS_KEY_FILE);
 
-    let builder = Router::builder()
-        .cache_config_path(cache_config_path)
-        .module_cache_dir(mc)
-        .base_log_dir(log_dir)
-        .default_host(hostname)
-        .global_env_vars(env_vars)
-        .uses_tls(tls_cert.is_some() && tls_key.is_some());
+    let handlers = parse_handler_configuration_source(&matches)?;
+    let tls_config = parse_tls_config(tls_cert, tls_key)?;
 
-    let router = match bindle {
-        Some(name) if bindle_path.is_some() => {
-            builder
-                .build_from_standalone_bindle(name, bindle_path.unwrap())
-                .await?
-        }
-        Some(name) => builder.build_from_bindle(name, &bindle_server).await?,
-        None => builder.build_from_modules_toml(&module_config_path).await?,
+    let configuration = WagiConfiguration {
+        handlers,
+        env_vars,
+        http_configuration: HttpConfiguration {
+            listen_on: addr,
+            default_hostname: hostname.to_owned(),
+            tls: tls_config,
+        },
+        wasm_cache_config_file: std::path::PathBuf::from(cache_config_path),
+        remote_module_cache_dir: mc,
+        log_dir,
     };
+
+    let router = Router::from_configuration(&configuration).await?;
 
     // NOTE(thomastaylor312): I apologize for the duplicated code here. I tried to work around this
     // by creating a GetRemoteAddr trait, but you can't use an impl Trait in a closure. The return
@@ -292,6 +283,81 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
+
+fn parse_handler_configuration_source(matches: &ArgMatches) -> anyhow::Result<HandlerConfigurationSource> {
+    // This is slightly stricter than the previous rule. Previously:
+    // * If you had a bindle ID:
+    //   * If you had a standalone path, we used that.
+    //   * Otherwise, use URL or default.
+    // * Otherwise, use modules file.
+    // This could lead to ambiguous combinations (e.g. ID + path + URL).
+    //
+    // The new logic is therefore:
+    // * If you have a bindle ID:
+    //   * If you have a standalone path and NO URL, use the standalone path.
+    //   * If you have a standalone path AND a URL, error.
+    //   * Otherwise, use the URL or default.
+    // * Otherwise:
+    //   * If you have a standalone bindle path or URL, error.
+    //   * Otherwise, use the modules.toml path or default.
+    // NOTE: the new rule potentially makes it harder if e.g. you have a BINDLE_URL env var
+    // and you want to ignore it in favour of a standalone file. This should be resolved by looking
+    // at sources rather than by allowing confusing combinations though!
+    match (
+        matches.value_of(ARG_BINDLE_ID),
+        matches.value_of(ARG_BINDLE_STANDALONE_DIR),
+        matches.value_of(ARG_BINDLE_URL),
+        matches.value_of(ARG_MODULES_CONFIG)
+    ) {
+        (None, None, None, modules_config_opt) => {
+            let modules_config = modules_config_opt.unwrap_or("modules.toml");
+            let modules_config_path = std::path::PathBuf::from(modules_config);
+            if modules_config_path.is_file() {
+                Ok(HandlerConfigurationSource::ModuleConfigFile(modules_config_path))
+            } else {
+                Err(anyhow::anyhow!("Module file {} does not exist or is not a file", modules_config))
+            }
+        },
+        (Some(bindle_id), Some(bindle_dir), None, None) => {
+            let bindle_dir_path = std::path::PathBuf::from(bindle_dir);
+            if bindle_dir_path.is_dir() {
+                Ok(HandlerConfigurationSource::StandaloneBindle(bindle_dir_path, bindle::Id::try_from(bindle_id)?))
+            } else {
+                Err(anyhow::anyhow!("Bindle directory {} does not exist or is not a directory", bindle_dir))
+            }
+        },
+        (Some(bindle_id), None, bindle_url_opt, None) => {
+            let bindle_url = bindle_url_opt.unwrap_or("http://localhost:8080/v1");
+            match url::Url::parse(bindle_url) {
+                Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(url, bindle::Id::try_from(bindle_id)?)),
+                Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
+            }
+        },
+        _ =>
+            Err(anyhow::anyhow!("Specify only module config file OR bindle ID + dir OR bindle ID + optional URL")),
+    }
+}
+
+fn parse_tls_config(tls_cert_file: Option<&str>, tls_key_file: Option<&str>) -> anyhow::Result<Option<TlsConfiguration>> {
+    match (tls_cert_file, tls_key_file) {
+        (Some(cert), Some(key)) => {
+            let cert_path = std::path::PathBuf::from(cert);
+            let key_path = std::path::PathBuf::from(key);
+            if !cert_path.is_file() {
+                Err(anyhow::anyhow!("TLS certificate file does not exist or is not a file"))
+            } else if !key_path.is_file() {
+                Err(anyhow::anyhow!("TLS key file does not exist or is not a file"))
+            } else {
+                Ok(Some(TlsConfiguration {
+                    cert_path,
+                    key_path,
+                }))
+            }
+        },
+        (None, None) => Ok(None),
+        // Should be impossible from arg requirements
+        _ => Err(anyhow::anyhow!("Both a cert and key file should be set or neither should be set")),
+    }}
 
 /// Merge environment variables defined in a file with those defined on the CLI.
 fn merge_env_vars(matches: &ArgMatches) -> anyhow::Result<HashMap<String, String>> {

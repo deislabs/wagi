@@ -247,7 +247,7 @@ pub async fn cache_parcel_asset(
 
 /// Fetch a bindle and convert it to a module configuration.
 pub(crate) async fn bindle_to_modules(
-    name: &str,
+    name: &Id,
     server_url: &str,
     asset_cache: PathBuf,
 ) -> anyhow::Result<ModuleConfig> {

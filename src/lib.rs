@@ -1,5 +1,6 @@
 use crate::http_util::*;
 use crate::runtime::*;
+use wagi_config::{HandlerConfigurationSource, WagiConfiguration};
 
 use indexmap::IndexSet;
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ use ::bindle::Invoice;
 mod http_util;
 pub mod runtime;
 pub mod version;
+pub mod wagi_config;
 
 /// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
 pub const DEFAULT_HOST: &str = "localhost:3000";
@@ -47,6 +49,28 @@ impl Router {
             global_env_vars: HashMap::new(),
             use_tls: false,
         }
+    }
+
+    pub async fn from_configuration(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
+        let builder = RouterBuilder {
+            cache_config_path: configuration.wasm_cache_config_file.clone(),
+            module_cache_dir: configuration.remote_module_cache_dir.clone(),
+            base_log_dir: configuration.log_dir.clone(),
+            default_host: configuration.http_configuration.default_hostname.clone(),
+            global_env_vars: configuration.env_vars.clone(),
+            use_tls: configuration.http_configuration.tls.is_some(),
+        };
+
+        let router = match &configuration.handlers {
+            HandlerConfigurationSource::StandaloneBindle(bindle_dir, bindle_id) =>
+                builder.build_from_standalone_bindle(&bindle_id, bindle_dir).await?,
+            HandlerConfigurationSource::RemoteBindle(bindle_server_url, bindle_id) =>
+                builder.build_from_bindle(&bindle_id, &bindle_server_url.to_string()).await?,
+            HandlerConfigurationSource::ModuleConfigFile(module_config_path) =>
+                builder.build_from_modules_toml(&module_config_path).await?,
+        };
+    
+        Ok(router)
     }
 
     /// Route the request to the correct handler
@@ -211,10 +235,10 @@ impl RouterBuilder {
     /// bindle.
     pub async fn build_from_standalone_bindle(
         self,
-        name: &str,
-        base_path: &str,
+        name: &::bindle::Id,
+        base_path: impl AsRef<Path>,
     ) -> anyhow::Result<Router> {
-        tracing::info!(name, "Loading standalone bindle");
+        tracing::info!(%name, "Loading standalone bindle");
         let reader = StandaloneRead::new(base_path, name).await?;
 
         let data = tokio::fs::read(&reader.invoice_file).await?;
@@ -242,10 +266,10 @@ impl RouterBuilder {
     /// provided server
     pub async fn build_from_bindle(
         self,
-        name: &str,
+        name: &::bindle::Id,
         bindle_server: &str,
     ) -> anyhow::Result<Router> {
-        tracing::info!(name, "Loading bindle");
+        tracing::info!(%name, "Loading bindle");
         let cache_dir = self.module_cache_dir.join("_ASSETS");
         let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
             .await
