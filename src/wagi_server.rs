@@ -1,4 +1,6 @@
-use crate::tls;
+use std::net::SocketAddr;
+
+use crate::{tls, wagi_config::TlsConfiguration};
 use crate::wagi_config::WagiConfiguration;
 use crate::Router;
 
@@ -11,16 +13,17 @@ use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 
 pub struct WagiServer {
-    configuration: WagiConfiguration,
     router: Router,
+    tls: Option<TlsConfiguration>,
+    address: SocketAddr,
 }
 
 impl WagiServer {
-    pub async fn new(configuration: WagiConfiguration) -> anyhow::Result<Self> {
-        let router = Router::from_configuration(&configuration).await?;
+    pub async fn new(configuration: &WagiConfiguration, router: Router) -> anyhow::Result<Self> {
         Ok(Self {
-            configuration,
             router,
+            tls: configuration.http_configuration.tls.clone(),
+            address: configuration.http_configuration.listen_on.clone(),
         })
     }
 
@@ -29,7 +32,7 @@ impl WagiServer {
         // by creating a GetRemoteAddr trait, but you can't use an impl Trait in a closure. The return
         // types for the service fns aren't exported and so I couldn't do a wrapper around the router
         // either. This means these services are basically the same, but with different connection types
-        match &self.configuration.http_configuration.tls {
+        match &self.tls {
             Some(tls) => {
                 let mk_svc = make_service_fn(move |conn: &TlsStream<TcpStream>| {
                     let (inner, _) = conn.get_ref();
@@ -62,7 +65,7 @@ impl WagiServer {
                         }))
                     })
                 });
-                Server::builder(tls::TlsHyperAcceptor::new(&self.configuration.http_configuration.listen_on, &tls.cert_path, &tls.key_path).await?)
+                Server::builder(tls::TlsHyperAcceptor::new(&self.address, &tls.cert_path, &tls.key_path).await?)
                     .serve(mk_svc)
                     .await?;
             },
@@ -77,7 +80,7 @@ impl WagiServer {
                         }))
                     }
                 });
-                Server::bind(&self.configuration.http_configuration.listen_on).serve(mk_svc).await?;
+                Server::bind(&self.address).serve(mk_svc).await?;
             },
         }
     
