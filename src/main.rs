@@ -227,8 +227,8 @@ pub async fn main() -> Result<(), anyhow::Error> {
     // by creating a GetRemoteAddr trait, but you can't use an impl Trait in a closure. The return
     // types for the service fns aren't exported and so I couldn't do a wrapper around the router
     // either. This means these services are basically the same, but with different connection types
-    match (tls_cert, tls_key) {
-        (Some(cert), Some(key)) => {
+    match &configuration.http_configuration.tls {
+        Some(tls) => {
             let mk_svc = make_service_fn(move |conn: &TlsStream<TcpStream>| {
                 let (inner, _) = conn.get_ref();
                 // We are mapping the error because the normal error types are not cloneable and
@@ -260,11 +260,11 @@ pub async fn main() -> Result<(), anyhow::Error> {
                     }))
                 })
             });
-            Server::builder(tls::TlsHyperAcceptor::new(&addr, cert, key).await?)
+            Server::builder(tls::TlsHyperAcceptor::new(&addr, &tls.cert_path, &tls.key_path).await?)
                 .serve(mk_svc)
                 .await?;
-        }
-        (None, None) => {
+        },
+        None => {
             let mk_svc = make_service_fn(move |conn: &AddrStream| {
                 let addr = conn.remote_addr();
                 let r = router.clone();
@@ -276,9 +276,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
                 }
             });
             Server::bind(&addr).serve(mk_svc).await?;
-        }
-        // Shouldn't get here, but just in case, print a helpful warning
-        _ => anyhow::bail!("Both a cert and key file should be set or neither should be set"),
+        },
     }
 
     Ok(())
