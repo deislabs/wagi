@@ -2,7 +2,9 @@ use clap::{App, Arg, ArgMatches};
 use core::convert::TryFrom;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use wagi::wagi_config::{HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration};
+use wagi::wagi_config::{
+    HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration,
+};
 
 const ABOUT: &str = r#"
 Run an HTTP WAGI server
@@ -141,19 +143,20 @@ pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
     )
     .arg(
         Arg::with_name(ARG_ENV_VARS)
-        .long("env")
-        .short("e")
-        .value_name("ENV_VARS")
-        .help(ENV_VAR_HELP)
-        .takes_value(true)
-        .multiple(true)
+            .long("env")
+            .short("e")
+            .value_name("ENV_VARS")
+            .help(ENV_VAR_HELP)
+            .takes_value(true)
+            .multiple(true)
     )
-    .arg(Arg::with_name(ARG_ENV_FILES)
-        .long("env-file")
-        .takes_value(true)
-        .value_name("ENV_FILE")
-        .multiple(true)
-        .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. Multiple files can be specified. See also '--env'.")
+    .arg(
+        Arg::with_name(ARG_ENV_FILES)
+            .long("env-file")
+            .takes_value(true)
+            .value_name("ENV_FILE")
+            .multiple(true)
+            .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. Multiple files can be specified. See also '--env'.")
     )
     .get_matches();
 
@@ -166,9 +169,14 @@ pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
     tracing::info!(?addr, "Starting server");
 
     // We have to pass a cache file configuration path to a Wasmtime engine.
-    let cache_config_path = matches.value_of(ARG_WASM_CACHE_CONFIG_FILE).unwrap_or("cache.toml").to_owned();
+    let cache_config_path = matches
+        .value_of(ARG_WASM_CACHE_CONFIG_FILE)
+        .unwrap_or("cache.toml")
+        .to_owned();
 
-    let hostname = matches.value_of(ARG_DEFAULT_HOSTNAME).unwrap_or("localhost:3000");
+    let hostname = matches
+        .value_of(ARG_DEFAULT_HOSTNAME)
+        .unwrap_or("localhost:3000");
 
     let mc = match matches.value_of(ARG_REMOTE_MODULE_CACHE_DIR) {
         Some(m) => std::path::PathBuf::from(m),
@@ -212,7 +220,10 @@ pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
 
     Ok(configuration)
 }
-fn parse_handler_configuration_source(matches: &ArgMatches) -> anyhow::Result<HandlerConfigurationSource> {
+
+fn parse_handler_configuration_source(
+    matches: &ArgMatches,
+) -> anyhow::Result<HandlerConfigurationSource> {
     // This is slightly stricter than the previous rule. Previously:
     // * If you had a bindle ID:
     //   * If you had a standalone path, we used that.
@@ -235,57 +246,82 @@ fn parse_handler_configuration_source(matches: &ArgMatches) -> anyhow::Result<Ha
         matches.value_of(ARG_BINDLE_ID),
         matches.value_of(ARG_BINDLE_STANDALONE_DIR),
         matches.value_of(ARG_BINDLE_URL),
-        matches.value_of(ARG_MODULES_CONFIG)
+        matches.value_of(ARG_MODULES_CONFIG),
     ) {
         (None, None, None, modules_config_opt) => {
             let modules_config = modules_config_opt.unwrap_or("modules.toml");
             let modules_config_path = std::path::PathBuf::from(modules_config);
             if modules_config_path.is_file() {
-                Ok(HandlerConfigurationSource::ModuleConfigFile(modules_config_path))
+                Ok(HandlerConfigurationSource::ModuleConfigFile(
+                    modules_config_path,
+                ))
             } else {
-                Err(anyhow::anyhow!("Module file {} does not exist or is not a file", modules_config))
+                Err(anyhow::anyhow!(
+                    "Module file {} does not exist or is not a file",
+                    modules_config
+                ))
             }
-        },
+        }
         (Some(bindle_id), Some(bindle_dir), None, None) => {
             let bindle_dir_path = std::path::PathBuf::from(bindle_dir);
             if bindle_dir_path.is_dir() {
-                Ok(HandlerConfigurationSource::StandaloneBindle(bindle_dir_path, bindle::Id::try_from(bindle_id)?))
+                Ok(HandlerConfigurationSource::StandaloneBindle(
+                    bindle_dir_path,
+                    bindle::Id::try_from(bindle_id)?,
+                ))
             } else {
-                Err(anyhow::anyhow!("Bindle directory {} does not exist or is not a directory", bindle_dir))
+                Err(anyhow::anyhow!(
+                    "Bindle directory {} does not exist or is not a directory",
+                    bindle_dir
+                ))
             }
-        },
+        }
         (Some(bindle_id), None, bindle_url_opt, None) => {
             let bindle_url = bindle_url_opt.unwrap_or("http://localhost:8080/v1");
             match url::Url::parse(bindle_url) {
-                Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(url, bindle::Id::try_from(bindle_id)?)),
+                Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
+                    url,
+                    bindle::Id::try_from(bindle_id)?,
+                )),
                 Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
             }
-        },
-        _ =>
-            Err(anyhow::anyhow!("Specify only module config file OR bindle ID + dir OR bindle ID + optional URL")),
+        }
+        _ => Err(anyhow::anyhow!(
+            "Specify only module config file OR bindle ID + dir OR bindle ID + optional URL"
+        )),
     }
 }
 
-fn parse_tls_config(tls_cert_file: Option<&str>, tls_key_file: Option<&str>) -> anyhow::Result<Option<TlsConfiguration>> {
+fn parse_tls_config(
+    tls_cert_file: Option<&str>,
+    tls_key_file: Option<&str>,
+) -> anyhow::Result<Option<TlsConfiguration>> {
     match (tls_cert_file, tls_key_file) {
         (Some(cert), Some(key)) => {
             let cert_path = std::path::PathBuf::from(cert);
             let key_path = std::path::PathBuf::from(key);
             if !cert_path.is_file() {
-                Err(anyhow::anyhow!("TLS certificate file does not exist or is not a file"))
+                Err(anyhow::anyhow!(
+                    "TLS certificate file does not exist or is not a file"
+                ))
             } else if !key_path.is_file() {
-                Err(anyhow::anyhow!("TLS key file does not exist or is not a file"))
+                Err(anyhow::anyhow!(
+                    "TLS key file does not exist or is not a file"
+                ))
             } else {
                 Ok(Some(TlsConfiguration {
                     cert_path,
                     key_path,
                 }))
             }
-        },
+        }
         (None, None) => Ok(None),
         // Should be impossible from arg requirements
-        _ => Err(anyhow::anyhow!("Both a cert and key file should be set or neither should be set")),
-    }}
+        _ => Err(anyhow::anyhow!(
+            "Both a cert and key file should be set or neither should be set"
+        )),
+    }
+}
 
 /// Merge environment variables defined in a file with those defined on the CLI.
 fn merge_env_vars(matches: &ArgMatches) -> anyhow::Result<HashMap<String, String>> {

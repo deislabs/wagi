@@ -1,6 +1,6 @@
+use crate::tls;
 use crate::wagi_config::WagiConfiguration;
 use crate::Router;
-use crate::tls;
 
 use hyper::{
     server::conn::AddrStream,
