@@ -132,74 +132,7 @@ pub struct RouterBuilder {
     use_tls: bool,
 }
 
-impl Default for RouterBuilder {
-    fn default() -> Self {
-        // NOTE: Because we default to tempdirs, there is the very small chance this could fail, so
-        // we just log a warning in that case. If there is a better way to do this, we can change it
-        // in the future
-        RouterBuilder {
-            cache_config_path: PathBuf::from("cache.toml"),
-            module_cache_dir: tempfile::tempdir()
-                .map_err(|e| {
-                    tracing::warn!(error = %e, "Error while trying to create temporary directory for module cache");
-                    e
-                })
-                .map(|td| td.into_path())
-                .unwrap_or_default(),
-            base_log_dir: tempfile::tempdir()
-                .map_err(|e| {
-                    tracing::warn!(
-                        "Error while trying to create temporary directory for logging: {}",
-                        e
-                    );
-                    e
-                })
-                .map(|td| td.into_path())
-                .unwrap_or_default(),
-            default_host: String::from("localhost:3000"),
-            global_env_vars: HashMap::new(),
-            use_tls: false,
-        }
-    }
-}
-
 impl RouterBuilder {
-    /// Sets a location for the wasmtime config cache
-    pub fn cache_config_path(mut self, cache_config_path: impl AsRef<Path>) -> Self {
-        self.cache_config_path = cache_config_path.as_ref().to_owned();
-        self
-    }
-
-    /// Sets a location for caching downloaded Wasm modules
-    pub fn module_cache_dir(mut self, module_cache_dir: impl AsRef<Path>) -> Self {
-        self.module_cache_dir = module_cache_dir.as_ref().to_owned();
-        self
-    }
-
-    /// Sets the base log directory which is used as a location for storing module logs in unique
-    /// subdirectories
-    pub fn base_log_dir(mut self, base_log_dir: impl AsRef<Path>) -> Self {
-        self.base_log_dir = base_log_dir.as_ref().to_owned();
-        self
-    }
-
-    /// Sets the default host. This is used when the client does not specify
-    /// a HOST header.
-    pub fn default_host(mut self, host: &str) -> Self {
-        self.default_host = host.to_owned();
-        self
-    }
-
-    pub fn global_env_vars(mut self, vars: HashMap<String, String>) -> Self {
-        self.global_env_vars = vars;
-        self
-    }
-
-    pub fn uses_tls(mut self, enabled: bool) -> Self {
-        self.use_tls = enabled;
-        self
-    }
-
     /// Build the router, loading the config from a toml file at the given path
     pub async fn build_from_modules_toml(self, path: impl AsRef<Path>) -> anyhow::Result<Router> {
         if !tokio::fs::metadata(&path)
