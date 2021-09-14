@@ -221,6 +221,12 @@ pub async fn main() -> Result<(), anyhow::Error> {
         log_dir,
     };
 
+    serve(&configuration).await?;
+
+    Ok(())
+}
+
+async fn serve(configuration: &WagiConfiguration) -> anyhow::Result<()> {
     let router = Router::from_configuration(&configuration).await?;
 
     // NOTE(thomastaylor312): I apologize for the duplicated code here. I tried to work around this
@@ -260,7 +266,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
                     }))
                 })
             });
-            Server::builder(tls::TlsHyperAcceptor::new(&addr, &tls.cert_path, &tls.key_path).await?)
+            Server::builder(tls::TlsHyperAcceptor::new(&configuration.http_configuration.listen_on, &tls.cert_path, &tls.key_path).await?)
                 .serve(mk_svc)
                 .await?;
         },
@@ -275,7 +281,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
                     }))
                 }
             });
-            Server::bind(&addr).serve(mk_svc).await?;
+            Server::bind(&configuration.http_configuration.listen_on).serve(mk_svc).await?;
         },
     }
 
