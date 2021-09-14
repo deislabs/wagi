@@ -18,8 +18,10 @@ use ::bindle::Invoice;
 
 mod http_util;
 pub mod runtime;
+mod tls;
 pub mod version;
 pub mod wagi_config;
+pub mod wagi_server;
 
 /// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
 pub const DEFAULT_HOST: &str = "localhost:3000";
