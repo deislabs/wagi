@@ -62,6 +62,8 @@ pub enum HandlerConfiguration {
 }
 
 impl WagiConfiguration {
+    // TODO: we might need to do some renaming here to reflect that the source
+    // may include non-handler roles in future
     pub async fn read_handler_configuration(&self) -> anyhow::Result<HandlerConfiguration> {
         match &self.handlers {
             HandlerConfigurationSource::ModuleConfigFile(path) =>
@@ -181,14 +183,14 @@ fn required_blobs_for_bindle(invoice: &bindle::Invoice) -> anyhow::Result<Vec<Re
         "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
     );
 
-    let routable_top_level_parcels: Vec<_> = top.iter().filter(|p| crate::bindle_util::is_wagi_handler(p)).collect();
+    let interesting_parcels: Vec<_> = top.iter().filter_map(|p| crate::bindle_util::classify_parcel(p)).collect();
 
     let dependencies = bindle_util::build_full_memberships(invoice);
 
     let required_parcels =
-        routable_top_level_parcels
+        interesting_parcels
             .iter()
-            .flat_map(|parcel| bindle_util::parcels_required_for(parcel, &dependencies));
+            .flat_map(|parcel| bindle_util::parcels_required_for(parcel.parcel(), &dependencies));
 
     let required_blobs = required_parcels.map(|p| BindleParcel { name: p.label.name.to_owned(), sha256: p.label.sha256.to_owned() })
         .map(|bp| RequiredBlob { source: BlobSource::BindleParcel(bp) })

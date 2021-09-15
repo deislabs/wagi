@@ -23,17 +23,39 @@ pub fn top_modules(invoice: &Invoice) -> Vec<Parcel> {
         .collect()
 }
 
-pub fn is_wagi_handler(parcel: &Parcel) -> bool {
-    // TODO: at the moment, ANY top level parcel of type application/wasm is
-    // considered routable. So this is a spec change that needs to be agreed.
-    // If we keep the spec then we can just remove this function.
-    match parcel.label.feature.as_ref() {
-        Some(all_features) => match all_features.get("wagi") {
-            Some(wagi_features) => wagi_features.contains_key("route"),
-            None => false,
-        },
-        None => false,
+pub enum InterestingParcel {
+    WagiHandler(WagiHandlerInfo),
+}
+
+pub struct WagiHandlerInfo {
+    pub parcel: Parcel,
+    pub route: String,
+}
+
+impl InterestingParcel {
+    pub fn parcel(&self) -> &Parcel {
+        match self {
+            Self::WagiHandler(handler_info) => &handler_info.parcel,
+        }
     }
+}
+
+pub fn classify_parcel(parcel: &Parcel) -> Option<InterestingParcel> {
+    // Currently only handlers but we have talked of scheduled tasks etc.
+    parcel.label.feature.as_ref().and_then(|features| {
+        features.get("wagi").and_then(|wagi_features| {
+            match wagi_features.get("route") {
+                Some(route) => {
+                    let handler_info = WagiHandlerInfo {
+                        parcel: parcel.clone(),
+                        route: route.to_owned()
+                    };
+                    Some(InterestingParcel::WagiHandler(handler_info))
+                },
+                None => None,
+            }
+        })
+    })
 }
 
 pub fn parcels_required_for(parcel: &Parcel, full_dep_map: &HashMap<String, Vec<Parcel>>) -> Vec<Parcel> {
