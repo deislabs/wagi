@@ -10,8 +10,7 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::{runtime::Module, ModuleConfig};
-
-const WASM_MEDIA_TYPE: &str = "application/wasm";
+use crate::bindle_util::{top_modules, WASM_MEDIA_TYPE};
 
 pub(crate) fn bindle_cache_key(uri: &Url) -> String {
     let mut hasher = Sha256::new();
@@ -450,22 +449,6 @@ pub async fn invoice_to_modules(
     };
 
     Ok(mc)
-}
-
-// America's next...
-fn top_modules(inv: &Invoice) -> Vec<Parcel> {
-    inv.parcel
-        .clone()
-        .unwrap_or_default()
-        .iter()
-        .filter(|parcel| {
-            // We want parcels that...
-            // - have the Wasm media type
-            // - Have no group memberships
-            parcel.label.media_type.as_str() == WASM_MEDIA_TYPE && parcel.is_global_group()
-        })
-        .cloned()
-        .collect()
 }
 
 #[allow(clippy::map_clone)]

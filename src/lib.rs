@@ -16,6 +16,7 @@ use tracing::instrument;
 use ::bindle::standalone::StandaloneRead;
 use ::bindle::Invoice;
 
+pub(crate) mod bindle_util;
 mod http_util;
 pub mod runtime;
 mod tls;
