@@ -176,7 +176,6 @@ fn parse_module_ref(module: &ModuleMapConfigurationEntry) -> anyhow::Result<Requ
 }
 
 fn required_blobs_for_bindle(invoice: &bindle::Invoice) -> anyhow::Result<Vec<RequiredBlob>> {
-    // For each top-level entry, if it is a Wasm module, we create a Module.
     let top = crate::bindle_util::top_modules(invoice);
     tracing::debug!(
         default_modules = top.len(),

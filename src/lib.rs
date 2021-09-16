@@ -18,7 +18,7 @@ use ::bindle::standalone::StandaloneRead;
 use ::bindle::Invoice;
 
 pub(crate) mod bindle_util;
-mod dispatcher;
+pub mod dispatcher;
 mod http_util;
 mod request;
 pub mod runtime;
