@@ -30,6 +30,7 @@ use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
+use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 use crate::version::*;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
 
@@ -40,17 +41,6 @@ pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
 
 const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
 const STDERR_FILE: &str = "module.stderr";
-
-pub struct RouterInfo {
-    pub entrypoint: String,
-    pub client_addr: SocketAddr,
-    pub cache_config_path: PathBuf,
-    pub module_cache_dir: PathBuf,
-    pub base_log_dir: PathBuf,
-    pub default_host: String,
-    pub use_tls: bool,
-    pub env_vars: HashMap<String, String>,
-}
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
@@ -160,8 +150,14 @@ impl Module {
     /// [`id` method](Module::id)) for its name. The log will be placed in that directory at
     /// `module.stderr`
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "trace", skip(self, req, info), fields(route = %self.route, module = %self.module))]
-    pub async fn execute(&self, req: Request<Body>, info: RouterInfo) -> Response<Body> {
+    #[instrument(level = "trace", skip(self, req, request_context, route_context, global_context), fields(route = %self.route, module = %self.module))]
+    pub async fn execute(
+        &self,
+        req: Request<Body>,
+        request_context: RequestContext,
+        route_context: RequestRouteContext,
+        global_context: RequestGlobalContext,
+    ) -> Response<Body> {
         // Read the parts in here
         let (parts, body) = req.into_parts();
         let data = hyper::body::to_bytes(body)
@@ -169,7 +165,9 @@ impl Module {
             .unwrap_or_default()
             .to_vec();
         let me = self.clone();
-        let res = match tokio::task::spawn_blocking(move || me.run_wasm(&parts, data, info)).await {
+        let res = match tokio::task::spawn_blocking(move ||
+                me.run_wasm(&parts, data, request_context, route_context, global_context)
+        ).await {
             Ok(res) => res,
             Err(e) if e.is_panic() => {
                 tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
@@ -540,22 +538,24 @@ impl Module {
     //
 
     #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "info", skip(self, req, body, info), fields(uri = %req.uri, module = %self.module, use_tls = %info.use_tls, env = ?info.env_vars))]
+    #[instrument(level = "info", skip(self, req, body, request_context, route_context, global_context), fields(uri = %req.uri, module = %self.module, use_tls = %global_context.use_tls, env = ?global_context.global_env_vars))]
     fn run_wasm(
         &self,
         req: &Parts,
         body: Vec<u8>,
-        info: RouterInfo,
+        request_context: RequestContext,
+        route_context: RequestRouteContext,
+        global_context: RequestGlobalContext,
     ) -> Result<Response<Body>, anyhow::Error> {
         let startup_span = tracing::info_span!("module instantiation").entered();
         let uri_path = req.uri.path();
         let headers = self.build_headers(
             req,
             body.len(),
-            info.client_addr,
-            info.default_host.as_str(),
-            info.use_tls,
-            info.env_vars,
+            request_context.client_addr,
+            global_context.default_host.as_str(),
+            global_context.use_tls,
+            global_context.global_env_vars,
         );
         let stdin = ReadPipe::from(body);
         let stdout_buf: Vec<u8> = vec![];
@@ -563,7 +563,7 @@ impl Module {
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
 
         // Make sure the directory exists
-        let log_dir = info.base_log_dir.join(self.id());
+        let log_dir = global_context.base_log_dir.join(self.id());
         tracing::info!(log_dir = %log_dir.display(), "Using log dir");
         std::fs::create_dir_all(&log_dir)?;
         // Open a file for appending. Right now this will just keep appending as there is no log
@@ -614,7 +614,7 @@ impl Module {
 
         let ctx = builder.build();
 
-        let (mut store, engine) = self.new_store_and_engine(&info.cache_config_path, ctx)?;
+        let (mut store, engine) = self.new_store_and_engine(&global_context.cache_config_path, ctx)?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
@@ -624,12 +624,12 @@ impl Module {
         )?;
         http.add_to_linker(&mut linker)?;
 
-        let module = self.load_cached_module(&store, &info.module_cache_dir)?;
+        let module = self.load_cached_module(&store, &global_context.module_cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
 
         // Manually drop the span so we get instantiation time
         drop(startup_span);
-        let ep = &info.entrypoint;
+        let ep = &route_context.entrypoint;
         // This shouldn't error out, because we already know there is a match.
         let start = instance
             .get_func(&mut store, ep)

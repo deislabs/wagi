@@ -1,4 +1,5 @@
 use crate::http_util::*;
+use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 use crate::runtime::*;
 use wagi_config::{HandlerConfigurationSource, WagiConfiguration};
 
@@ -17,12 +18,15 @@ use ::bindle::standalone::StandaloneRead;
 use ::bindle::Invoice;
 
 pub(crate) mod bindle_util;
+mod dispatcher;
 mod http_util;
+mod request;
 pub mod runtime;
 mod tls;
 pub mod version;
 pub mod wagi_config;
 pub mod wagi_server;
+mod wasm_module;
 
 /// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
 pub const DEFAULT_HOST: &str = "localhost:3000";
@@ -100,18 +104,22 @@ impl Router {
             "/healthz" => Ok(Response::new(Body::from("OK"))),
             _ => match self.module_store.handler_for_path(uri_path).await {
                 Ok(h) => {
-                    let info = RouterInfo {
+                    let request_context = RequestContext {
+                        client_addr,
+                    };
+                    let route_context = RequestRouteContext {
                         entrypoint: h.entrypoint,
-                        client_addr: client_addr,
+                    };
+                    let global_context = RequestGlobalContext {
                         cache_config_path: self.cache_config_path.clone(),
                         module_cache_dir: self.module_cache.clone(),
                         base_log_dir: self.base_log_dir.clone(),
                         default_host: self.default_host.to_owned(),
                         use_tls: self.use_tls,
-                        env_vars: self.global_env_vars.clone(),
+                        global_env_vars: self.global_env_vars.clone(),
                     };
 
-                    let res = h.module.execute(req, info).await;
+                    let res = h.module.execute(req, request_context, route_context, global_context).await;
                     Ok(res)
                 }
                 Err(e) => {

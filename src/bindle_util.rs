@@ -40,6 +40,8 @@ impl InterestingParcel {
     }
 }
 
+const NO_PARCELS: Vec<Parcel> = vec![];
+
 pub fn classify_parcel(parcel: &Parcel) -> Option<InterestingParcel> {
     // Currently only handlers but we have talked of scheduled tasks etc.
     parcel.label.feature.as_ref().and_then(|features| {
@@ -61,7 +63,7 @@ pub fn classify_parcel(parcel: &Parcel) -> Option<InterestingParcel> {
 pub fn parcels_required_for(parcel: &Parcel, full_dep_map: &HashMap<String, Vec<Parcel>>) -> Vec<Parcel> {
     let mut required = HashSet::new();
     for group in parcel.directly_requires() {
-        required.extend(full_dep_map.get(&group).unwrap().iter().map(|p| p.clone()));
+        required.extend(full_dep_map.get(&group).unwrap_or(&NO_PARCELS).iter().map(|p| p.clone()));
     }
     Vec::from_iter(required)
 }
@@ -92,7 +94,7 @@ pub fn build_full_memberships(invoice: &Invoice) -> HashMap<String, Vec<Parcel>>
     for group in direct_memberships.keys() {
         let mut all_members = HashSet::new();
         for dep_group in gg_deps.get(group).unwrap() {
-            all_members.extend(direct_memberships.get(dep_group).unwrap().iter().map(|p| p.clone()));
+            all_members.extend(direct_memberships.get(dep_group).unwrap_or(&NO_PARCELS).iter().map(|p| p.clone()));
         }
         full_memberships.insert(group.to_owned(), Vec::from_iter(all_members));
     }
