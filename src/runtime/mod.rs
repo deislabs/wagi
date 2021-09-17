@@ -166,7 +166,7 @@ impl Module {
             .to_vec();
         let me = self.clone();
         let res = match tokio::task::spawn_blocking(move ||
-                me.run_wasm(&parts, data, request_context, route_context, global_context)
+                me.run_wasm(&parts, data, &request_context, &route_context, &global_context)
         ).await {
             Ok(res) => res,
             Err(e) if e.is_panic() => {
@@ -317,13 +317,13 @@ impl Module {
         client_addr: SocketAddr,
         default_host: &str,
         use_tls: bool,
-        environment: HashMap<String, String>,
+        environment: &HashMap<String, String>,
     ) -> HashMap<String, String> {
         let (host, port) = self.parse_host_header_uri(&req.headers, &req.uri, default_host);
         // Note that we put these first so that there is no chance that they overwrite
         // the built-in vars. IMPORTANT: This is also why some values have empty strings
         // deliberately set (as opposed to omiting the pair altogether).
-        let mut headers = environment;
+        let mut headers = environment.clone();
 
         // CGI headers from RFC
         headers.insert("AUTH_TYPE".to_owned(), "".to_owned()); // Not currently supported
@@ -543,27 +543,44 @@ impl Module {
         &self,
         req: &Parts,
         body: Vec<u8>,
-        request_context: RequestContext,
-        route_context: RequestRouteContext,
-        global_context: RequestGlobalContext,
+        request_context: &RequestContext,
+        route_context: &RequestRouteContext,
+        global_context: &RequestGlobalContext,
     ) -> Result<Response<Body>, anyhow::Error> {
         let startup_span = tracing::info_span!("module instantiation").entered();
-        let uri_path = req.uri.path();
         let headers = self.build_headers(
             req,
             body.len(),
             request_context.client_addr,
             global_context.default_host.as_str(),
             global_context.use_tls,
-            global_context.global_env_vars,
+            &global_context.global_env_vars,
         );
+
+        let redirects = Self::prepare_stdio_streams(body, global_context, self.id())?;
+
+        let ctx = self.build_wasi_context_for_request(req, headers, redirects.streams)?;
+
+        let (store, instance) = self.prepare_wasm_instance(global_context, ctx)?;
+
+        // Drop manually to get instantiation time
+        drop(startup_span);
+
+        self.run_prepared_wasm_instance(route_context, instance, store)?;
+
+        compose_response(redirects.stdout_mutex)
+    }
+
+    fn prepare_stdio_streams(body: Vec<u8>, global_context: &RequestGlobalContext, handler_id: String) -> Result<crate::wasm_module::IORedirectionInfo, Error> {
         let stdin = ReadPipe::from(body);
         let stdout_buf: Vec<u8> = vec![];
         let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
         let stdout = WritePipe::from_shared(stdout_mutex.clone());
+        let log_dir = global_context.base_log_dir.join(handler_id);
 
-        // Make sure the directory exists
-        let log_dir = global_context.base_log_dir.join(self.id());
+        // The spec does not say what to do with STDERR.
+        // See specifically sections 4.2 and 6.1 of RFC 3875.
+        // Currently, we will attach to wherever logs go.
         tracing::info!(log_dir = %log_dir.display(), "Using log dir");
         std::fs::create_dir_all(&log_dir)?;
         // Open a file for appending. Right now this will just keep appending as there is no log
@@ -576,29 +593,34 @@ impl Module {
             ambient_authority(),
         );
         let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
-        // The spec does not say what to do with STDERR.
-        // See specifically sections 4.2 and 6.1 of RFC 3875.
-        // Currently, we will attach to wherever logs go.
 
+        Ok(crate::wasm_module::IORedirectionInfo {
+            streams: crate::wasm_module::IOStreamRedirects {
+                stdin,
+                stdout,
+                stderr,
+            },
+            stdout_mutex,
+        })
+    }
+
+    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
+        let uri_path = req.uri.path();
         let mut args = vec![uri_path.to_string()];
         req.uri
             .query()
             .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
             .take();
-
         let headers: Vec<(String, String)> = headers
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-
         let mut builder = WasiCtxBuilder::new()
             .args(&args)?
             .envs(&headers)?
-            .stderr(Box::new(stderr)) // STDERR goes to the console of the server
-            .stdout(Box::new(stdout)) // STDOUT is sent to a Vec<u8>, which becomes the Body later
-            .stdin(Box::new(stdin));
-
-        // Map all of the volumes.
+            .stderr(Box::new(redirects.stderr)) // STDERR goes to the console of the server
+            .stdout(Box::new(redirects.stdout)) // STDOUT is sent to a Vec<u8>, which becomes the Body later
+            .stdin(Box::new(redirects.stdin));
         if let Some(dirs) = self.volumes.as_ref() {
             for (guest, host) in dirs.iter() {
                 debug!(%host, %guest, "Mapping volume from host to guest");
@@ -611,9 +633,11 @@ impl Module {
                 };
             }
         }
-
         let ctx = builder.build();
+        Ok(ctx)
+    }
 
+    fn prepare_wasm_instance(&self, global_context: &RequestGlobalContext, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
         let (mut store, engine) = self.new_store_and_engine(&global_context.cache_config_path, ctx)?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
@@ -623,111 +647,22 @@ impl Module {
             self.http_max_concurrency,
         )?;
         http.add_to_linker(&mut linker)?;
-
+        
         let module = self.load_cached_module(&store, &global_context.module_cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
+        Ok((store, instance))
+    }
 
-        // Manually drop the span so we get instantiation time
-        drop(startup_span);
+    fn run_prepared_wasm_instance(&self, route_context: &RequestRouteContext, instance: Instance, mut store: Store<WasiCtx>) -> Result<(), Error> {
         let ep = &route_context.entrypoint;
-        // This shouldn't error out, because we already know there is a match.
         let start = instance
             .get_func(&mut store, ep)
             .ok_or_else(|| anyhow::anyhow!("No such function '{}' in {}", &ep, self.module))?;
-
         tracing::trace!("Calling Wasm entry point");
         start.call(&mut store, &[])?;
-
-        // Okay, once we get here, all the information we need to send back in the response
-        // should be written to the STDOUT buffer. We fetch that, format it, and send
-        // it back. In the process, we might need to alter the status code of the result.
-        //
-        // This is a little janky, but basically we are looping through the output once,
-        // looking for the double-newline that distinguishes the headers from the body.
-        // The headers can then be parsed separately, while the body can be sent back
-        // to the client.
-        let out = stdout_mutex.read().unwrap();
-        let mut last = 0;
-        let mut scan_headers = true;
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut out_headers: Vec<u8> = Vec::new();
-        out.iter().for_each(|i| {
-            if scan_headers && *i == 10 && last == 10 {
-                out_headers.append(&mut buffer);
-                buffer = Vec::new();
-                scan_headers = false;
-                return; // Consume the linefeed
-            }
-            last = *i;
-            buffer.push(*i)
-        });
-
-        let mut res = Response::new(Body::from(buffer));
-
-        // XXX: Does the spec allow for unknown headers to be passed to the HTTP headers?
-        let mut sufficient_response = false;
-        parse_cgi_headers(String::from_utf8(out_headers)?)
-            .iter()
-            .for_each(|h| {
-                use hyper::header::{CONTENT_TYPE, LOCATION};
-                match h.0.to_lowercase().as_str() {
-                    "content-type" => {
-                        sufficient_response = true;
-                        res.headers_mut().insert(CONTENT_TYPE, h.1.parse().unwrap());
-                    }
-                    "status" => {
-                        // The spec does not say that status is a sufficient response.
-                        // (It says that it may be added along with Content-Type, because
-                        // a status has a content type). However, CGI libraries in the wild
-                        // do not set content type correctly if a status is an error.
-                        // See https://datatracker.ietf.org/doc/html/rfc3875#section-6.2
-                        sufficient_response = true;
-                        // Status can be `Status CODE [STRING]`, and we just want the CODE.
-                        let status_code = h.1.split_once(' ').map(|(code, _)| code).unwrap_or(h.1);
-                        tracing::debug!(status_code, "Raw status code");
-                        match status_code.parse::<StatusCode>() {
-                            Ok(code) => *res.status_mut() = code,
-                            Err(e) => {
-                                tracing::log::warn!("Failed to parse code: {}", e);
-                                *res.status_mut() = StatusCode::BAD_GATEWAY;
-                            }
-                        }
-                    }
-                    "location" => {
-                        sufficient_response = true;
-                        res.headers_mut()
-                            .insert(LOCATION, HeaderValue::from_str(h.1).unwrap());
-                        *res.status_mut() = StatusCode::from_u16(302).unwrap();
-                    }
-                    _ => {
-                        // If the header can be parsed into a valid HTTP header, it is
-                        // added to the headers. Otherwise it is ignored.
-                        match HeaderName::from_lowercase(h.0.as_str().to_lowercase().as_bytes()) {
-                            Ok(hdr) => {
-                                res.headers_mut()
-                                    .insert(hdr, HeaderValue::from_str(h.1).unwrap());
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, header_name = %h.0, "Invalid header name")
-                            }
-                        }
-                    }
-                }
-            });
-
-        // According to the spec, a CGI script must return either a content-type
-        // or a location header. Failure to return one of these is a 500 error.
-        if !sufficient_response {
-            return Ok(internal_error(
-                // Technically, we let `status` be sufficient, but this is more lenient
-                // than the specification.
-                "Exactly one of 'location' or 'content-type' must be specified",
-            ));
-        }
-
-        Ok(res)
+        Ok(())
     }
-
+    
     /// Determine the source of the module, and read it from that source.
     ///
     /// Modules can be stored locally, or they can be stored in external sources like
@@ -934,6 +869,91 @@ impl Module {
         let engine = Engine::new(&config)?;
         Ok((Store::new(&engine, ctx), engine))
     }
+}
+
+fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<Body>, Error> {
+    // Okay, once we get here, all the information we need to send back in the response
+    // should be written to the STDOUT buffer. We fetch that, format it, and send
+    // it back. In the process, we might need to alter the status code of the result.
+    //
+    // This is a little janky, but basically we are looping through the output once,
+    // looking for the double-newline that distinguishes the headers from the body.
+    // The headers can then be parsed separately, while the body can be sent back
+    // to the client.
+
+    let out = stdout_mutex.read().unwrap();
+    let mut last = 0;
+    let mut scan_headers = true;
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut out_headers: Vec<u8> = Vec::new();
+    out.iter().for_each(|i| {
+        if scan_headers && *i == 10 && last == 10 {
+            out_headers.append(&mut buffer);
+            buffer = Vec::new();
+            scan_headers = false;
+            return; // Consume the linefeed
+        }
+        last = *i;
+        buffer.push(*i)
+    });
+    let mut res = Response::new(Body::from(buffer));
+    let mut sufficient_response = false;
+    parse_cgi_headers(String::from_utf8(out_headers)?)
+        .iter()
+        .for_each(|h| {
+            use hyper::header::{CONTENT_TYPE, LOCATION};
+            match h.0.to_lowercase().as_str() {
+                "content-type" => {
+                    sufficient_response = true;
+                    res.headers_mut().insert(CONTENT_TYPE, h.1.parse().unwrap());
+                }
+                "status" => {
+                    // The spec does not say that status is a sufficient response.
+                    // (It says that it may be added along with Content-Type, because
+                    // a status has a content type). However, CGI libraries in the wild
+                    // do not set content type correctly if a status is an error.
+                    // See https://datatracker.ietf.org/doc/html/rfc3875#section-6.2
+                    sufficient_response = true;
+                    // Status can be `Status CODE [STRING]`, and we just want the CODE.
+                    let status_code = h.1.split_once(' ').map(|(code, _)| code).unwrap_or(h.1);
+                    tracing::debug!(status_code, "Raw status code");
+                    match status_code.parse::<StatusCode>() {
+                        Ok(code) => *res.status_mut() = code,
+                        Err(e) => {
+                            tracing::log::warn!("Failed to parse code: {}", e);
+                            *res.status_mut() = StatusCode::BAD_GATEWAY;
+                        }
+                    }
+                }
+                "location" => {
+                    sufficient_response = true;
+                    res.headers_mut()
+                        .insert(LOCATION, HeaderValue::from_str(h.1).unwrap());
+                    *res.status_mut() = StatusCode::from_u16(302).unwrap();
+                }
+                _ => {
+                    // If the header can be parsed into a valid HTTP header, it is
+                    // added to the headers. Otherwise it is ignored.
+                    match HeaderName::from_lowercase(h.0.as_str().to_lowercase().as_bytes()) {
+                        Ok(hdr) => {
+                            res.headers_mut()
+                                .insert(hdr, HeaderValue::from_str(h.1).unwrap());
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, header_name = %h.0, "Invalid header name")
+                        }
+                    }
+                }
+            }
+        });
+    if !sufficient_response {
+        return Ok(internal_error(
+            // Technically, we let `status` be sufficient, but this is more lenient
+            // than the specification.
+            "Exactly one of 'location' or 'content-type' must be specified",
+        ));
+    }
+    Ok(res)
 }
 
 /// Build the image name from the URL passed in.
@@ -1304,7 +1324,7 @@ mod test {
             client_addr,
             default_host,
             use_tls,
-            env,
+            &env,
         );
 
         let want = |key: &str, expect: &str| {
