@@ -512,7 +512,7 @@ impl Module {
     ///
     /// For example, if the match is `/foo/...` and the path is `/foo/bar`, it should return `"bar"`,
     /// but if the match is `/foo/bar` and the path is `/foo/bar`, it should return `""`.
-    fn path_info(&self, uri_path: &str) -> String {
+    pub fn path_info(&self, uri_path: &str) -> String {
         uri_path
             .strip_prefix(
                 // Chop the `/...` off of the end if there is one.
@@ -647,7 +647,7 @@ impl Module {
             self.http_max_concurrency,
         )?;
         http.add_to_linker(&mut linker)?;
-        
+
         let module = self.load_cached_module(&store, &global_context.module_cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
         Ok((store, instance))
@@ -871,7 +871,7 @@ impl Module {
     }
 }
 
-fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<Body>, Error> {
+pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<Body>, Error> {
     // Okay, once we get here, all the information we need to send back in the response
     // should be written to the STDOUT buffer. We fetch that, format it, and send
     // it back. In the process, we might need to alter the status code of the result.

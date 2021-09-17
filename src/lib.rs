@@ -19,6 +19,7 @@ use ::bindle::Invoice;
 
 pub(crate) mod bindle_util;
 pub mod dispatcher;
+pub(crate) mod header_util;
 mod http_util;
 mod request;
 pub mod runtime;

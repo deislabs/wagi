@@ -31,7 +31,7 @@ pub struct WagiHandlerInfo {
     pub parcel: Parcel,
     pub route: String,
     pub entrypoint: Option<String>,
-    pub allowed_hosts: Vec<String>,
+    pub allowed_hosts: Option<Vec<String>>,
 }
 
 impl InterestingParcel {
@@ -54,7 +54,7 @@ pub fn classify_parcel(parcel: &Parcel) -> Option<InterestingParcel> {
                         parcel: parcel.clone(),
                         route: route.to_owned(),
                         entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
-                        allowed_hosts: parse_csv(wagi_features.get("allowed_hosts")),
+                        allowed_hosts: wagi_features.get("allowed_hosts").map(|h| parse_csv(h)),
                     };
                     Some(InterestingParcel::WagiHandler(handler_info))
                 },
@@ -163,9 +163,6 @@ impl ParcelUtils for Parcel {
     }
 }
 
-fn parse_csv(text: Option<&String>) -> Vec<String> {
-    match text {
-        None => vec![],
-        Some(t) => t.split(',').map(|v| v.to_owned()).collect(),  // TODO: trim etc.?
-    }
+fn parse_csv(text: &str) -> Vec<String> {
+    text.split(',').map(|v| v.to_owned()).collect()  // TODO: trim etc.?
 }
