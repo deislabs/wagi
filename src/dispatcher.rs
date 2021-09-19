@@ -222,14 +222,13 @@ impl WasmRouteHandler {
         // Currently, we will attach to wherever logs go.
         tracing::info!(log_dir = %log_dir.display(), "Using log dir");
         std::fs::create_dir_all(&log_dir)?;
-        let stderr = unsafe {
-            cap_std::fs::File::from_std(
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(log_dir.join(STDERR_FILE))?,
-            )
-        };
+        let stderr = cap_std::fs::File::from_std(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(log_dir.join(STDERR_FILE))?,
+            ambient_authority(),
+        );
         let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
         Ok(crate::wasm_module::IORedirectionInfo {
@@ -263,7 +262,7 @@ impl WasmRouteHandler {
         for (guest, host) in &self.volumes {
             debug!(%host, %guest, "Mapping volume from host to guest");
             // Try to open the dir or log an error.
-            match unsafe { Dir::open_ambient_dir(host) } {
+            match Dir::open_ambient_dir(host, ambient_authority()) {
                 Ok(dir) => {
                     builder = builder.preopened_dir(dir, guest)?;
                 }
@@ -399,5 +398,37 @@ impl RoutingTable {
         vec![
             RoutingTableEntry::inbuilt("/healthz", RouteHandler::HealthCheck),
         ]
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn should_produce_relative_path() {
+        let uri_path = "/static/images/icon.png";
+
+        let rp1 = RoutePattern::parse("/static/...");
+        assert_eq!("/images/icon.png", rp1.relative_path(uri_path));
+
+        let rp2 = RoutePattern::parse("/static/images/icon.png");
+        assert_eq!("", rp2.relative_path(uri_path));
+
+        // According to the spec, if "/" matches "/...", then a single "/" should be set
+        let rp3 = RoutePattern::parse("/...");
+        assert_eq!("/", rp3.relative_path("/"));
+
+        // According to the spec, if "/" matches the SCRIPT_NAME, then "" should be set
+        let rp4 = RoutePattern::parse("/");
+        assert_eq!("", rp4.relative_path("/"));
+
+        // As a degenerate case, if the path does not match the prefix,
+        // then it should return an empty path because this is not
+        // a relative path from the given path. While this is a no-op in
+        // current Wagi, conceivably we could some day have to alter this
+        // behavior. So this test is a canary for a breaking change.
+        let rp5 = RoutePattern::parse("/foo");
+        assert_eq!("", rp5.relative_path("/bar"));
     }
 }

@@ -232,3 +232,139 @@ fn parse_host_header_uri(
 
     (host, port)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use hyper::http::request::Request;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_parse_host_header_uri() {
+        // let module = Module::new("/base".to_string(), "file:///no/such/path.wasm".to_owned());
+
+        let hmap = |val: &str| {
+            let mut hm = hyper::HeaderMap::new();
+            hm.insert(
+                "HOST",
+                hyper::header::HeaderValue::from_str(val).expect("Made a header value"),
+            );
+            hm
+        };
+
+        let default_host = "example.com:1234";
+
+        {
+            // All should come from HOST header
+            let headers = hmap("wagi.net:31337");
+            let uri = hyper::Uri::from_str("http://localhost:443/foo/bar").expect("parsed URI");
+
+            let (host, port) = parse_host_header_uri(&headers, &uri, default_host);
+            assert_eq!("wagi.net", host);
+            assert_eq!("31337", port);
+        }
+        {
+            // Name should come from HOST, port should come from self.host
+            let headers = hmap("wagi.net");
+            let uri = hyper::Uri::from_str("http://localhost:443/foo/bar").expect("parsed URI");
+
+            let (host, port) = parse_host_header_uri(&headers, &uri, default_host);
+            assert_eq!("wagi.net", host);
+            assert_eq!("1234", port)
+        }
+        {
+            // Host and domain should come from default_host
+            let headers = hyper::HeaderMap::new();
+            let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
+
+            let (host, port) = parse_host_header_uri(&headers, &uri, default_host);
+
+            assert_eq!("example.com", host);
+            assert_eq!("1234", port)
+        }
+        {
+            // Host and port should come from URI
+            let empty_host = "";
+            let headers = hyper::HeaderMap::new();
+            let uri = hyper::Uri::from_str("http://localhost:8080/foo/bar").expect("parsed URI");
+
+            let (host, port) = parse_host_header_uri(&headers, &uri, empty_host);
+
+            assert_eq!("localhost", host);
+            assert_eq!("8080", port)
+        }
+    }
+
+    #[test]
+    fn test_headers() {
+        let route = RoutePattern::parse("/path/...");
+            // "file:///no/such/path.wasm".to_owned(),
+        let (req, _) = Request::builder()
+            .uri("https://example.com:3000/path/test%3brun?foo=bar")
+            .header("X-Test-Header", "hello")
+            .header("Accept", "text/html")
+            .header("User-agent", "test")
+            .header("Host", "example.com:3000")
+            .header("Authorization", "supersecret")
+            .header("Connection", "sensitive")
+            .method("POST")
+            .body(())
+            .unwrap()
+            .into_parts();
+        let content_length = 1234;
+        let client_addr = "192.168.0.1:3000".parse().expect("Should parse IP");
+        let default_host = "example.com:3000";
+        let use_tls = true;
+        let env = std::collections::HashMap::with_capacity(0);
+        let headers = build_headers(
+            &route,
+            &req,
+            content_length,
+            client_addr,
+            default_host,
+            use_tls,
+            &env,
+        );
+
+        let want = |key: &str, expect: &str| {
+            let v = headers
+                .get(&key.to_owned())
+                .unwrap_or_else(|| panic!("expected to find key {}", key));
+
+            assert_eq!(expect, v, "Key: {}", key)
+        };
+
+        // Content-type is set on output, so we don't test here.
+        want("X_MATCHED_ROUTE", "/path/...");
+        want("HTTP_ACCEPT", "text/html");
+        want("REQUEST_METHOD", "POST");
+        want("SERVER_PROTOCOL", "HTTP/1.1");
+        want("HTTP_USER_AGENT", "test");
+        want("SCRIPT_NAME", "/path");
+        want("SERVER_SOFTWARE", "WAGI/1");
+        want("SERVER_PORT", "3000");
+        want("SERVER_NAME", "example.com");
+        want("AUTH_TYPE", "");
+        want("REMOTE_ADDR", "192.168.0.1");
+        want("REMOTE_ADDR", "192.168.0.1");
+        want("PATH_INFO", "/test;run");
+        want("PATH_TRANSLATED", "/test;run");
+        want("QUERY_STRING", "foo=bar");
+        want("CONTENT_LENGTH", "1234");
+        want("HTTP_HOST", "example.com:3000");
+        want("GATEWAY_INTERFACE", "CGI/1.1");
+        want("REMOTE_USER", "");
+        want(
+            "X_FULL_URL",
+            "https://example.com:3000/path/test%3brun?foo=bar",
+        );
+
+        // Extra header should be passed through
+        want("HTTP_X_TEST_HEADER", "hello");
+
+        // Finally, security-sensitive headers should be removed.
+        assert!(headers.get("HTTP_AUTHORIZATION").is_none());
+        assert!(headers.get("HTTP_CONNECTION").is_none());
+    }
+}
