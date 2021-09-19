@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use hyper::{Body, Request, Response};
 use serde::Deserialize;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{RwLock};
 use tracing::instrument;
 
 use ::bindle::standalone::StandaloneRead;
@@ -244,14 +244,14 @@ impl RouterBuilder {
 #[derive(Clone)]
 struct ModuleStore {
     module_config: Arc<RwLock<ModuleConfig>>,
-    notify: Arc<Notify>,
+    // notify: Arc<Notify>,
 }
 
 impl ModuleStore {
     fn new(config: ModuleConfig) -> Self {
         ModuleStore {
             module_config: Arc::new(RwLock::new(config)),
-            notify: Arc::new(Notify::new()),
+            // notify: Arc::new(Notify::new()),
         }
     }
 
