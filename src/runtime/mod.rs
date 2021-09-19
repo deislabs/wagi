@@ -2,20 +2,16 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::{collections::HashMap, net::SocketAddr};
+use std::{collections::HashMap};
 use std::{
     hash::{Hash, Hasher},
     io::BufRead,
 };
 
-use cap_std::fs::Dir;
 use docker_credential;
 use docker_credential::DockerCredential;
-use hyper::HeaderMap;
 use hyper::{
-    header::HOST,
     http::header::{HeaderName, HeaderValue},
-    http::request::Parts,
     Body, Request, Response, StatusCode,
 };
 use oci_distribution::client::{Client, ClientConfig};
@@ -23,16 +19,15 @@ use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tracing::{debug, instrument};
+use tracing::{instrument};
 use url::Url;
 use wasi_cap_std_sync::WasiCtxBuilder;
-use wasi_common::pipe::{ReadPipe, WritePipe};
+use wasi_common::pipe::{WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
 use crate::dispatcher::{RouteHandler, RoutePattern, RoutingTableEntry, WasmRouteHandler};
 use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
-use crate::version::*;
 use crate::wasm_module::WasmModuleSource;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
 
@@ -334,64 +329,6 @@ impl Module {
         // putting the higher precedence routes at the end of the output.
         routes.reverse();
         Ok(routes)
-    }
-
-    /// Internal utility function for parsing a host header.
-    ///
-    /// This attempts to use three sources to construct a definitive host/port pair, ordering
-    /// by precedent.
-    ///
-    /// - The content of the host header is considered most authoritative.
-    /// - Next most authoritative is self.host, which is set at the CLI or in the config
-    /// - As a last resort, we use the host/port that Hyper gives us.
-    /// - If none of these provide sufficient data, which is definitely a possiblity,
-    ///   we go with `localhost` as host and `80` as port. This, of course, is problematic,
-    ///   but should only manifest if both the server and the client are behaving badly.
-    fn parse_host_header_uri(
-        &self,
-        headers: &HeaderMap,
-        uri: &hyper::Uri,
-        default_host: &str,
-    ) -> (String, String) {
-        let host_header = headers.get(HOST).and_then(|v| match v.to_str() {
-            Err(_) => None,
-            Ok(s) => Some(s.to_owned()),
-        });
-
-        let mut host = uri
-            .host()
-            .map(|h| h.to_string())
-            .unwrap_or_else(|| "localhost".to_owned());
-        let mut port = uri.port_u16().unwrap_or(80).to_string();
-
-        let mut parse_host = |hdr: String| {
-            let mut parts = hdr.splitn(2, ':');
-            match parts.next() {
-                Some(h) if !h.is_empty() => host = h.to_owned(),
-                _ => {}
-            }
-            match parts.next() {
-                Some(p) if !p.is_empty() => {
-                    debug!(port = p, "Overriding port");
-                    port = p.to_owned()
-                }
-                _ => {}
-            }
-        };
-
-        // Override with local host field if set.
-        if !default_host.is_empty() {
-            parse_host(default_host.to_owned());
-        }
-
-        // Finally, the value of the HOST header is considered authoritative.
-        // When it comes to port number, the HOST header isn't necessarily 100% trustworthy.
-        // But it appears that this is still the best behavior for the CGI spec.
-        if let Some(hdr) = host_header {
-            parse_host(hdr);
-        }
-
-        (host, port)
     }
 
     /// Resolve a relative path from the end of the matched path to the end of the string.
@@ -860,10 +797,8 @@ mod test {
     use super::{url_to_oci, Module};
     use crate::ModuleConfig;
 
-    use hyper::http::request::Request;
     use std::io::Write;
     use std::path::PathBuf;
-    use std::str::FromStr;
     use tempfile::NamedTempFile;
     use wasi_cap_std_sync::WasiCtxBuilder;
     use wasmtime::Engine;
