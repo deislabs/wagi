@@ -178,6 +178,7 @@ impl RouterBuilder {
         base_path: impl AsRef<Path>,
     ) -> anyhow::Result<Router> {
         tracing::info!(%name, "Loading standalone bindle");
+        let fake_server = base_path.as_ref().to_path_buf();
         let reader = StandaloneRead::new(base_path, name).await?;
 
         let data = tokio::fs::read(&reader.invoice_file).await?;
@@ -185,7 +186,7 @@ impl RouterBuilder {
 
         let cache_dir = self.module_cache_dir.join("_ASSETS");
         let mut mods =
-            runtime::bindle::standalone_invoice_to_modules(&invoice, reader.parcel_dir, cache_dir)
+            runtime::bindle::standalone_invoice_to_modules(&fake_server.to_string_lossy() /* TODO <-- */, &invoice, reader.parcel_dir, cache_dir)
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)

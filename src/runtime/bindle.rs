@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
 use indexmap::IndexSet;
@@ -9,7 +6,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::{runtime::Module, ModuleConfig};
+use crate::{ModuleConfig, dispatcher::{RouteHandler, RoutePattern, RoutingTableEntry, WasmRouteHandler}, runtime::Module, wasm_module::WasmModuleSource};
 use crate::bindle_util::{top_modules, WASM_MEDIA_TYPE};
 
 pub(crate) fn bindle_cache_key(uri: &Url) -> String {
@@ -253,7 +250,7 @@ pub(crate) async fn bindle_to_modules(
     let bindler = Client::new(server_url)?;
     let invoice = bindler.get_invoice(name).await?;
 
-    invoice_to_modules(&invoice, server_url, asset_cache).await
+    invoice_to_modules(server_url, &invoice, server_url, asset_cache).await
 }
 
 /// Convenience function for generating an internal Parcel URL.
@@ -272,6 +269,7 @@ fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
 
 /// Given a bindle's invoice and parcel directory, build a module configuration.
 pub async fn standalone_invoice_to_modules(
+    server_uri: &str,
     invoice: &Invoice,
     parcel_dir: PathBuf,
     asset_cache: PathBuf,
@@ -288,7 +286,12 @@ pub async fn standalone_invoice_to_modules(
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
-        let mut def = wagi_features(&invoice.bindle.id, &parcel);
+        let mpath = parcel_dir
+            .join(format!("{}.dat", parcel.label.sha256))
+            .to_string_lossy()
+            .to_string();
+        let parcel_bytes = tokio::fs::read(mpath).await?;
+        let mut def = wagi_features(&invoice.bindle.id, &parcel, parcel_bytes);
 
         def.module = parcel_dir
             .join(format!("{}.dat", parcel.label.sha256))
@@ -359,6 +362,7 @@ pub async fn standalone_invoice_to_modules(
 }
 /// Given a bindle's invoice, build a module configuration.
 pub async fn invoice_to_modules(
+    server_uri: &str,
     invoice: &Invoice,
     bindle_server: &str,
     asset_cache: PathBuf,
@@ -375,7 +379,9 @@ pub async fn invoice_to_modules(
 
     for parcel in top {
         // Create a basic module definition from the features section on this parcel.
-        let mut def = wagi_features(&invoice.bindle.id, &parcel);
+        let bindler_temp  = Client::new(bindle_server)?;
+        let parcel_bytes = bindler_temp.get_parcel(&invoice.bindle.id, &parcel.label.sha256).await?;
+        let mut def = wagi_features(&invoice.bindle.id, &parcel, parcel_bytes);
 
         // FIXME: This should get refactored out. Right now, every module needs its own
         // reference to a bindle server. This is because in the older modules.toml
@@ -452,7 +458,7 @@ pub async fn invoice_to_modules(
 }
 
 #[allow(clippy::map_clone)]
-fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
+fn wagi_features(inv_id: &Id, parcel: &Parcel, parcel_bytes: Vec<u8>) -> Module {
     let label = parcel.label.clone();
     let module = parcel_url(inv_id, label.sha256);
     let all_features = label.feature.unwrap_or_default();
@@ -471,6 +477,17 @@ fn wagi_features(inv_id: &Id, parcel: &Parcel) -> Module {
         .map(|ah| ah.split(',').map(|v| v.to_owned()).collect())
         .or_else(|| Some(vec![]));
     Module {
+        rte: RoutingTableEntry {
+            route_pattern: RoutePattern::parse(&route),
+            handler_info: RouteHandler::Wasm(WasmRouteHandler {
+                wasm_module_source: WasmModuleSource::Blob(Arc::new(parcel_bytes)),
+                entrypoint: entrypoint.clone().unwrap_or_else(|| "_start".to_owned()),
+                volumes: HashMap::new(),
+                allowed_hosts: allowed_hosts.clone(),
+                http_max_concurrency: None,
+            }),
+            handler_name: "TODO TODO TODO".to_owned(),
+        },
         module,
         entrypoint,
         bindle_server,

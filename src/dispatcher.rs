@@ -28,11 +28,18 @@ pub struct RoutingTable {
     pub entries: Vec<RoutingTableEntry>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RoutingTableEntry {
     pub route_pattern: RoutePattern,
     pub handler_info: RouteHandler,
     pub handler_name: String,
+}
+
+// TODO: TEMPORARY FOR SERDE
+impl Default for RoutingTableEntry {
+    fn default() -> Self {
+        Self { route_pattern: RoutePattern::parse("/..."), handler_info: RouteHandler::HealthCheck, handler_name: "fake".to_owned() }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -41,13 +48,13 @@ pub enum RoutePattern {
     Prefix(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RouteHandler {
     HealthCheck,
     Wasm(WasmRouteHandler),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WasmRouteHandler {
     pub wasm_module_source: WasmModuleSource,
     pub entrypoint: String,
@@ -145,6 +152,23 @@ impl RoutingTableEntry {
         let mut hasher = Sha256::new();
         hasher.update(&self.route_pattern.original_text());
         format!("{:x}", hasher.finalize())
+    }
+    // TODO: I don't think this rightly belongs here. But
+    // reasonable place to at least understand the decomposition and
+    // dependencies.
+    pub fn handle_request(
+        &self,
+        routing_info: &RoutingTableEntry,
+        req: &Parts,
+        body: Vec<u8>,
+        request_context: &RequestContext,
+        route_context: &RequestRouteContext,
+        global_context: &RequestGlobalContext,
+    ) -> Result<Response<Body>, anyhow::Error> {
+        match &self.handler_info {
+            RouteHandler::HealthCheck => Ok(Response::new(Body::from("OK"))),
+            RouteHandler::Wasm(w) => w.handle_request(routing_info, req, body, request_context, route_context, global_context)
+        }
     }
 }
 
@@ -292,7 +316,7 @@ impl WasmRouteHandler {
 }
 
 impl RoutePattern {
-    fn parse(path_text: &str) -> Self {
+    pub fn parse(path_text: &str) -> Self {
         match path_text.strip_suffix("/...") {
             Some(prefix) => Self::Prefix(prefix.to_owned()),
             None => Self::Exact(path_text.to_owned())

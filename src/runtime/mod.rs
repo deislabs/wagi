@@ -30,8 +30,10 @@ use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
+use crate::dispatcher::{RouteHandler, RoutePattern, RoutingTableEntry, WasmRouteHandler};
 use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 use crate::version::*;
+use crate::wasm_module::WasmModuleSource;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
 
 pub mod bindle;
@@ -79,6 +81,9 @@ impl Handler {
 /// Description of a single WAGI module
 #[derive(Clone, Debug, Deserialize)]
 pub struct Module {
+    #[serde(skip)]
+    rte: RoutingTableEntry,
+
     /// The route, begining with a leading slash.
     ///
     /// The suffix "/..." means "this route and all sub-paths". For example, the route
@@ -132,7 +137,20 @@ impl Eq for Module {}
 
 impl Module {
     pub fn new(route: String, module_uri: String) -> Self {
+        // TODO: OH GOSH NO
+        let parcel_bytes = Arc::new(std::fs::read(&module_uri).unwrap());
         Module {
+            rte: RoutingTableEntry {
+                route_pattern: RoutePattern::parse(&route),
+                handler_info: RouteHandler::Wasm(WasmRouteHandler {
+                    wasm_module_source: WasmModuleSource::Blob(parcel_bytes),
+                    entrypoint: "_start".to_owned(),
+                    volumes: HashMap::new(),
+                    allowed_hosts: None,
+                    http_max_concurrency: None,
+                }),
+                handler_name: "TODO TODO TODO".to_owned(),
+            },
             route,
             module: module_uri,
             volumes: None,
@@ -164,20 +182,22 @@ impl Module {
             .await
             .unwrap_or_default()
             .to_vec();
-        let me = self.clone();
-        let res = match tokio::task::spawn_blocking(move ||
-                me.run_wasm(&parts, data, &request_context, &route_context, &global_context)
-        ).await {
-            Ok(res) => res,
-            Err(e) if e.is_panic() => {
-                tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
-                return internal_error("Module run error");
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
-                return internal_error("module run was cancelled");
-            }
-        };
+        let res = self.rte.handle_request(&self.rte, &parts, data, &request_context, &route_context, &global_context);
+
+        // let me = self.clone();
+        // let res = match tokio::task::spawn_blocking(move ||
+        //         me.run_wasm(&parts, data, &request_context, &route_context, &global_context)
+        // ).await {
+        //     Ok(res) => res,
+        //     Err(e) if e.is_panic() => {
+        //         tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
+        //         return internal_error("Module run error");
+        //     }
+        //     Err(e) => {
+        //         tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
+        //         return internal_error("module run was cancelled");
+        //     }
+        // };
         match res {
             Ok(res) => res,
             Err(e) => {

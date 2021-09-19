@@ -6,15 +6,24 @@ use wasmtime_wasi::*;
 
 // In future this might be pre-instantiated or something like that, so we will
 // just abstract it to be safe.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum WasmModuleSource {
     Blob(Arc<Vec<u8>>),
+    // // TODO: TEMPORARY BRIDGE
+    // ParcelRef(String, bindle::Id, bindle::Parcel),
+    // ModuleRef(String),
 }
 
 impl WasmModuleSource {
     pub fn load_module(&self, store: &Store<WasiCtx>) -> anyhow::Result<wasmtime::Module> {
         match self {
             Self::Blob(bytes) => wasmtime::Module::new(store.engine(), &**bytes),
+            // Self::ParcelRef(server_uri, invoice_id, parcel) => {
+            //     let c = bindle::client::Client::new(server_uri)?;
+            //     let pbytes = c.get_parcel(invoice_id, &parcel.label.sha256).await?;
+            //     wasmtime::Module::new(store.engine(), pbytes)
+            // },
+            // Self::ModuleRef(module_uri) => wasmtime::Module::from_file(store.engine(), module_uri),
         }
     }
 }
