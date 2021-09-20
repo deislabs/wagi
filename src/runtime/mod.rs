@@ -9,6 +9,8 @@ use std::{
 };
 
 use cap_std::fs::Dir;
+use docker_credential;
+use docker_credential::DockerCredential;
 use hyper::HeaderMap;
 use hyper::{
     header::HOST,
@@ -27,8 +29,6 @@ use wasi_cap_std_sync::WasiCtxBuilder;
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
-use docker_credential;
-use docker_credential::DockerCredential;
 
 use crate::version::*;
 use crate::{http_util::*, runtime::bindle::bindle_cache_key};
@@ -243,14 +243,13 @@ impl Module {
         std::fs::create_dir_all(&log_dir)?;
         // Open a file for appending. Right now this will just keep appending as there is no log
         // rotation or cleanup
-        let stderr = unsafe {
-            cap_std::fs::File::from_std(
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(log_dir.join(STDERR_FILE))?,
-            )
-        };
+        let stderr = cap_std::fs::File::from_std(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(log_dir.join(STDERR_FILE))?,
+            ambient_authority(),
+        );
         let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
         let stdout_buf: Vec<u8> = vec![];
@@ -569,14 +568,13 @@ impl Module {
         std::fs::create_dir_all(&log_dir)?;
         // Open a file for appending. Right now this will just keep appending as there is no log
         // rotation or cleanup
-        let stderr = unsafe {
-            cap_std::fs::File::from_std(
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(log_dir.join(STDERR_FILE))?,
-            )
-        };
+        let stderr = cap_std::fs::File::from_std(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(log_dir.join(STDERR_FILE))?,
+            ambient_authority(),
+        );
         let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
         // The spec does not say what to do with STDERR.
         // See specifically sections 4.2 and 6.1 of RFC 3875.
@@ -605,7 +603,7 @@ impl Module {
             for (guest, host) in dirs.iter() {
                 debug!(%host, %guest, "Mapping volume from host to guest");
                 // Try to open the dir or log an error.
-                match unsafe { Dir::open_ambient_dir(host) } {
+                match Dir::open_ambient_dir(host, ambient_authority()) {
                     Ok(dir) => {
                         builder = builder.preopened_dir(dir, guest)?;
                     }
@@ -885,11 +883,11 @@ impl Module {
         let mut oc = Client::new(config);
 
         let mut auth = RegistryAuth::Anonymous;
-        
-        if let Ok(credential ) = docker_credential::get_credential(uri.as_str()) {
-                if let DockerCredential::UsernamePassword(user_name, password) = credential {
-                    auth = RegistryAuth::Basic(user_name, password);
-                };
+
+        if let Ok(credential) = docker_credential::get_credential(uri.as_str()) {
+            if let DockerCredential::UsernamePassword(user_name, password) = credential {
+                auth = RegistryAuth::Basic(user_name, password);
+            };
         };
 
         let img = url_to_oci(uri).map_err(|e| {
