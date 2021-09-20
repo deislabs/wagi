@@ -214,7 +214,7 @@ pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
             tls: tls_config,
         },
         wasm_cache_config_file: std::path::PathBuf::from(cache_config_path),
-        remote_module_cache_dir: mc,
+        asset_cache_dir: mc,
         log_dir,
     };
 

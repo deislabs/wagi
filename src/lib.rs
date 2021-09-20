@@ -15,17 +15,18 @@ use serde::Deserialize;
 use tokio::sync::{RwLock};
 use tracing::instrument;
 
+pub(crate) mod asset_cache;
 pub(crate) mod bindle_util;
 pub mod dispatcher;
 pub(crate) mod header_util;
 mod http_util;
+pub (crate) mod loader;
 mod request;
 pub mod runtime;
 mod tls;
 pub mod version;
 pub mod wagi_config;
 pub mod wagi_server;
-pub (crate) mod loader;
 mod wasm_module;
 
 /// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
@@ -62,7 +63,7 @@ impl Router {
     pub async fn from_configuration(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
         let builder = RouterBuilder {
             cache_config_path: configuration.wasm_cache_config_file.clone(),
-            module_cache_dir: configuration.remote_module_cache_dir.clone(),
+            module_cache_dir: configuration.asset_cache_dir.clone(),
             base_log_dir: configuration.log_dir.clone(),
             default_host: configuration.http_configuration.default_hostname.clone(),
             global_env_vars: configuration.env_vars.clone(),

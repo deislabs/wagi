@@ -12,7 +12,7 @@ pub struct WagiConfiguration {
     pub env_vars: HashMap<String, String>,
     pub http_configuration: HttpConfiguration,
     pub wasm_cache_config_file: PathBuf,
-    pub remote_module_cache_dir: PathBuf,
+    pub asset_cache_dir: PathBuf,
     pub log_dir: PathBuf,
 }
 
