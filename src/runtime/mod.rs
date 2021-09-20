@@ -266,7 +266,7 @@ impl Module {
         wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
         let http = wasi_experimental_http_wasmtime::HttpCtx::new(None, None)?;
-        http.add_to_generic_linker(&mut linker)?;
+        http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, module_cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
@@ -622,7 +622,7 @@ impl Module {
             self.allowed_hosts.clone(),
             self.http_max_concurrency,
         )?;
-        http.add_to_generic_linker(&mut linker)?;
+        http.add_to_linker(&mut linker)?;
 
         let module = self.load_cached_module(&store, &info.module_cache_dir)?;
         let instance = linker.instantiate(&mut store, &module)?;
