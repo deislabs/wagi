@@ -1,42 +1,37 @@
 [package]
-name = "wagi"
+name    = "wagi"
 version = "0.3.0"
 authors = ["Matt Butcher <matt.butcher@microsoft.com>"]
 edition = "2018"
 
 [dependencies]
-hyper = {version = "0.14", features = ["full"]}
-tokio = { version = "1.1", features = ["full"] }
-futures = "0.3"
-anyhow = "1.0"
-toml = "0.5"
-serde = { version = "1.0", features = ["derive"] }
-wasmtime = "0.28"
-wasmtime-wasi = "0.28"
-wasmtime-cache = "0.28"
-wasi-common = "0.28"
-wasi-cap-std-sync = "0.28"
-cap-std = "0.13"
-wasi-experimental-http-wasmtime = "0.5"
-clap = "2.33.3"
-bindle = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
-url = "2.2"
-oci-distribution = "0.6"
-sha2 = "0.9"
-tempfile = "3.2"
-wat = "1.0.37"
-async-trait = "0.1"
-indexmap = { version = "^1.6.2", features = ["serde"] }
-async-stream = "0.3"
-# This re-exports rustls, so we don't need to import it separately
-tokio-rustls = "0.22"
-tracing-subscriber = "0.2"
-tracing = { version = "0.1", features = ["log"] }
-tracing-futures = "0.2"
-env-file-reader = "0.2"
-url-escape = "0.1"
-docker_credential = "1.0.1"
-
-[dev-dependencies]
-bindle = "0.3"
-url = "2.2"
+anyhow                          = "1.0"
+async-stream                    = "0.3"
+async-trait                     = "0.1"
+bindle                          = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
+cap-std                         = "0.19.1"
+clap                            = "2.33.3"
+docker_credential               = "1.0.1"
+env-file-reader                 = "0.2"
+futures                         = "0.3"
+hyper                           = { version = "0.14", features = ["full"] }
+indexmap                        = { version = "^1.6.2", features = ["serde"] }
+oci-distribution                = "0.6"
+serde                           = { version = "1.0", features = ["derive"] }
+sha2                            = "0.9"
+tokio                           = { version = "1.1", features = ["full"] }
+toml                            = "0.5"
+url                             = "2.2"
+tokio-rustls                    = "0.22"
+tempfile                        = "3.2"
+tracing-subscriber              = "0.2"
+tracing                         = { version = "0.1", features = ["log"] }
+tracing-futures                 = "0.2"
+url-escape                      = "0.1"
+wasi-common                     = "0.30"
+wasi-cap-std-sync               = "0.30"
+wasi-experimental-http-wasmtime = { git = "https://github.com/radu-matei/wasi-experimental-http", branch = "wasmtime-v030" }
+wasmtime                        = "0.30"
+wasmtime-wasi                   = "0.30"
+wasmtime-cache                  = "0.30"
+wat                             = "1.0.37"
