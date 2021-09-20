@@ -10,9 +10,6 @@ use std::{
 
 use docker_credential;
 use docker_credential::DockerCredential;
-use hyper::{
-    Body, Request, Response, StatusCode,
-};
 use oci_distribution::client::{Client, ClientConfig};
 use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
@@ -26,7 +23,6 @@ use wasmtime::*;
 use wasmtime_wasi::*;
 
 use crate::dispatcher::{RouteHandler, RoutePattern, RoutingTableEntry, WasmRouteHandler};
-use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 use crate::wasm_module::WasmModuleSource;
 use crate::{runtime::bindle::bindle_cache_key};
 
@@ -162,54 +158,53 @@ impl Module {
         }
     }
 
-    /// Execute the WASM module in a WAGI
-    ///
-    /// The given `base_log_dir` should be a directory where all module logs will be stored. When
-    /// executing a module, a subdirectory will be created in this directory with the ID (from the
-    /// [`id` method](Module::id)) for its name. The log will be placed in that directory at
-    /// `module.stderr`
-    #[allow(clippy::too_many_arguments)]
-    #[instrument(level = "trace", skip(self, req, request_context, route_context, global_context), fields(route = %self.route, module = %self.module))]
-    pub async fn execute(
-        &self,
-        req: Request<Body>,
-        request_context: RequestContext,
-        route_context: RequestRouteContext,
-        global_context: RequestGlobalContext,
-    ) -> Response<Body> {
-        // Read the parts in here
-        let (parts, body) = req.into_parts();
-        let data = hyper::body::to_bytes(body)
-            .await
-            .unwrap_or_default()
-            .to_vec();
-        let res = self.rte.handle_request(&self.rte, &parts, data, &request_context, &route_context, &global_context);
+    // /// Execute the WASM module in a WAGI
+    // ///
+    // /// The given `base_log_dir` should be a directory where all module logs will be stored. When
+    // /// executing a module, a subdirectory will be created in this directory with the ID (from the
+    // /// [`id` method](Module::id)) for its name. The log will be placed in that directory at
+    // /// `module.stderr`
+    // #[allow(clippy::too_many_arguments)]
+    // #[instrument(level = "trace", skip(self, req, request_context, global_context), fields(route = %self.route, module = %self.module))]
+    // pub async fn execute(
+    //     &self,
+    //     req: Request<Body>,
+    //     request_context: RequestContext,
+    //     global_context: RequestGlobalContext,
+    // ) -> Response<Body> {
+    //     // Read the parts in here
+    //     let (parts, body) = req.into_parts();
+    //     let data = hyper::body::to_bytes(body)
+    //         .await
+    //         .unwrap_or_default()
+    //         .to_vec();
+    //     self.rte.handle_request(&parts, data, &request_context, &global_context)
 
-        // let me = self.clone();
-        // let res = match tokio::task::spawn_blocking(move ||
-        //         me.run_wasm(&parts, data, &request_context, &route_context, &global_context)
-        // ).await {
-        //     Ok(res) => res,
-        //     Err(e) if e.is_panic() => {
-        //         tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
-        //         return internal_error("Module run error");
-        //     }
-        //     Err(e) => {
-        //         tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
-        //         return internal_error("module run was cancelled");
-        //     }
-        // };
-        match res {
-            Ok(res) => res,
-            Err(e) => {
-                tracing::error!(error = %e, "error running WASM module");
-                // A 500 error makes sense here
-                let mut srv_err = Response::default();
-                *srv_err.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                srv_err
-            }
-        }
-    }
+    //     // let me = self.clone();
+    //     // let res = match tokio::task::spawn_blocking(move ||
+    //     //         me.run_wasm(&parts, data, &request_context, &route_context, &global_context)
+    //     // ).await {
+    //     //     Ok(res) => res,
+    //     //     Err(e) if e.is_panic() => {
+    //     //         tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
+    //     //         return internal_error("Module run error");
+    //     //     }
+    //     //     Err(e) => {
+    //     //         tracing::error!(error = %e, "Recoverable panic on Wasm Runner thread");
+    //     //         return internal_error("module run was cancelled");
+    //     //     }
+    //     // };
+    //     // match res {
+    //     //     Ok(res) => res,
+    //     //     Err(e) => {
+    //     //         tracing::error!(error = %e, "error running WASM module");
+    //     //         // A 500 error makes sense here
+    //     //         let mut srv_err = Response::default();
+    //     //         *srv_err.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    //     //         srv_err
+    //     //     }
+    //     // }
+    // }
 
     /// Returns the unique ID of the module.
     ///

@@ -16,16 +16,16 @@ use wasmtime::*;
 use wasmtime_wasi::*;
 
 use crate::http_util::{internal_error, parse_cgi_headers};
+use crate::loader::Loaded;
 use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 
-use bindle::Invoice;
-
-use crate::bindle_util::InterestingParcel;
-use crate::wagi_config::{HandlerConfiguration, ModuleMapConfiguration, ModuleMapConfigurationEntry};
+use crate::bindle_util::{WagiHandlerInfo};
+use crate::wagi_config::{LoadedHandlerConfiguration, ModuleMapConfigurationEntry};
 use crate::wasm_module::WasmModuleSource;
 
 const STDERR_FILE: &str = "module.stderr";
 
+#[derive(Clone, Debug)]
 pub struct RoutingTable {
     pub entries: Vec<RoutingTableEntry>,
 }
@@ -81,7 +81,6 @@ impl RoutingTable {
 
 const DEFAULT_ENTRYPOINT: &str = "_start";
 
-const FAKE_WASM_FAKE_FAKE_FAKE: Vec<u8> = vec![];
 fn FAKE_VOLUMES_FAKE_FAKE_FAKE() -> HashMap<String, String> { HashMap::new() }
 
 impl RoutingTableEntry {
@@ -89,47 +88,45 @@ impl RoutingTableEntry {
         self.route_pattern.is_match(uri_fragment)
     }
 
-    fn build_from_modules_toml(source: &ModuleMapConfigurationEntry) -> anyhow::Result<RoutingTableEntry> {
-        let route_pattern = RoutePattern::parse(&source.route);
+    fn build_from_modules_toml(source: &Loaded<ModuleMapConfigurationEntry>) -> anyhow::Result<RoutingTableEntry> {
+        let route_pattern = RoutePattern::parse(&source.metadata.route);
         
-        let wasm_source = WasmModuleSource::Blob(Arc::new(FAKE_WASM_FAKE_FAKE_FAKE));
+        let wasm_source = WasmModuleSource::Blob(source.content.clone());
         let wasm_route_handler = WasmRouteHandler {
             wasm_module_source: wasm_source,
-            entrypoint: source.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
+            entrypoint: source.metadata.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
             volumes: FAKE_VOLUMES_FAKE_FAKE_FAKE(),  // TODO
-            allowed_hosts: source.allowed_hosts.clone(),
-            http_max_concurrency: source.http_max_concurrency,
+            allowed_hosts: source.metadata.allowed_hosts.clone(),
+            http_max_concurrency: source.metadata.http_max_concurrency,
         };
         let handler_info = RouteHandler::Wasm(wasm_route_handler);
 
         Ok(Self {
             route_pattern,
             handler_info,
-            handler_name: source.module.clone(),
+            handler_name: source.metadata.module.clone(),
         })
     }
 
-    fn build_from_parcel(source: &InterestingParcel) -> Option<anyhow::Result<RoutingTableEntry>> {
-        match source {
-            InterestingParcel::WagiHandler(wagi_handler) => {
-                let route_pattern = RoutePattern::parse(&wagi_handler.route);
-                let wasm_source = WasmModuleSource::Blob(Arc::new(FAKE_WASM_FAKE_FAKE_FAKE));
-                let wasm_route_handler = WasmRouteHandler {
-                    wasm_module_source: wasm_source,
-                    entrypoint: wagi_handler.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-                    volumes: FAKE_VOLUMES_FAKE_FAKE_FAKE(),  // TODO
-                    allowed_hosts: wagi_handler.allowed_hosts.clone(),
-                    http_max_concurrency: None,
-                };
-                let handler_info = RouteHandler::Wasm(wasm_route_handler);
+    fn build_from_parcel(source: &Loaded<WagiHandlerInfo>) -> Option<anyhow::Result<RoutingTableEntry>> {
+        let wagi_handler = &source.metadata;
 
-                Some(Ok(Self {
-                    route_pattern,
-                    handler_info,
-                    handler_name: source.parcel().label.name.clone(),
-                }))
-            },
-        }
+        let route_pattern = RoutePattern::parse(&wagi_handler.route);
+        let wasm_source = WasmModuleSource::Blob(source.content.clone());
+        let wasm_route_handler = WasmRouteHandler {
+            wasm_module_source: wasm_source,
+            entrypoint: wagi_handler.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
+            volumes: FAKE_VOLUMES_FAKE_FAKE_FAKE(),  // TODO
+            allowed_hosts: wagi_handler.allowed_hosts.clone(),
+            http_max_concurrency: None,
+        };
+        let handler_info = RouteHandler::Wasm(wasm_route_handler);
+
+        Some(Ok(Self {
+            route_pattern,
+            handler_info,
+            handler_name: wagi_handler.parcel.label.name.clone(),
+        }))
     }
 
     fn inbuilt(path: &str, handler: RouteHandler) -> Self {
@@ -160,16 +157,28 @@ impl RoutingTableEntry {
     // dependencies.
     pub fn handle_request(
         &self,
-        routing_info: &RoutingTableEntry,
         req: &Parts,
         body: Vec<u8>,
         request_context: &RequestContext,
-        route_context: &RequestRouteContext,
         global_context: &RequestGlobalContext,
-    ) -> Result<Response<Body>, anyhow::Error> {
+    ) -> Response<Body> {
         match &self.handler_info {
-            RouteHandler::HealthCheck => Ok(Response::new(Body::from("OK"))),
-            RouteHandler::Wasm(w) => w.handle_request(routing_info, req, body, request_context, route_context, global_context)
+            RouteHandler::HealthCheck => Response::new(Body::from("OK")),
+            RouteHandler::Wasm(w) => {
+                let route_context = RequestRouteContext { entrypoint: w.entrypoint.clone() };
+                let response = w.handle_request(&self, req, body, request_context, &route_context, global_context);
+                match response {
+                    Ok(res) => res,
+                    Err(e) => {
+                        tracing::error!(error = %e, "error running WASM module");
+                        // A 500 error makes sense here
+                        let mut srv_err = Response::default();
+                        *srv_err.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                        srv_err
+                    }
+                }
+        
+            }
         }
     }
 }
@@ -366,12 +375,12 @@ impl RoutePattern {
 }
 
 impl RoutingTable {
-    pub fn build(source: &HandlerConfiguration) -> anyhow::Result<RoutingTable> {
+    pub fn build(source: &LoadedHandlerConfiguration) -> anyhow::Result<RoutingTable> {
         let user_entries = match source {
-            HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
-                Self::build_from_modules_toml(module_map_configuration),
-            HandlerConfiguration::Bindle(invoice) =>
-                Self::build_from_bindle(invoice),
+            LoadedHandlerConfiguration::ModuleMapFile(module_map_entries) =>
+                Self::build_from_modules_toml(module_map_entries),
+            LoadedHandlerConfiguration::Bindle(parcels) =>
+                Self::build_from_parcels(parcels),
         }?;
         let built_in_entries = Self::inbuilt_patterns();
 
@@ -379,21 +388,19 @@ impl RoutingTable {
         Ok(Self { entries })
     }
 
-    fn build_from_modules_toml(module_map_configuration: &ModuleMapConfiguration) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    fn build_from_modules_toml(module_map_entries: &Vec<Loaded<ModuleMapConfigurationEntry>>) -> anyhow::Result<Vec<RoutingTableEntry>> {
         // TODO: look for `_routes` function
-        module_map_configuration.entries
+        module_map_entries
             .iter()
             .map(|e| RoutingTableEntry::build_from_modules_toml(e))
             .collect()
     }
 
-    fn build_from_bindle(invoice: &Invoice) -> anyhow::Result<Vec<RoutingTableEntry>> {
-        // TODO: this is duplication!  We should parse the invoice once into a structure of relevant stuff
-        let top = crate::bindle_util::top_modules(invoice);
-        let interesting_parcels = top.iter().filter_map(|p| crate::bindle_util::classify_parcel(p));
-
-        interesting_parcels
-            .filter_map(|p| RoutingTableEntry::build_from_parcel(&p)).collect()
+    fn build_from_parcels(parcels: &Vec<Loaded<WagiHandlerInfo>>) -> anyhow::Result<Vec<RoutingTableEntry>> {
+        parcels
+            .iter()
+            .filter_map(|p| RoutingTableEntry::build_from_parcel(&p))
+            .collect()
     }
 
     fn inbuilt_patterns() -> Vec<RoutingTableEntry> {

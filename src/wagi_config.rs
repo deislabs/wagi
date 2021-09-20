@@ -4,7 +4,7 @@ use std::{collections::HashMap, net::SocketAddr, path::{Path, PathBuf}};
 use bindle::{Invoice, standalone::StandaloneRead};
 use serde::Deserialize;
 
-use crate::bindle_util;
+use crate::{bindle_util::{self, InterestingParcel, WagiHandlerInfo}, loader::{Loaded}};
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {
@@ -61,6 +61,11 @@ pub enum HandlerConfiguration {
     Bindle(Invoice),
 }
 
+pub enum LoadedHandlerConfiguration {
+    ModuleMapFile(Vec<Loaded<ModuleMapConfigurationEntry>>),
+    Bindle(Vec<Loaded<WagiHandlerInfo>>),
+}
+
 impl WagiConfiguration {
     // TODO: we might need to do some renaming here to reflect that the source
     // may include non-handler roles in future
@@ -73,6 +78,18 @@ impl WagiConfiguration {
             HandlerConfigurationSource::RemoteBindle(server_url, bindle_id) =>
                 read_remote_bindle_invoice(server_url, bindle_id).await.map(HandlerConfiguration::Bindle),
         }
+    }
+
+    pub async fn load_handler_configuration(&self) -> anyhow::Result<LoadedHandlerConfiguration> {
+        let handler_configuration_metadata = self.read_handler_configuration().await?;
+
+        match handler_configuration_metadata {
+            HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
+                handlers_for_module_map(&module_map_configuration, self).await,
+            HandlerConfiguration::Bindle(invoice) =>
+                handlers_for_bindle(&invoice, self).await,
+        }
+        
     }
 }
 
@@ -173,6 +190,48 @@ fn parse_module_ref(module: &ModuleMapConfigurationEntry) -> anyhow::Result<Requ
             s => Err(anyhow::anyhow!("Unknown scheme {} in module reference {}", s, module_ref)),
         }
     }
+}
+
+async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+    let loaders = module_map
+        .entries
+        .iter()
+        .map(|e| handler_for_module_map_entry(e, configuration));
+
+    let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
+    
+    loadeds.map(|entries| LoadedHandlerConfiguration::ModuleMapFile(entries))
+}
+
+async fn handlers_for_bindle(invoice: &bindle::Invoice, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+    let top = crate::bindle_util::top_modules(invoice);
+    tracing::debug!(
+        default_modules = top.len(),
+        "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
+    );
+
+    let interesting_parcels = top.iter().filter_map(|p| crate::bindle_util::classify_parcel(p));
+
+    let loaders = interesting_parcels.filter_map(|p|
+        match p {
+            InterestingParcel::WagiHandler(wagi_handler) => Some(handler_for_parcel(&invoice.bindle.id, wagi_handler.clone(), configuration)),
+        }
+    );
+    let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
+
+    loadeds.map(|parcels| LoadedHandlerConfiguration::Bindle(parcels))
+}
+
+async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
+    crate::loader::load_from_module_map_entry(module_map_entry, configuration)
+        .await
+        .map(|v| Loaded::new(module_map_entry, v))
+}
+
+async fn handler_for_parcel(invoice_id: &bindle::Id, handler_info: WagiHandlerInfo, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<WagiHandlerInfo>> {
+    crate::loader::load_from_bindle(invoice_id, &handler_info.parcel, configuration)
+        .await
+        .map(|v| Loaded::new(&handler_info, v))
 }
 
 fn required_blobs_for_bindle(invoice: &bindle::Invoice) -> anyhow::Result<Vec<RequiredBlob>> {

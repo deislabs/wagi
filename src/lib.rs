@@ -1,7 +1,8 @@
 use crate::http_util::*;
-use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
+use crate::request::{RequestContext, RequestGlobalContext};
 use crate::runtime::*;
-use wagi_config::{HandlerConfigurationSource, WagiConfiguration};
+use dispatcher::RoutingTable;
+use wagi_config::{HandlerConfigurationSource, LoadedHandlerConfiguration, WagiConfiguration};
 
 use indexmap::IndexSet;
 use std::collections::HashMap;
@@ -27,6 +28,7 @@ mod tls;
 pub mod version;
 pub mod wagi_config;
 pub mod wagi_server;
+pub (crate) mod loader;
 mod wasm_module;
 
 /// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
@@ -37,6 +39,7 @@ pub const DEFAULT_HOST: &str = "localhost:3000";
 /// The only way to construct a router is with the [`RouterBuilder`](crate::RouterBuilder)
 pub struct Router {
     module_store: ModuleStore,
+    routing_table: RoutingTable,
     base_log_dir: PathBuf,
     cache_config_path: PathBuf,
     module_cache: PathBuf,
@@ -69,13 +72,16 @@ impl Router {
             use_tls: configuration.http_configuration.tls.is_some(),
         };
 
+        // let handler_configuration = configuration.read_handler_configuration().await?;
+        let handler_configuration = configuration.load_handler_configuration().await?;
+
         let router = match &configuration.handlers {
             HandlerConfigurationSource::StandaloneBindle(bindle_dir, bindle_id) =>
-                builder.build_from_standalone_bindle(&bindle_id, bindle_dir).await?,
+                builder.build_from_standalone_bindle(&bindle_id, bindle_dir, &handler_configuration).await?,
             HandlerConfigurationSource::RemoteBindle(bindle_server_url, bindle_id) =>
-                builder.build_from_bindle(&bindle_id, &bindle_server_url.to_string()).await?,
+                builder.build_from_bindle(&bindle_id, &bindle_server_url.to_string(), &handler_configuration).await?,
             HandlerConfigurationSource::ModuleConfigFile(module_config_path) =>
-                builder.build_from_modules_toml(&module_config_path).await?,
+                builder.build_from_modules_toml(&module_config_path, &handler_configuration).await?,
         };
     
         Ok(router)
@@ -100,35 +106,62 @@ impl Router {
 
         tracing::trace!("Processing request");
 
-        let uri_path = req.uri().path();
-        match uri_path {
-            "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.module_store.handler_for_path(uri_path).await {
-                Ok(h) => {
-                    let request_context = RequestContext {
-                        client_addr,
-                    };
-                    let route_context = RequestRouteContext {
-                        entrypoint: h.entrypoint,
-                    };
-                    let global_context = RequestGlobalContext {
-                        cache_config_path: self.cache_config_path.clone(),
-                        module_cache_dir: self.module_cache.clone(),
-                        base_log_dir: self.base_log_dir.clone(),
-                        default_host: self.default_host.to_owned(),
-                        use_tls: self.use_tls,
-                        global_env_vars: self.global_env_vars.clone(),
-                    };
+        let uri_path = req.uri().path().to_owned();
 
-                    let res = h.module.execute(req, request_context, route_context, global_context).await;
-                    Ok(res)
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "error when routing");
-                    Ok(not_found())
-                }
+        let (parts, body) = req.into_parts();
+        let data = hyper::body::to_bytes(body)
+            .await
+            .unwrap_or_default()
+            .to_vec();
+
+        match self.routing_table.route_for(&uri_path) {
+            Ok(rte) => {
+                let request_context = RequestContext {
+                    client_addr,
+                };
+                let global_context = RequestGlobalContext {
+                    cache_config_path: self.cache_config_path.clone(),
+                    module_cache_dir: self.module_cache.clone(),
+                    base_log_dir: self.base_log_dir.clone(),
+                    default_host: self.default_host.to_owned(),
+                    use_tls: self.use_tls,
+                    global_env_vars: self.global_env_vars.clone(),
+                };
+                let response = rte.handle_request(&parts, data, &request_context, &global_context);
+                Ok(response)
             },
+            Err(_) => Ok(not_found()),
         }
+
+        // let uri_path = req.uri().path();
+        // match uri_path {
+        //     "/healthz" => Ok(Response::new(Body::from("OK"))),
+        //     _ => match self.module_store.handler_for_path(uri_path).await {
+        //         Ok(h) => {
+        //             let request_context = RequestContext {
+        //                 client_addr,
+        //             };
+        //             let route_context = RequestRouteContext {
+        //                 entrypoint: h.entrypoint,
+        //             };
+        //             let global_context = RequestGlobalContext {
+        //                 cache_config_path: self.cache_config_path.clone(),
+        //                 module_cache_dir: self.module_cache.clone(),
+        //                 base_log_dir: self.base_log_dir.clone(),
+        //                 default_host: self.default_host.to_owned(),
+        //                 use_tls: self.use_tls,
+        //                 global_env_vars: self.global_env_vars.clone(),
+        //             };
+
+        //             let res = h.module.execute(req, request_context, route_context, global_context).await;
+        //             Ok(res)
+        //         }
+        //         Err(e) => {
+        //             tracing::error!(error = %e, "error when routing");
+        //             Ok(not_found())
+        //         }
+        //     },
+        // }
     }
 }
 
@@ -144,7 +177,7 @@ pub struct RouterBuilder {
 
 impl RouterBuilder {
     /// Build the router, loading the config from a toml file at the given path
-    pub async fn build_from_modules_toml(self, path: impl AsRef<Path>) -> anyhow::Result<Router> {
+    pub async fn build_from_modules_toml(self, path: impl AsRef<Path>, handler_configuration: &LoadedHandlerConfiguration) -> anyhow::Result<Router> {
         if !tokio::fs::metadata(&path)
             .await
             .map(|m| m.is_file())
@@ -167,7 +200,9 @@ impl RouterBuilder {
             )
             .await?;
 
-        Ok(self.build(modules))
+        let routing_table = RoutingTable::build(handler_configuration)?;
+
+        Ok(self.build(modules, routing_table))
     }
 
     /// Build the router, loading the config from a bindle with the given name from a standalone
@@ -176,6 +211,7 @@ impl RouterBuilder {
         self,
         name: &::bindle::Id,
         base_path: impl AsRef<Path>,
+        handler_configuration: &LoadedHandlerConfiguration,
     ) -> anyhow::Result<Router> {
         tracing::info!(%name, "Loading standalone bindle");
         let fake_server = base_path.as_ref().to_path_buf();
@@ -199,7 +235,9 @@ impl RouterBuilder {
         )
         .await?;
 
-        Ok(self.build(mods))
+        let routing_table = RoutingTable::build(handler_configuration)?;
+
+        Ok(self.build(mods, routing_table))
     }
 
     /// Build the router, loading the config from a bindle with the given name fetched from the
@@ -208,6 +246,7 @@ impl RouterBuilder {
         self,
         name: &::bindle::Id,
         bindle_server: &str,
+        handler_configuration: &LoadedHandlerConfiguration,
     ) -> anyhow::Result<Router> {
         tracing::info!(%name, "Loading bindle");
         let cache_dir = self.module_cache_dir.join("_ASSETS");
@@ -224,13 +263,16 @@ impl RouterBuilder {
         )
         .await?;
 
-        Ok(self.build(mods))
+        let routing_table = RoutingTable::build(handler_configuration)?;
+
+        Ok(self.build(mods, routing_table))
     }
 
-    fn build(self, config: ModuleConfig) -> Router {
+    fn build(self, config: ModuleConfig, routing_table: RoutingTable) -> Router {
         let module_store = ModuleStore::new(config);
         Router {
             module_store,
+            routing_table,
             base_log_dir: self.base_log_dir,
             cache_config_path: self.cache_config_path,
             module_cache: self.module_cache_dir,

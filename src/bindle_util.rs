@@ -27,6 +27,7 @@ pub enum InterestingParcel {
     WagiHandler(WagiHandlerInfo),
 }
 
+#[derive(Clone)]
 pub struct WagiHandlerInfo {
     pub parcel: Parcel,
     pub route: String,
