@@ -1,12 +1,10 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
+use std::{path::{Path, PathBuf}};
 
 use bindle::{client::Client, Id, Invoice, Parcel};
-use indexmap::IndexSet;
 use sha2::{Digest, Sha256};
-use tracing::{debug, instrument, trace, warn};
+use tracing::{instrument, trace, warn};
 use url::Url;
 
-use crate::{ModuleConfig, dispatcher::{RouteHandler, RoutePattern, RoutingTableEntry, WasmRouteHandler}, runtime::Module, wasm_module::WasmModuleSource};
 use crate::bindle_util::{top_modules, WASM_MEDIA_TYPE};
 
 pub(crate) fn bindle_cache_key(uri: &Url) -> String {
@@ -241,18 +239,7 @@ pub async fn cache_parcel_asset(
     Ok(dest)
 }
 
-/// Fetch a bindle and convert it to a module configuration.
-pub(crate) async fn bindle_to_modules(
-    name: &Id,
-    server_url: &str,
-    asset_cache: PathBuf,
-) -> anyhow::Result<ModuleConfig> {
-    let bindler = Client::new(server_url)?;
-    let invoice = bindler.get_invoice(name).await?;
-
-    invoice_to_modules(server_url, &invoice, server_url, asset_cache).await
-}
-
+// TODO: this potentially relates to `bindle:` URIs in module refs?
 /// Convenience function for generating an internal Parcel URL.
 ///
 /// Internally, a parcel URL is represented as `parcel:$NAME/$VERSION#$PARCEL_SHA`
@@ -267,6 +254,8 @@ fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
     )
 }
 
+// TODO: need bring dependency groups code across
+/*
 /// Given a bindle's invoice and parcel directory, build a module configuration.
 pub async fn standalone_invoice_to_modules(
     server_uri: &str,
@@ -456,48 +445,9 @@ pub async fn invoice_to_modules(
 
     Ok(mc)
 }
+*/
 
-#[allow(clippy::map_clone)]
-fn wagi_features(inv_id: &Id, parcel: &Parcel, parcel_bytes: Vec<u8>) -> Module {
-    let label = parcel.label.clone();
-    let module = parcel_url(inv_id, label.sha256);
-    let all_features = label.feature.unwrap_or_default();
-    let features = all_features
-        .get("wagi")
-        .map(|f| f.clone())
-        .unwrap_or_default();
-    let entrypoint = features.get("entrypoint").map(|s| s.clone());
-    let bindle_server = features.get("bindle_server").map(|s| s.clone());
-    let route = features
-        .get("route")
-        .map(|s| s.clone())
-        .unwrap_or_else(|| "/".to_owned());
-    let allowed_hosts = features
-        .get("allowed_hosts")
-        .map(|ah| ah.split(',').map(|v| v.to_owned()).collect())
-        .or_else(|| Some(vec![]));
-    Module {
-        rte: RoutingTableEntry {
-            route_pattern: RoutePattern::parse(&route),
-            handler_info: RouteHandler::Wasm(WasmRouteHandler {
-                wasm_module_source: WasmModuleSource::Blob(Arc::new(parcel_bytes)),
-                entrypoint: entrypoint.clone().unwrap_or_else(|| "_start".to_owned()),
-                volumes: HashMap::new(),
-                allowed_hosts: allowed_hosts.clone(),
-                http_max_concurrency: None,
-            }),
-            handler_name: "TODO TODO TODO".to_owned(),
-        },
-        module,
-        entrypoint,
-        bindle_server,
-        route,
-        allowed_hosts,
-        volumes: None,
-        http_max_concurrency: None,
-    }
-}
-
+// TODO: replace these functions.  (Currently used by tests.)
 fn group_members(invoice: &Invoice, name: &str) -> Vec<Parcel> {
     invoice
         .parcel

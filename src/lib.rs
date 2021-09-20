@@ -15,9 +15,6 @@ use serde::Deserialize;
 use tokio::sync::{RwLock};
 use tracing::instrument;
 
-use ::bindle::standalone::StandaloneRead;
-use ::bindle::Invoice;
-
 pub(crate) mod bindle_util;
 pub mod dispatcher;
 pub(crate) mod header_util;
@@ -38,7 +35,7 @@ pub const DEFAULT_HOST: &str = "localhost:3000";
 /// A router is responsible for taking an inbound request and sending it to the appropriate handler.
 /// The only way to construct a router is with the [`RouterBuilder`](crate::RouterBuilder)
 pub struct Router {
-    module_store: ModuleStore,
+    // module_store: ModuleStore,
     routing_table: RoutingTable,
     base_log_dir: PathBuf,
     cache_config_path: PathBuf,
@@ -72,14 +69,15 @@ impl Router {
             use_tls: configuration.http_configuration.tls.is_some(),
         };
 
-        // let handler_configuration = configuration.read_handler_configuration().await?;
+        // TODO: this is now inelegant: doing a full handler load should obviate
+        // the need to re-match the HandlerConfigurationSource
         let handler_configuration = configuration.load_handler_configuration().await?;
 
         let router = match &configuration.handlers {
-            HandlerConfigurationSource::StandaloneBindle(bindle_dir, bindle_id) =>
-                builder.build_from_standalone_bindle(&bindle_id, bindle_dir, &handler_configuration).await?,
-            HandlerConfigurationSource::RemoteBindle(bindle_server_url, bindle_id) =>
-                builder.build_from_bindle(&bindle_id, &bindle_server_url.to_string(), &handler_configuration).await?,
+            HandlerConfigurationSource::StandaloneBindle(_, bindle_id) =>
+                builder.build_from_standalone_bindle(&bindle_id, &handler_configuration).await?,
+            HandlerConfigurationSource::RemoteBindle(_, bindle_id) =>
+                builder.build_from_bindle(&bindle_id, &handler_configuration).await?,
             HandlerConfigurationSource::ModuleConfigFile(module_config_path) =>
                 builder.build_from_modules_toml(&module_config_path, &handler_configuration).await?,
         };
@@ -189,20 +187,9 @@ impl RouterBuilder {
             ));
         }
 
-        let data = std::fs::read(path)?;
-        let mut modules: ModuleConfig = toml::from_slice(&data)?;
-
-        modules
-            .build_registry(
-                &self.cache_config_path,
-                &self.module_cache_dir,
-                &self.base_log_dir,
-            )
-            .await?;
-
         let routing_table = RoutingTable::build(handler_configuration)?;
 
-        Ok(self.build(modules, routing_table))
+        Ok(self.build(routing_table))
     }
 
     /// Build the router, loading the config from a bindle with the given name from a standalone
@@ -210,34 +197,15 @@ impl RouterBuilder {
     pub async fn build_from_standalone_bindle(
         self,
         name: &::bindle::Id,
-        base_path: impl AsRef<Path>,
         handler_configuration: &LoadedHandlerConfiguration,
     ) -> anyhow::Result<Router> {
         tracing::info!(%name, "Loading standalone bindle");
-        let fake_server = base_path.as_ref().to_path_buf();
-        let reader = StandaloneRead::new(base_path, name).await?;
 
-        let data = tokio::fs::read(&reader.invoice_file).await?;
-        let invoice: Invoice = toml::from_slice(&data)?;
-
-        let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods =
-            runtime::bindle::standalone_invoice_to_modules(&fake_server.to_string_lossy() /* TODO <-- */, &invoice, reader.parcel_dir, cache_dir)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
-                })?;
-
-        mods.build_registry(
-            &self.cache_config_path,
-            &self.module_cache_dir,
-            &self.base_log_dir,
-        )
-        .await?;
+        // let cache_dir = self.module_cache_dir.join("_ASSETS");
 
         let routing_table = RoutingTable::build(handler_configuration)?;
 
-        Ok(self.build(mods, routing_table))
+        Ok(self.build(routing_table))
     }
 
     /// Build the router, loading the config from a bindle with the given name fetched from the
@@ -245,33 +213,20 @@ impl RouterBuilder {
     pub async fn build_from_bindle(
         self,
         name: &::bindle::Id,
-        bindle_server: &str,
         handler_configuration: &LoadedHandlerConfiguration,
     ) -> anyhow::Result<Router> {
         tracing::info!(%name, "Loading bindle");
-        let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
-            })?;
-
-        mods.build_registry(
-            &self.cache_config_path,
-            &self.module_cache_dir,
-            &self.base_log_dir,
-        )
-        .await?;
+        // let cache_dir = self.module_cache_dir.join("_ASSETS");
 
         let routing_table = RoutingTable::build(handler_configuration)?;
 
-        Ok(self.build(mods, routing_table))
+        Ok(self.build(routing_table))
     }
 
-    fn build(self, config: ModuleConfig, routing_table: RoutingTable) -> Router {
-        let module_store = ModuleStore::new(config);
+    fn build(self, routing_table: RoutingTable) -> Router {
+        // let module_store = ModuleStore::new(config);
         Router {
-            module_store,
+            // module_store,
             routing_table,
             base_log_dir: self.base_log_dir,
             cache_config_path: self.cache_config_path,
@@ -289,21 +244,21 @@ struct ModuleStore {
     // notify: Arc<Notify>,
 }
 
-impl ModuleStore {
-    fn new(config: ModuleConfig) -> Self {
-        ModuleStore {
-            module_config: Arc::new(RwLock::new(config)),
-            // notify: Arc::new(Notify::new()),
-        }
-    }
+// impl ModuleStore {
+//     fn new(config: ModuleConfig) -> Self {
+//         ModuleStore {
+//             module_config: Arc::new(RwLock::new(config)),
+//             // notify: Arc::new(Notify::new()),
+//         }
+//     }
 
-    async fn handler_for_path(&self, uri_fragment: &str) -> anyhow::Result<Handler> {
-        self.module_config
-            .read()
-            .await
-            .handler_for_path(uri_fragment)
-    }
-}
+//     async fn handler_for_path(&self, uri_fragment: &str) -> anyhow::Result<Handler> {
+//         self.module_config
+//             .read()
+//             .await
+//             .handler_for_path(uri_fragment)
+//     }
+// }
 
 /// The configuration for all modules in a WAGI site
 #[derive(Clone, Debug, Deserialize)]
@@ -320,6 +275,7 @@ pub struct ModuleConfig {
 }
 
 impl ModuleConfig {
+    /*
     /// Construct a registry of all routes.
     async fn build_registry(
         &mut self,
@@ -357,6 +313,7 @@ impl ModuleConfig {
         self.route_cache = Some(routes);
         Ok(())
     }
+    */
 
     /// Get a handler for a URI fragment (path) or return an error.
     #[instrument(level = "trace", skip(self))]
@@ -384,44 +341,45 @@ impl ModuleConfig {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::runtime::Module;
-    use super::ModuleConfig;
+// TODO: reconstruct this test!
+// #[cfg(test)]
+// mod test {
+//     use super::runtime::Module;
+//     use super::ModuleConfig;
 
-    #[tokio::test]
-    async fn handler_should_match_path() {
-        let cache = std::path::PathBuf::from("cache.toml");
-        let mod_cache = tempfile::tempdir().expect("temp dir created");
+//     #[tokio::test]
+//     async fn handler_should_match_path() {
+//         let cache = std::path::PathBuf::from("cache.toml");
+//         let mod_cache = tempfile::tempdir().expect("temp dir created");
 
-        let module = Module::new("/".to_string(), "examples/hello.wat".to_owned());
-        // We should be able to mount the same wasm at a separate route.
-        let module2 = Module::new("/foo".to_string(), "examples/hello.wasm".to_owned());
+//         let module = Module::new("/".to_string(), "examples/hello.wat".to_owned());
+//         // We should be able to mount the same wasm at a separate route.
+//         let module2 = Module::new("/foo".to_string(), "examples/hello.wasm".to_owned());
 
-        let mut mc = ModuleConfig {
-            modules: vec![module.clone(), module2.clone()].into_iter().collect(),
-            route_cache: None,
-        };
+//         let mut mc = ModuleConfig {
+//             modules: vec![module.clone(), module2.clone()].into_iter().collect(),
+//             route_cache: None,
+//         };
 
-        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+//         let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
 
-        mc.build_registry(&cache, mod_cache.path(), tempdir.path())
-            .await
-            .expect("registry built cleanly");
+//         mc.build_registry(&cache, mod_cache.path(), tempdir.path())
+//             .await
+//             .expect("registry built cleanly");
 
-        // This should match a default handler
-        let default_handler = mc
-            .handler_for_path("/")
-            .expect("foo.example.com handler found");
-        assert_eq!("examples/hello.wat", default_handler.module.module);
+//         // This should match a default handler
+//         let default_handler = mc
+//             .handler_for_path("/")
+//             .expect("foo.example.com handler found");
+//         assert_eq!("examples/hello.wat", default_handler.module.module);
 
-        // This should match a handler with host example.com
-        let foo_handler = mc
-            .handler_for_path("/foo")
-            .expect("example.com handler found");
-        assert_eq!("examples/hello.wasm", foo_handler.module.module);
+//         // This should match a handler with host example.com
+//         let foo_handler = mc
+//             .handler_for_path("/foo")
+//             .expect("example.com handler found");
+//         assert_eq!("examples/hello.wasm", foo_handler.module.module);
 
-        // This should not match any handlers
-        assert!(mc.handler_for_path("/bar").is_err());
-    }
-}
+//         // This should not match any handlers
+//         assert!(mc.handler_for_path("/bar").is_err());
+//     }
+// }

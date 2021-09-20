@@ -1,38 +1,30 @@
 //! The tools for executing WAGI modules, and managing the lifecycle of a request.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use std::{collections::HashMap};
 use std::{
     hash::{Hash, Hasher},
-    io::BufRead,
 };
 
-use docker_credential;
-use docker_credential::DockerCredential;
-use oci_distribution::client::{Client, ClientConfig};
-use oci_distribution::secrets::RegistryAuth;
+// use oci_distribution::client::{Client, ClientConfig};
+// use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tracing::{instrument};
 use url::Url;
-use wasi_cap_std_sync::WasiCtxBuilder;
-use wasi_common::pipe::{WritePipe};
-use wasmtime::*;
-use wasmtime_wasi::*;
+// use docker_credential;
+// use docker_credential::DockerCredential;
 
 use crate::dispatcher::{RouteHandler, RoutePattern, RoutingTableEntry, WasmRouteHandler};
 use crate::wasm_module::WasmModuleSource;
-use crate::{runtime::bindle::bindle_cache_key};
 
 pub mod bindle;
 
 /// The default Bindle server URL.
 pub const DEFAULT_BINDLE_SERVER: &str = "http://localhost:8080/v1";
 
-const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
-const STDERR_FILE: &str = "module.stderr";
+// const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
+// const STDERR_FILE: &str = "module.stderr";
 
 /// An internal representation of a mapping from a URI fragment to a function in a module.
 #[derive(Clone)]
@@ -225,6 +217,7 @@ impl Module {
     /// be a directory where all module logs will be stored. When executing a module, a subdirectory
     /// will be created in this directory with the ID (from the [`id` method](Module::id)) for its
     /// name. The log will be placed in that directory at `module.stderr`
+    /*
     #[instrument(
         level = "trace",
         skip(self, cache_config_path, module_cache_dir, base_log_dir)
@@ -324,6 +317,7 @@ impl Module {
         routes.reverse();
         Ok(routes)
     }
+    */
 
     /// Resolve a relative path from the end of the matched path to the end of the string.
     ///
@@ -343,6 +337,7 @@ impl Module {
             .to_owned()
     }
 
+    /*
     /// Determine the source of the module, and read it from that source.
     ///
     /// Modules can be stored locally, or they can be stored in external sources like
@@ -386,7 +381,9 @@ impl Module {
             },
         }
     }
+    */
 
+    /*
     /// Load a cached module from the filesystem.
     ///
     /// This is synchronous right now because Wasmtime on the runner needs to be run synchronously.
@@ -441,47 +438,9 @@ impl Module {
             }
         }
     }
+    */
 
-    fn hash_name(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(&self.module.as_str());
-        let result = hasher.finalize();
-        format!("{:x}", result)
-    }
-
-    #[instrument(level = "info", skip(self, engine, cache), fields(server = ?self.bindle_server))]
-    async fn load_bindle(
-        &self,
-        uri: &Url,
-        engine: &Engine,
-        cache: &Path,
-    ) -> anyhow::Result<wasmtime::Module> {
-        bindle::load_bindle(
-            self.bindle_server
-                .clone()
-                .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned())
-                .as_str(),
-            uri,
-            engine,
-            cache,
-        )
-        .await
-    }
-
-    #[instrument(level = "info", skip(self, engine, cache))]
-    async fn load_parcel(
-        &self,
-        uri: &Url,
-        engine: &Engine,
-        cache: &Path,
-    ) -> anyhow::Result<wasmtime::Module> {
-        let bs = self
-            .bindle_server
-            .clone()
-            .unwrap_or_else(|| DEFAULT_BINDLE_SERVER.to_owned());
-        bindle::load_parcel(bs.as_str(), uri, engine, cache).await
-    }
-
+    /*
     #[instrument(level = "info", skip(self, engine, cache))]
     async fn load_oci(
         &self,
@@ -535,20 +494,7 @@ impl Module {
         let module = wasmtime::Module::new(engine, first_layer.data.as_slice())?;
         Ok(module)
     }
-
-    fn new_store_and_engine(
-        &self,
-        cache_config_path: &Path,
-        ctx: WasiCtx,
-    ) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
-        let mut config = Config::default();
-        if let Ok(p) = std::fs::canonicalize(cache_config_path) {
-            config.cache_config_load(p)?;
-        };
-
-        let engine = Engine::new(&config)?;
-        Ok((Store::new(&engine, ctx), engine))
-    }
+    */
 }
 
 /// Build the image name from the URL passed in.
@@ -567,122 +513,100 @@ fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
 
 #[cfg(test)]
 mod test {
-    use super::{url_to_oci, Module};
-    use crate::ModuleConfig;
+    use super::{url_to_oci};
 
     use std::io::Write;
-    use std::path::PathBuf;
     use tempfile::NamedTempFile;
-    use wasi_cap_std_sync::WasiCtxBuilder;
-    use wasmtime::Engine;
-    use wasmtime::Store;
 
-    const ROUTES_WAT: &str = r#"
-    (module
-        (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
-        (memory 1)
-        (export "memory" (memory 0))
+    // const ROUTES_WAT: &str = r#"
+    // (module
+    //     (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+    //     (memory 1)
+    //     (export "memory" (memory 0))
 
-        (data (i32.const 8) "/one one\n/two/... two\n")
+    //     (data (i32.const 8) "/one one\n/two/... two\n")
 
-        (func $main (export "_routes")
-            (i32.store (i32.const 0) (i32.const 8))
-            (i32.store (i32.const 4) (i32.const 22))
+    //     (func $main (export "_routes")
+    //         (i32.store (i32.const 0) (i32.const 8))
+    //         (i32.store (i32.const 4) (i32.const 22))
 
-            (call $fd_write
-                (i32.const 1)
-                (i32.const 0)
-                (i32.const 1)
-                (i32.const 20)
-            )
-            drop
-        )
-    )
-    "#;
+    //         (call $fd_write
+    //             (i32.const 1)
+    //             (i32.const 0)
+    //             (i32.const 1)
+    //             (i32.const 20)
+    //         )
+    //         drop
+    //     )
+    // )
+    // "#;
 
-    fn write_temp_wat(data: &str) -> anyhow::Result<NamedTempFile> {
-        let mut tf = tempfile::NamedTempFile::new()?;
-        write!(tf, "{}", data)?;
-        Ok(tf)
-    }
+    // fn write_temp_wat(data: &str) -> anyhow::Result<NamedTempFile> {
+    //     let mut tf = tempfile::NamedTempFile::new()?;
+    //     write!(tf, "{}", data)?;
+    //     Ok(tf)
+    // }
 
-    #[tokio::test]
-    async fn load_routes_from_wasm() {
-        let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
-        let urlish = format!("file:{}", tf.path().to_string_lossy());
+    // TODO: rebuild this test
+    // #[tokio::test]
+    // async fn load_routes_from_wasm() {
+    //     let tf = write_temp_wat(ROUTES_WAT).expect("created tempfile");
+    //     let urlish = format!("file:{}", tf.path().to_string_lossy());
 
-        let cache = PathBuf::from("cache.toml");
+    //     let cache = PathBuf::from("cache.toml");
 
-        // We should be able to mount the same wasm at a separate route.
-        let module = Module::new("/base".to_string(), urlish.clone());
-        let module2 = Module::new("/another/...".to_string(), urlish);
+    //     // We should be able to mount the same wasm at a separate route.
+    //     let module = Module::new("/base".to_string(), urlish.clone());
+    //     let module2 = Module::new("/another/...".to_string(), urlish);
 
-        let mut mc = ModuleConfig {
-            modules: vec![module.clone(), module2.clone()].into_iter().collect(),
-            route_cache: None,
-        };
+    //     let mut mc = ModuleConfig {
+    //         modules: vec![module.clone(), module2.clone()].into_iter().collect(),
+    //         route_cache: None,
+    //     };
 
-        let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
-        let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
-        mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
-            .await
-            .expect("registry build cleanly");
+    //     let log_tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+    //     let cache_tempdir = tempfile::tempdir().expect("new cache temp dir");
+    //     mc.build_registry(&cache, cache_tempdir.path(), log_tempdir.path())
+    //         .await
+    //         .expect("registry build cleanly");
 
-        tracing::debug!(route_cache = ?mc.route_cache);
+    //     tracing::debug!(route_cache = ?mc.route_cache);
 
-        // Three routes for each module.
-        assert_eq!(6, mc.route_cache.as_ref().expect("routes are set").len());
+    //     // Three routes for each module.
+    //     assert_eq!(6, mc.route_cache.as_ref().expect("routes are set").len());
 
-        let modpath = module.module.clone();
+    //     let modpath = module.module.clone();
 
-        // Base route is from the config file
-        let base = mc
-            .handler_for_path("/base")
-            .expect("Should get a /base route");
-        assert_eq!("_start", base.entrypoint);
-        assert_eq!(modpath, base.module.module);
+    //     // Base route is from the config file
+    //     let base = mc
+    //         .handler_for_path("/base")
+    //         .expect("Should get a /base route");
+    //     assert_eq!("_start", base.entrypoint);
+    //     assert_eq!(modpath, base.module.module);
 
-        // Route one is from the module's _routes()
-        let one = mc
-            .handler_for_path("/base/one")
-            .expect("Should get the /base/one route");
+    //     // Route one is from the module's _routes()
+    //     let one = mc
+    //         .handler_for_path("/base/one")
+    //         .expect("Should get the /base/one route");
 
-        assert_eq!("one", one.entrypoint);
-        assert_eq!(modpath, one.module.module);
+    //     assert_eq!("one", one.entrypoint);
+    //     assert_eq!(modpath, one.module.module);
 
-        // Route two is a wildcard.
-        let two = mc
-            .handler_for_path("/base/two/three")
-            .expect("Should get the /base/two/... route");
+    //     // Route two is a wildcard.
+    //     let two = mc
+    //         .handler_for_path("/base/two/three")
+    //         .expect("Should get the /base/two/... route");
 
-        assert_eq!("two", two.entrypoint);
-        assert_eq!(modpath, two.module.module);
+    //     assert_eq!("two", two.entrypoint);
+    //     assert_eq!(modpath, two.module.module);
 
-        // This should fail
-        assert!(mc.handler_for_path("/base/no/such/path").is_err());
+    //     // This should fail
+    //     assert!(mc.handler_for_path("/base/no/such/path").is_err());
 
-        // This should pass
-        mc.handler_for_path("/another/path")
-            .expect("The generic handler should have been returned for this");
-    }
-
-    #[tokio::test]
-    async fn should_parse_file_uri() {
-        let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
-        let urlish = format!("file:{}", tf.path().to_string_lossy());
-
-        let module = Module::new("/base".to_string(), urlish);
-
-        let ctx = WasiCtxBuilder::new().build();
-        let engine = Engine::default();
-        let store = Store::new(&engine, ctx);
-        let tempdir = tempfile::tempdir().expect("create a temp dir");
-
-        module
-            .load_module(&store, tempdir.path())
-            .await
-            .expect("loaded module");
-    }
+    //     // This should pass
+    //     mc.handler_for_path("/another/path")
+    //         .expect("The generic handler should have been returned for this");
+    // }
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
