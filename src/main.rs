@@ -17,5 +17,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
     
     let router = Router::from_configuration(&configuration).await?;  // This does all three of the above!
     let server = WagiServer::new(&configuration, router).await?;
+
+    println!("Ready: serving on {}", configuration.http_configuration.listen_on);
     server.serve().await
 }
