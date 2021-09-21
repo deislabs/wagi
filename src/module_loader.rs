@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bindle::Parcel;
 
-use crate::wagi_config::{HandlerConfigurationSource, ModuleMapConfigurationEntry, WagiConfiguration};
+use crate::{caching_bindle_client::CachingBindleClient, wagi_config::{HandlerConfigurationSource, ModuleMapConfigurationEntry, WagiConfiguration}};
 
 pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
     // TODO: code far too similar to required blobs stuff
@@ -49,8 +49,8 @@ pub async fn load_from_bindle(invoice_id: &bindle::Id, parcel: &Parcel, configur
             Ok(parcel_bytes)
         },
         HandlerConfigurationSource::RemoteBindle(server_url, _) => {
-            let client = bindle::client::Client::new(&server_url.to_string())?;
-            let parcel_bytes = client.get_parcel(invoice_id, &parcel.label.sha256).await?;
+            let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
+            let parcel_bytes = client.get_module_parcel(invoice_id, &parcel).await?;
             Ok(parcel_bytes)
         },
     }

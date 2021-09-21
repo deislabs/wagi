@@ -15,12 +15,12 @@ use serde::Deserialize;
 use tokio::sync::{RwLock};
 use tracing::instrument;
 
-pub(crate) mod asset_cache;
+pub(crate) mod caching_bindle_client;
 pub(crate) mod bindle_util;
 pub mod dispatcher;
 pub(crate) mod header_util;
 mod http_util;
-pub (crate) mod loader;
+pub (crate) mod module_loader;
 mod request;
 pub mod runtime;
 mod tls;

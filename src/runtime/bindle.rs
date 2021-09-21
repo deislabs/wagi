@@ -5,8 +5,6 @@ use sha2::{Digest, Sha256};
 use tracing::{instrument, trace, warn};
 use url::Url;
 
-use crate::bindle_util::{top_modules, WASM_MEDIA_TYPE};
-
 pub(crate) fn bindle_cache_key(uri: &Url) -> String {
     let mut hasher = Sha256::new();
     hasher.update(uri.path());
@@ -14,95 +12,95 @@ pub(crate) fn bindle_cache_key(uri: &Url) -> String {
     format!("{:x}", result)
 }
 
-/// Given a server and a URI, attempt to load the bindle identified in the URI.
-///
-/// TODO: this currently fetches the first application/wasm condition-less parcel from the bindle and tries
-/// to load it.
-#[instrument(level = "info", skip(engine))]
-pub(crate) async fn load_bindle(
-    server: &str,
-    uri: &Url,
-    engine: &wasmtime::Engine,
-    cache: &Path,
-) -> anyhow::Result<wasmtime::Module> {
-    let bindle_name = uri.path();
+// /// Given a server and a URI, attempt to load the bindle identified in the URI.
+// ///
+// /// TODO: this currently fetches the first application/wasm condition-less parcel from the bindle and tries
+// /// to load it.
+// #[instrument(level = "info", skip(engine))]
+// pub(crate) async fn load_bindle(
+//     server: &str,
+//     uri: &Url,
+//     engine: &wasmtime::Engine,
+//     cache: &Path,
+// ) -> anyhow::Result<wasmtime::Module> {
+//     let bindle_name = uri.path();
 
-    tracing::debug!(
-        %bindle_name,
-        "Loading bindle",
-    );
+//     tracing::debug!(
+//         %bindle_name,
+//         "Loading bindle",
+//     );
 
-    let bindler = Client::new(server)?;
-    let invoice = bindler.get_invoice(bindle_name).await?;
+//     let bindler = Client::new(server)?;
+//     let invoice = bindler.get_invoice(bindle_name).await?;
 
-    // TODO: We need to load a keyring and then get it all the way here.
-    //invoice.verify(keyring)
+//     // TODO: We need to load a keyring and then get it all the way here.
+//     //invoice.verify(keyring)
 
-    // TODO: We should probably turn on the LRU.
+//     // TODO: We should probably turn on the LRU.
 
-    tracing::trace!(
-        parcels = %invoice
-            .parcel
-            .clone()
-            .unwrap_or_default()
-            .iter()
-            .map(|p| p.label.name.clone())
-            .collect::<Vec<_>>()
-            .join(","),
-        "All bindle parcels",
-    );
+//     tracing::trace!(
+//         parcels = %invoice
+//             .parcel
+//             .clone()
+//             .unwrap_or_default()
+//             .iter()
+//             .map(|p| p.label.name.clone())
+//             .collect::<Vec<_>>()
+//             .join(","),
+//         "All bindle parcels",
+//     );
 
-    // For now, we grab a list of parcels that have no conditions.
-    // This is definitely not the best strategy.
-    let parcels = invoice.parcel;
-    let to_fetch: Vec<Parcel> = parcels
-        .unwrap_or_default()
-        .iter()
-        .filter(|parcel| {
-            if parcel.label.media_type.as_str() == WASM_MEDIA_TYPE {
-                let is_default = parcel.is_global_group();
-                if !is_default {
-                    warn!("The parcel {} is not in the default group (it has a non-empty memberOf), and is ignored.", parcel.label.name);
-                }
-                return is_default
-            }
-            false
-        })
-        .cloned()
-        .collect();
+//     // For now, we grab a list of parcels that have no conditions.
+//     // This is definitely not the best strategy.
+//     let parcels = invoice.parcel;
+//     let to_fetch: Vec<Parcel> = parcels
+//         .unwrap_or_default()
+//         .iter()
+//         .filter(|parcel| {
+//             if parcel.label.media_type.as_str() == WASM_MEDIA_TYPE {
+//                 let is_default = parcel.is_global_group();
+//                 if !is_default {
+//                     warn!("The parcel {} is not in the default group (it has a non-empty memberOf), and is ignored.", parcel.label.name);
+//                 }
+//                 return is_default
+//             }
+//             false
+//         })
+//         .cloned()
+//         .collect();
 
-    tracing::trace!(
-        candidates = %to_fetch
-            .clone()
-            .iter()
-            .map(|p| p.label.name.clone())
-            .collect::<Vec<_>>()
-            .join(","),
-        "Module candidates",
-    );
+//     tracing::trace!(
+//         candidates = %to_fetch
+//             .clone()
+//             .iter()
+//             .map(|p| p.label.name.clone())
+//             .collect::<Vec<_>>()
+//             .join(","),
+//         "Module candidates",
+//     );
 
-    if to_fetch.is_empty() {
-        tracing::error!("No parcels were module candidates");
-        anyhow::bail!("No suitable parcel found");
-    }
+//     if to_fetch.is_empty() {
+//         tracing::error!("No parcels were module candidates");
+//         anyhow::bail!("No suitable parcel found");
+//     }
 
-    let first = to_fetch.get(0).unwrap();
+//     let first = to_fetch.get(0).unwrap();
 
-    tracing::trace!(parcel_name = %first.label.name, "Fetching module parcel");
-    let p = bindler
-        .get_parcel(bindle_name, first.label.sha256.as_str())
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Error downloading parcel");
-            e
-        })?;
+//     tracing::trace!(parcel_name = %first.label.name, "Fetching module parcel");
+//     let p = bindler
+//         .get_parcel(bindle_name, first.label.sha256.as_str())
+//         .await
+//         .map_err(|e| {
+//             tracing::error!(error = %e, "Error downloading parcel");
+//             e
+//         })?;
 
-    tracing::trace!("Writing module parcel to cache");
-    if let Err(e) = tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p).await {
-        tracing::warn!(error = %e, "Failed to cache bindle")
-    }
-    wasmtime::Module::new(engine, p)
-}
+//     tracing::trace!("Writing module parcel to cache");
+//     if let Err(e) = tokio::fs::write(cache.join(invoice.bindle.id.to_string()), &p).await {
+//         tracing::warn!(error = %e, "Failed to cache bindle")
+//     }
+//     wasmtime::Module::new(engine, p)
+// }
 
 pub async fn load_parcel(
     server: &str,
@@ -474,182 +472,4 @@ fn is_file(parcel: &Parcel) -> bool {
         })
         .flatten()
         .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod test {
-    use bindle::{BindleSpec, Condition, Group, Invoice, Label, Parcel};
-    use std::{collections::BTreeMap, convert::TryInto};
-
-    use crate::runtime::bindle::{top_modules, WASM_MEDIA_TYPE};
-
-    #[test]
-    fn test_top_modules() {
-        let inv = Invoice {
-            bindle_version: "v1".to_owned(),
-            yanked: None,
-            signature: None,
-            annotations: None,
-            bindle: BindleSpec {
-                id: "drink/1.2.3"
-                    .to_owned()
-                    .try_into()
-                    .expect("This should parse"),
-                description: None,
-                authors: None,
-            },
-            group: Some(vec![Group {
-                name: "coffee".to_owned(),
-                required: None,
-                satisfied_by: None,
-            }]),
-            parcel: Some(vec![
-                Parcel {
-                    label: Label {
-                        sha256: "yubbadubbadoo".to_owned(),
-                        name: "mocha-java".to_owned(),
-                        media_type: WASM_MEDIA_TYPE.to_owned(),
-                        size: 1234,
-                        annotations: None,
-                        feature: None,
-                    },
-                    conditions: Some(Condition {
-                        member_of: Some(vec!["coffee".to_owned()]),
-                        requires: None,
-                    }),
-                },
-                Parcel {
-                    label: Label {
-                        sha256: "abc123".to_owned(),
-                        name: "yirgacheffe".to_owned(),
-                        media_type: WASM_MEDIA_TYPE.to_owned(),
-                        size: 1234,
-                        annotations: None,
-                        feature: None,
-                    },
-                    conditions: Some(Condition {
-                        member_of: Some(vec!["coffee".to_owned()]),
-                        requires: None,
-                    }),
-                },
-                Parcel {
-                    label: Label {
-                        sha256: "yubbadubbadoonow".to_owned(),
-                        name: "water".to_owned(),
-                        media_type: WASM_MEDIA_TYPE.to_owned(),
-                        size: 1234,
-                        annotations: None,
-                        feature: None,
-                    },
-                    conditions: Some(Condition {
-                        member_of: None,
-                        requires: None,
-                    }),
-                },
-            ]),
-        };
-
-        let res = top_modules(&inv);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res.get(0).expect("first item").label.name,
-            "water".to_owned()
-        );
-    }
-
-    #[test]
-    fn test_is_file() {
-        let mut p = Parcel {
-            label: Label {
-                sha256: "yubbadubbadoonow".to_owned(),
-                name: "water".to_owned(),
-                media_type: WASM_MEDIA_TYPE.to_owned(),
-                size: 1234,
-                annotations: None,
-                feature: None,
-            },
-            conditions: Some(Condition {
-                member_of: None,
-                requires: None,
-            }),
-        };
-        assert!(!super::is_file(&p));
-
-        let mut features = BTreeMap::new();
-        let mut wagifeatures = BTreeMap::new();
-        wagifeatures.insert("file".to_owned(), "true".to_owned());
-        features.insert("wagi".to_owned(), wagifeatures);
-        p.label.feature = Some(features);
-        assert!(super::is_file(&p));
-    }
-
-    #[test]
-    fn test_group_members() {
-        let inv = Invoice {
-            bindle_version: "v1".to_owned(),
-            yanked: None,
-            signature: None,
-            annotations: None,
-            bindle: BindleSpec {
-                id: "drink/1.2.3"
-                    .to_owned()
-                    .try_into()
-                    .expect("This should parse"),
-                description: None,
-                authors: None,
-            },
-            group: Some(vec![Group {
-                name: "coffee".to_owned(),
-                required: None,
-                satisfied_by: None,
-            }]),
-            parcel: Some(vec![
-                Parcel {
-                    label: Label {
-                        sha256: "yubbadubbadoo".to_owned(),
-                        name: "mocha-java".to_owned(),
-                        media_type: WASM_MEDIA_TYPE.to_owned(),
-                        size: 1234,
-                        annotations: None,
-                        feature: None,
-                    },
-                    conditions: Some(Condition {
-                        member_of: Some(vec!["coffee".to_owned()]),
-                        requires: None,
-                    }),
-                },
-                Parcel {
-                    label: Label {
-                        sha256: "abc123".to_owned(),
-                        name: "yirgacheffe".to_owned(),
-                        media_type: WASM_MEDIA_TYPE.to_owned(),
-                        size: 1234,
-                        annotations: None,
-                        feature: None,
-                    },
-                    conditions: Some(Condition {
-                        member_of: Some(vec!["coffee".to_owned()]),
-                        requires: None,
-                    }),
-                },
-                Parcel {
-                    label: Label {
-                        sha256: "yubbadubbadoonow".to_owned(),
-                        name: "water".to_owned(),
-                        media_type: WASM_MEDIA_TYPE.to_owned(),
-                        size: 1234,
-                        annotations: None,
-                        feature: None,
-                    },
-                    conditions: Some(Condition {
-                        member_of: None,
-                        requires: None,
-                    }),
-                },
-            ]),
-        };
-
-        let members = super::group_members(&inv, "coffee");
-        assert_eq!(2, members.len());
-    }
 }

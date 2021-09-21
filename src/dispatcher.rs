@@ -1,5 +1,6 @@
+use std::iter::FromIterator;
 use std::{collections::HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use cap_std::fs::Dir;
@@ -16,7 +17,7 @@ use wasmtime::*;
 use wasmtime_wasi::*;
 
 use crate::http_util::{internal_error, parse_cgi_headers};
-use crate::loader::Loaded;
+use crate::module_loader::Loaded;
 use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 
 use crate::bindle_util::{WagiHandlerInfo};
@@ -81,8 +82,6 @@ impl RoutingTable {
 
 const DEFAULT_ENTRYPOINT: &str = "_start";
 
-fn FAKE_VOLUMES_FAKE_FAKE_FAKE() -> HashMap<String, String> { HashMap::new() }
-
 impl RoutingTableEntry {
     pub fn is_match(&self, uri_fragment: &str) -> bool {
         self.route_pattern.is_match(uri_fragment)
@@ -95,7 +94,7 @@ impl RoutingTableEntry {
         let wasm_route_handler = WasmRouteHandler {
             wasm_module_source: wasm_source,
             entrypoint: source.metadata.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-            volumes: FAKE_VOLUMES_FAKE_FAKE_FAKE(),  // TODO
+            volumes: source.metadata.volumes.clone().unwrap_or_default(),
             allowed_hosts: source.metadata.allowed_hosts.clone(),
             http_max_concurrency: source.metadata.http_max_concurrency,
         };
@@ -108,7 +107,7 @@ impl RoutingTableEntry {
         })
     }
 
-    fn build_from_parcel(source: &Loaded<WagiHandlerInfo>) -> Option<anyhow::Result<RoutingTableEntry>> {
+    fn build_from_parcel(source: &Loaded<WagiHandlerInfo>, asset_base: &PathBuf) -> Option<anyhow::Result<RoutingTableEntry>> {
         let wagi_handler = &source.metadata;
 
         let route_pattern = RoutePattern::parse(&wagi_handler.route);
@@ -116,7 +115,7 @@ impl RoutingTableEntry {
         let wasm_route_handler = WasmRouteHandler {
             wasm_module_source: wasm_source,
             entrypoint: wagi_handler.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-            volumes: FAKE_VOLUMES_FAKE_FAKE_FAKE(),  // TODO
+            volumes: asset_dir_volume_mount(asset_base),
             allowed_hosts: wagi_handler.allowed_hosts.clone(),
             http_max_concurrency: None,
         };
@@ -183,6 +182,12 @@ impl RoutingTableEntry {
     }
 }
 
+fn asset_dir_volume_mount(asset_base: &PathBuf) -> HashMap<String, String> {
+    let mut volumes = HashMap::new();
+    volumes.insert("/".to_owned(), asset_base.display().to_string());  // TODO: maybe volumes should map PathBufs // or struct of host and guest
+    volumes
+}
+
 impl WasmRouteHandler {
     // TODO: I don't think this rightly belongs here. But
     // reasonable place to at least understand the decomposition and
@@ -196,6 +201,7 @@ impl WasmRouteHandler {
         route_context: &RequestRouteContext,
         global_context: &RequestGlobalContext,
     ) -> Result<Response<Body>, anyhow::Error> {
+        println!("Handling request for {}: vols={:?}", req.uri, self.volumes);
         let startup_span = tracing::info_span!("module instantiation").entered();
         let headers = crate::http_util::build_headers(
             &routing_info.route_pattern,
@@ -272,6 +278,7 @@ impl WasmRouteHandler {
 
         for (guest, host) in &self.volumes {
             debug!(%host, %guest, "Mapping volume from host to guest");
+            println!("Mapping volume from host {} to guest {}", host, guest);
             // Try to open the dir or log an error.
             match Dir::open_ambient_dir(host, ambient_authority()) {
                 Ok(dir) => {
@@ -379,8 +386,8 @@ impl RoutingTable {
         let user_entries = match source {
             LoadedHandlerConfiguration::ModuleMapFile(module_map_entries) =>
                 Self::build_from_modules_toml(module_map_entries),
-            LoadedHandlerConfiguration::Bindle(parcels) =>
-                Self::build_from_parcels(parcels),
+            LoadedHandlerConfiguration::Bindle(parcels, asset_base) =>
+                Self::build_from_parcels(parcels, asset_base),
         }?;
         let built_in_entries = Self::inbuilt_patterns();
 
@@ -396,10 +403,10 @@ impl RoutingTable {
             .collect()
     }
 
-    fn build_from_parcels(parcels: &Vec<Loaded<WagiHandlerInfo>>) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    fn build_from_parcels(parcels: &Vec<Loaded<WagiHandlerInfo>>, asset_base: &PathBuf) -> anyhow::Result<Vec<RoutingTableEntry>> {
         parcels
             .iter()
-            .filter_map(|p| RoutingTableEntry::build_from_parcel(&p))
+            .filter_map(|p| RoutingTableEntry::build_from_parcel(&p, asset_base))
             .collect()
     }
 

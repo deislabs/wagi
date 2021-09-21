@@ -7,20 +7,61 @@ use bindle::{Invoice, Parcel};
 
 pub const WASM_MEDIA_TYPE: &str = "application/wasm";
 
-// America's next...
-pub fn top_modules(invoice: &Invoice) -> Vec<Parcel> {
-    invoice.parcel
-        .clone()
-        .unwrap_or_default()
-        .iter()
-        .filter(|parcel| {
-            // We want parcels that...
-            // - have the Wasm media type
-            // - Have no group memberships
-            parcel.label.media_type.as_str() == WASM_MEDIA_TYPE && parcel.is_global_group()
+pub struct InvoiceUnderstander {
+    invoice: Invoice,
+    group_dependency_map: HashMap<String, Vec<Parcel>>,
+}
+
+impl InvoiceUnderstander {
+    pub fn new(invoice: &Invoice) -> Self {
+        let group_dependency_map = build_full_memberships(invoice);
+        Self {
+            invoice: invoice.clone(),
+            group_dependency_map,
+        }
+    }
+
+    pub fn id(&self) -> bindle::Id {
+        self.invoice.bindle.id.clone()
+    }
+
+    // America's next...
+    pub fn top_modules(&self) -> Vec<Parcel> {
+        self.invoice
+            .parcel
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .filter(|parcel| {
+                // We want parcels that...
+                // - have the Wasm media type
+                // - Have no group memberships
+                parcel.label.media_type.as_str() == WASM_MEDIA_TYPE && parcel.is_global_group()
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn classify_parcel(&self, parcel: &Parcel) -> Option<InterestingParcel> {
+        // Currently only handlers but we have talked of scheduled tasks etc.
+        parcel.label.feature.as_ref().and_then(|features| {
+            features.get("wagi").and_then(|wagi_features| {
+                match wagi_features.get("route") {
+                    Some(route) => {
+                        let handler_info = WagiHandlerInfo {
+                            parcel: parcel.clone(),
+                            route: route.to_owned(),
+                            entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
+                            allowed_hosts: wagi_features.get("allowed_hosts").map(|h| parse_csv(h)),
+                            asset_parcels: parcels_required_for(parcel, &self.group_dependency_map),
+                        };
+                        Some(InterestingParcel::WagiHandler(handler_info))
+                    },
+                    None => None,
+                }
+            })
         })
-        .cloned()
-        .collect()
+    }
 }
 
 pub enum InterestingParcel {
@@ -33,6 +74,7 @@ pub struct WagiHandlerInfo {
     pub route: String,
     pub entrypoint: Option<String>,
     pub allowed_hosts: Option<Vec<String>>,
+    pub asset_parcels: Vec<Parcel>,
 }
 
 impl InterestingParcel {
@@ -45,24 +87,15 @@ impl InterestingParcel {
 
 const NO_PARCELS: Vec<Parcel> = vec![];
 
-pub fn classify_parcel(parcel: &Parcel) -> Option<InterestingParcel> {
-    // Currently only handlers but we have talked of scheduled tasks etc.
+pub fn is_file(parcel: &Parcel) -> bool {
     parcel.label.feature.as_ref().and_then(|features| {
-        features.get("wagi").and_then(|wagi_features| {
+        features.get("wagi").map(|wagi_features| {
             match wagi_features.get("route") {
-                Some(route) => {
-                    let handler_info = WagiHandlerInfo {
-                        parcel: parcel.clone(),
-                        route: route.to_owned(),
-                        entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
-                        allowed_hosts: wagi_features.get("allowed_hosts").map(|h| parse_csv(h)),
-                    };
-                    Some(InterestingParcel::WagiHandler(handler_info))
-                },
-                None => None,
+                Some(s) => s == "true",
+                _ => false,
             }
         })
-    })
+    }).unwrap_or(false)
 }
 
 pub fn parcels_required_for(parcel: &Parcel, full_dep_map: &HashMap<String, Vec<Parcel>>) -> Vec<Parcel> {
@@ -166,4 +199,182 @@ impl ParcelUtils for Parcel {
 
 fn parse_csv(text: &str) -> Vec<String> {
     text.split(',').map(|v| v.to_owned()).collect()  // TODO: trim etc.?
+}
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use bindle::{BindleSpec, Condition, Group, Label};
+    use std::{collections::BTreeMap, convert::TryInto};
+
+    #[test]
+    fn test_top_modules() {
+        let inv = InvoiceUnderstander::new(&Invoice {
+            bindle_version: "v1".to_owned(),
+            yanked: None,
+            signature: None,
+            annotations: None,
+            bindle: BindleSpec {
+                id: "drink/1.2.3"
+                    .to_owned()
+                    .try_into()
+                    .expect("This should parse"),
+                description: None,
+                authors: None,
+            },
+            group: Some(vec![Group {
+                name: "coffee".to_owned(),
+                required: None,
+                satisfied_by: None,
+            }]),
+            parcel: Some(vec![
+                Parcel {
+                    label: Label {
+                        sha256: "yubbadubbadoo".to_owned(),
+                        name: "mocha-java".to_owned(),
+                        media_type: WASM_MEDIA_TYPE.to_owned(),
+                        size: 1234,
+                        annotations: None,
+                        feature: None,
+                    },
+                    conditions: Some(Condition {
+                        member_of: Some(vec!["coffee".to_owned()]),
+                        requires: None,
+                    }),
+                },
+                Parcel {
+                    label: Label {
+                        sha256: "abc123".to_owned(),
+                        name: "yirgacheffe".to_owned(),
+                        media_type: WASM_MEDIA_TYPE.to_owned(),
+                        size: 1234,
+                        annotations: None,
+                        feature: None,
+                    },
+                    conditions: Some(Condition {
+                        member_of: Some(vec!["coffee".to_owned()]),
+                        requires: None,
+                    }),
+                },
+                Parcel {
+                    label: Label {
+                        sha256: "yubbadubbadoonow".to_owned(),
+                        name: "water".to_owned(),
+                        media_type: WASM_MEDIA_TYPE.to_owned(),
+                        size: 1234,
+                        annotations: None,
+                        feature: None,
+                    },
+                    conditions: Some(Condition {
+                        member_of: None,
+                        requires: None,
+                    }),
+                },
+            ]),
+        });
+
+        let res = inv.top_modules();
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res.get(0).expect("first item").label.name,
+            "water".to_owned()
+        );
+    }
+
+    #[test]
+    fn test_is_file() {
+        let mut p = Parcel {
+            label: Label {
+                sha256: "yubbadubbadoonow".to_owned(),
+                name: "water".to_owned(),
+                media_type: WASM_MEDIA_TYPE.to_owned(),
+                size: 1234,
+                annotations: None,
+                feature: None,
+            },
+            conditions: Some(Condition {
+                member_of: None,
+                requires: None,
+            }),
+        };
+        assert!(!is_file(&p));
+
+        let mut features = BTreeMap::new();
+        let mut wagifeatures = BTreeMap::new();
+        wagifeatures.insert("file".to_owned(), "true".to_owned());
+        features.insert("wagi".to_owned(), wagifeatures);
+        p.label.feature = Some(features);
+        assert!(super::is_file(&p));
+    }
+
+    #[test]
+    fn test_group_members() {
+        let inv = Invoice {
+            bindle_version: "v1".to_owned(),
+            yanked: None,
+            signature: None,
+            annotations: None,
+            bindle: BindleSpec {
+                id: "drink/1.2.3"
+                    .to_owned()
+                    .try_into()
+                    .expect("This should parse"),
+                description: None,
+                authors: None,
+            },
+            group: Some(vec![Group {
+                name: "coffee".to_owned(),
+                required: None,
+                satisfied_by: None,
+            }]),
+            parcel: Some(vec![
+                Parcel {
+                    label: Label {
+                        sha256: "yubbadubbadoo".to_owned(),
+                        name: "mocha-java".to_owned(),
+                        media_type: WASM_MEDIA_TYPE.to_owned(),
+                        size: 1234,
+                        annotations: None,
+                        feature: None,
+                    },
+                    conditions: Some(Condition {
+                        member_of: Some(vec!["coffee".to_owned()]),
+                        requires: None,
+                    }),
+                },
+                Parcel {
+                    label: Label {
+                        sha256: "abc123".to_owned(),
+                        name: "yirgacheffe".to_owned(),
+                        media_type: WASM_MEDIA_TYPE.to_owned(),
+                        size: 1234,
+                        annotations: None,
+                        feature: None,
+                    },
+                    conditions: Some(Condition {
+                        member_of: Some(vec!["coffee".to_owned()]),
+                        requires: None,
+                    }),
+                },
+                Parcel {
+                    label: Label {
+                        sha256: "yubbadubbadoonow".to_owned(),
+                        name: "water".to_owned(),
+                        media_type: WASM_MEDIA_TYPE.to_owned(),
+                        size: 1234,
+                        annotations: None,
+                        feature: None,
+                    },
+                    conditions: Some(Condition {
+                        member_of: None,
+                        requires: None,
+                    }),
+                },
+            ]),
+        };
+
+        let membership_map = build_full_memberships(&inv);
+        let members = membership_map.get("coffee").expect("there should have been a group called 'coffee'");
+        assert_eq!(2, members.len());
+    }
 }

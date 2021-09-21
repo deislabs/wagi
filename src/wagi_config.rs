@@ -4,7 +4,7 @@ use std::{collections::HashMap, net::SocketAddr, path::{Path, PathBuf}};
 use bindle::{Invoice, standalone::StandaloneRead};
 use serde::Deserialize;
 
-use crate::{bindle_util::{self, InterestingParcel, WagiHandlerInfo}, loader::{Loaded}};
+use crate::{bindle_util::{self, InterestingParcel, InvoiceUnderstander, WagiHandlerInfo, is_file}, caching_bindle_client::CachingBindleClient, module_loader::{Loaded}};
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {
@@ -63,7 +63,7 @@ pub enum HandlerConfiguration {
 
 pub enum LoadedHandlerConfiguration {
     ModuleMapFile(Vec<Loaded<ModuleMapConfigurationEntry>>),
-    Bindle(Vec<Loaded<WagiHandlerInfo>>),
+    Bindle(Vec<Loaded<WagiHandlerInfo>>, PathBuf),
 }
 
 impl WagiConfiguration {
@@ -76,7 +76,7 @@ impl WagiConfiguration {
             HandlerConfigurationSource::StandaloneBindle(path, bindle_id) =>
                 read_standalone_bindle_invoice(path, bindle_id).await.map(HandlerConfiguration::Bindle),
             HandlerConfigurationSource::RemoteBindle(server_url, bindle_id) =>
-                read_remote_bindle_invoice(server_url, bindle_id).await.map(HandlerConfiguration::Bindle),
+                read_remote_bindle_invoice(server_url, bindle_id, &self.asset_cache_dir).await.map(HandlerConfiguration::Bindle),
         }
     }
 
@@ -89,7 +89,6 @@ impl WagiConfiguration {
             HandlerConfiguration::Bindle(invoice) =>
                 handlers_for_bindle(&invoice, self).await,
         }
-        
     }
 }
 
@@ -120,9 +119,9 @@ async fn read_standalone_bindle_invoice(path: impl AsRef<Path>, bindle_id: &bind
     Ok(invoice)
 }
 
-async fn read_remote_bindle_invoice(server_url: &url::Url, bindle_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
+async fn read_remote_bindle_invoice(server_url: &url::Url, bindle_id: &bindle::Id, asset_cache_dir: impl AsRef<Path>) -> anyhow::Result<bindle::Invoice> {
     tracing::info!(%bindle_id, "Loading remote bindle");
-    let bindler = ::bindle::client::Client::new(&server_url.to_string())?;
+    let bindler = CachingBindleClient::new(server_url, asset_cache_dir)?;
 
     let invoice = bindler.get_invoice(bindle_id).await?;
     Ok(invoice)
@@ -145,14 +144,14 @@ pub struct BindleParcel {
     pub sha256: String,
 }
 
-pub async fn required_blobs(handlers: &HandlerConfiguration) -> anyhow::Result<Vec<RequiredBlob>> {
-    match handlers {
-        HandlerConfiguration::ModuleMapFile(module_map_config) =>
-            required_blobs_for_module_map(module_map_config),
-        HandlerConfiguration::Bindle(invoice) =>
-            required_blobs_for_bindle(invoice),
-    }
-}
+// pub async fn required_blobs(handlers: &HandlerConfiguration) -> anyhow::Result<Vec<RequiredBlob>> {
+//     match handlers {
+//         HandlerConfiguration::ModuleMapFile(module_map_config) =>
+//             required_blobs_for_module_map(module_map_config),
+//         HandlerConfiguration::Bindle(invoice) =>
+//             required_blobs_for_bindle(invoice),
+//     }
+// }
 
 fn required_blobs_for_module_map(module_map_config: &ModuleMapConfiguration) -> anyhow::Result<Vec<RequiredBlob>> {
     module_map_config.entries
@@ -204,111 +203,132 @@ async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configurat
 }
 
 async fn handlers_for_bindle(invoice: &bindle::Invoice, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
-    let top = crate::bindle_util::top_modules(invoice);
+    let invoice = InvoiceUnderstander::new(invoice);
+    let invoice_id = invoice.id();
+    // TODO: THIS IS ABSOLUTELY SHOCKING IVAN WHAT THE DEVIL WERE YOU THINKING
+    let dummy_url_no_no_no = url::Url::parse("http://dummy/")?;
+    let asset_base = CachingBindleClient::new(&dummy_url_no_no_no, &configuration.asset_cache_dir)?.asset_path_for(&invoice_id);
+
+    let top = invoice.top_modules();
     tracing::debug!(
         default_modules = top.len(),
         "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
     );
 
-    let interesting_parcels = top.iter().filter_map(|p| crate::bindle_util::classify_parcel(p));
+    let interesting_parcels: Vec<_> = top.iter().filter_map(|p| invoice.classify_parcel(p)).collect();
 
-    let loaders = interesting_parcels.filter_map(|p|
+    let loaders = interesting_parcels.iter().filter_map(|p|
         match p {
-            InterestingParcel::WagiHandler(wagi_handler) => Some(handler_for_parcel(&invoice.bindle.id, wagi_handler.clone(), configuration)),
+            InterestingParcel::WagiHandler(wagi_handler) => Some(handler_for_parcel(&invoice_id, wagi_handler.clone(), configuration)),
         }
     );
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
 
-    loadeds.map(|parcels| LoadedHandlerConfiguration::Bindle(parcels))
+    // TODO: this is a very ugly place to put this - emplacing the assets should not occur as
+    // invisible side effect of loading the handler WASM bytes
+    match &configuration.handlers {
+        HandlerConfigurationSource::RemoteBindle(server_url, _) => {
+            let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
+            for p in interesting_parcels.iter().filter(|p| is_file(p.parcel())) {
+                match p {
+                    InterestingParcel::WagiHandler(wagi_handler) =>
+                        client.emplace_asset_parcels(&invoice_id, &wagi_handler.asset_parcels).await?
+                }
+            }
+        },
+        _ => (),
+    }
+
+    loadeds.map(|parcels| LoadedHandlerConfiguration::Bindle(parcels, asset_base))
 }
 
 async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
-    crate::loader::load_from_module_map_entry(module_map_entry, configuration)
+    crate::module_loader::load_from_module_map_entry(module_map_entry, configuration)
         .await
         .map(|v| Loaded::new(module_map_entry, v))
 }
 
 async fn handler_for_parcel(invoice_id: &bindle::Id, handler_info: WagiHandlerInfo, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<WagiHandlerInfo>> {
-    crate::loader::load_from_bindle(invoice_id, &handler_info.parcel, configuration)
+    crate::module_loader::load_from_bindle(invoice_id, &handler_info.parcel, configuration)
         .await
         .map(|v| Loaded::new(&handler_info, v))
 }
 
-fn required_blobs_for_bindle(invoice: &bindle::Invoice) -> anyhow::Result<Vec<RequiredBlob>> {
-    let top = crate::bindle_util::top_modules(invoice);
-    tracing::debug!(
-        default_modules = top.len(),
-        "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
-    );
+// fn required_blobs_for_bindle(invoice: &bindle::Invoice) -> anyhow::Result<Vec<RequiredBlob>> {
+//     let top = crate::bindle_util::top_modules(invoice);
+//     tracing::debug!(
+//         default_modules = top.len(),
+//         "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
+//     );
 
-    let interesting_parcels: Vec<_> = top.iter().filter_map(|p| crate::bindle_util::classify_parcel(p)).collect();
+//     let interesting_parcels: Vec<_> = top.iter().filter_map(|p| crate::bindle_util::classify_parcel(p)).collect();
 
-    let dependencies = bindle_util::build_full_memberships(invoice);
+//     let dependencies = bindle_util::build_full_memberships(invoice);
 
-    let required_parcels =
-        interesting_parcels
-            .iter()
-            .flat_map(|parcel| bindle_util::parcels_required_for(parcel.parcel(), &dependencies));
+//     let required_parcels =
+//         interesting_parcels
+//             .iter()
+//             .flat_map(|parcel| bindle_util::parcels_required_for(parcel.parcel(), &dependencies));
 
-    let required_blobs = required_parcels.map(|p| BindleParcel { name: p.label.name.to_owned(), sha256: p.label.sha256.to_owned() })
-        .map(|bp| RequiredBlob { source: BlobSource::BindleParcel(bp) })
-        .collect();
+//     let required_blobs = required_parcels.map(|p| BindleParcel { name: p.label.name.to_owned(), sha256: p.label.sha256.to_owned() })
+//         .map(|bp| RequiredBlob { source: BlobSource::BindleParcel(bp) })
+//         .collect();
 
-    Ok(required_blobs)
-            // // If the parcel has a group, get the group.
-            // // Then we have to figure out how to map the group onto a Wagi configuration.
-            // if let Some(c) = parcel.conditions.clone() {
-            //     let groups = c.requires.unwrap_or_default();
-            //     for n in groups.iter() {
-            //         let name = n.clone();
-            //         let members = group_members(invoice, name.as_str());
+//     Ok(required_blobs)
+//             // // If the parcel has a group, get the group.
+//             // // Then we have to figure out how to map the group onto a Wagi configuration.
+//             // if let Some(c) = parcel.conditions.clone() {
+//             //     let groups = c.requires.unwrap_or_default();
+//             //     for n in groups.iter() {
+//             //         let name = n.clone();
+//             //         let members = group_members(invoice, name.as_str());
     
-            //         // If it is a file, then we will mount it as a volume
-            //         for member in members {
-            //             if is_file(&member) {
-            //                 // Store the parcel at a local path
-            //                 let purl = parcel_url(&bindle_id, member.label.sha256.clone());
-            //                 trace!(parcel = %purl, "converting a parcel to an asset");
-            //                 let puri = purl.parse().unwrap();
+//             //         // If it is a file, then we will mount it as a volume
+//             //         for member in members {
+//             //             if is_file(&member) {
+//             //                 // Store the parcel at a local path
+//             //                 let purl = parcel_url(&bindle_id, member.label.sha256.clone());
+//             //                 trace!(parcel = %purl, "converting a parcel to an asset");
+//             //                 let puri = purl.parse().unwrap();
     
-            //                 // The returned cache path is the asset cache path PLUS the SHA256 of
-            //                 // the parcel that contains this asset. Essentially, we are mapping
-            //                 // the `/` path to `_ASSETS/$PARCEL_SHA` and then storing all the
-            //                 // files for that parcel in the same directory.
-            //                 let cache_path = cache_parcel_asset(
-            //                     &bindler,
-            //                     &puri,
-            //                     asset_cache.clone(),
-            //                     member.label.name.clone(),
-            //                 )
-            //                 .await?;
+//             //                 // The returned cache path is the asset cache path PLUS the SHA256 of
+//             //                 // the parcel that contains this asset. Essentially, we are mapping
+//             //                 // the `/` path to `_ASSETS/$PARCEL_SHA` and then storing all the
+//             //                 // files for that parcel in the same directory.
+//             //                 let cache_path = cache_parcel_asset(
+//             //                     &bindler,
+//             //                     &puri,
+//             //                     asset_cache.clone(),
+//             //                     member.label.name.clone(),
+//             //                 )
+//             //                 .await?;
     
-            //                 // Right now, we have to cache all of the files locally in one
-            //                 // directory and then mount that entire directory synchronously
-            //                 // (as a detail of how wasmtime currently works).
-            //                 // So for now, all we need to do is point Wagi to the directory
-            //                 // and have it mount that directory as root.
-            //                 //
-            //                 // The directory that cache_parcel_asset returns is the directory
-            //                 // that we expect all files to be written to. So we map
-            //                 // that to `/`
-            //                 if def.volumes.is_none() {
-            //                     let mut volumes = HashMap::new();
-            //                     volumes.insert("/".to_owned(), cache_path.to_str().unwrap().to_owned());
-            //                     def.volumes = Some(volumes);
-            //                 }
-            //                 trace!("Done with conversion");
-            //             }
-            //         }
+//             //                 // Right now, we have to cache all of the files locally in one
+//             //                 // directory and then mount that entire directory synchronously
+//             //                 // (as a detail of how wasmtime currently works).
+//             //                 // So for now, all we need to do is point Wagi to the directory
+//             //                 // and have it mount that directory as root.
+//             //                 //
+//             //                 // The directory that cache_parcel_asset returns is the directory
+//             //                 // that we expect all files to be written to. So we map
+//             //                 // that to `/`
+//             //                 if def.volumes.is_none() {
+//             //                     let mut volumes = HashMap::new();
+//             //                     volumes.insert("/".to_owned(), cache_path.to_str().unwrap().to_owned());
+//             //                     def.volumes = Some(volumes);
+//             //                 }
+//             //                 trace!("Done with conversion");
+//             //             }
+//             //         }
     
-            //         // Currently, there are no other defined behaviors for parcels.
-            //     }
-            // }
+//             //         // Currently, there are no other defined behaviors for parcels.
+//             //     }
+//             // }
     
-            // // For each group required by the module entry, we try to map its parts to one
-            // // or more of the Bindle module details
+//             // // For each group required by the module entry, we try to map its parts to one
+//             // // or more of the Bindle module details
     
-            // modules.insert(def);
-        // }
+//             // modules.insert(def);
+//         // }
     
-}
+// }
