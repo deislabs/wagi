@@ -229,10 +229,12 @@ async fn handlers_for_bindle(invoice: &bindle::Invoice, configuration: &WagiConf
     match &configuration.handlers {
         HandlerConfigurationSource::RemoteBindle(server_url, _) => {
             let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
-            for p in interesting_parcels.iter().filter(|p| is_file(p.parcel())) {
+            for p in interesting_parcels {
                 match p {
-                    InterestingParcel::WagiHandler(wagi_handler) =>
-                        client.emplace_asset_parcels(&invoice_id, &wagi_handler.asset_parcels).await?
+                    InterestingParcel::WagiHandler(wagi_handler) => {
+                        let asset_parcels: Vec<_> = wagi_handler.required_parcels.iter().filter(|p| is_file(p)).collect();
+                        client.emplace_asset_parcels(&invoice_id, &asset_parcels).await?
+                    }
                 }
             }
         },

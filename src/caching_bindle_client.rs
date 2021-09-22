@@ -56,7 +56,7 @@ impl CachingBindleClient {
         Ok(())
     }
 
-    pub async fn emplace_asset_parcels(&self, invoice_id: &bindle::Id, parcels: &[bindle::Parcel]) -> anyhow::Result<()> {
+    pub async fn emplace_asset_parcels(&self, invoice_id: &bindle::Id, parcels: &[&bindle::Parcel]) -> anyhow::Result<()> {
         let placement_futures = parcels.iter().map(|parcel| self.emplace_asset_parcel(invoice_id, parcel));
         let all_placements = futures::future::join_all(placement_futures).await;
         let first_error = all_placements.into_iter().find(|p| p.is_err());

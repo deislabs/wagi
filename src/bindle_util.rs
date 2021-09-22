@@ -53,7 +53,7 @@ impl InvoiceUnderstander {
                             route: route.to_owned(),
                             entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
                             allowed_hosts: wagi_features.get("allowed_hosts").map(|h| parse_csv(h)),
-                            asset_parcels: parcels_required_for(parcel, &self.group_dependency_map),
+                            required_parcels: parcels_required_for(parcel, &self.group_dependency_map),
                         };
                         Some(InterestingParcel::WagiHandler(handler_info))
                     },
@@ -74,7 +74,7 @@ pub struct WagiHandlerInfo {
     pub route: String,
     pub entrypoint: Option<String>,
     pub allowed_hosts: Option<Vec<String>>,
-    pub asset_parcels: Vec<Parcel>,
+    pub required_parcels: Vec<Parcel>,
 }
 
 impl InterestingParcel {
@@ -90,7 +90,7 @@ const NO_PARCELS: Vec<Parcel> = vec![];
 pub fn is_file(parcel: &Parcel) -> bool {
     parcel.label.feature.as_ref().and_then(|features| {
         features.get("wagi").map(|wagi_features| {
-            match wagi_features.get("route") {
+            match wagi_features.get("file") {
                 Some(s) => s == "true",
                 _ => false,
             }

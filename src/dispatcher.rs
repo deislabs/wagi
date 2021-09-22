@@ -201,7 +201,6 @@ impl WasmRouteHandler {
         route_context: &RequestRouteContext,
         global_context: &RequestGlobalContext,
     ) -> Result<Response<Body>, anyhow::Error> {
-        println!("Handling request for {}: vols={:?}", req.uri, self.volumes);
         let startup_span = tracing::info_span!("module instantiation").entered();
         let headers = crate::http_util::build_headers(
             &routing_info.route_pattern,
@@ -278,7 +277,6 @@ impl WasmRouteHandler {
 
         for (guest, host) in &self.volumes {
             debug!(%host, %guest, "Mapping volume from host to guest");
-            println!("Mapping volume from host {} to guest {}", host, guest);
             // Try to open the dir or log an error.
             match Dir::open_ambient_dir(host, ambient_authority()) {
                 Ok(dir) => {
