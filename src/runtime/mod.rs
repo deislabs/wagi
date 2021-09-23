@@ -8,7 +8,7 @@ use std::{
 
 // use oci_distribution::client::{Client, ClientConfig};
 // use oci_distribution::secrets::RegistryAuth;
-use oci_distribution::Reference;
+// use oci_distribution::Reference;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -497,24 +497,22 @@ impl Module {
     */
 }
 
-/// Build the image name from the URL passed in.
-/// So oci://example.com/foo:latest will become example.com/foo:latest
-///
-/// If parsing fails, this will emit an error.
-fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
-    let name = uri.path().trim_start_matches('/');
-    let port = uri.port().map(|p| format!(":{}", p)).unwrap_or_default();
-    let r: Reference = match uri.host() {
-        Some(host) => format!("{}{}/{}", host, port, name).parse(),
-        None => name.parse(),
-    }?;
-    Ok(r) // Because who doesn't love OKRs.
-}
+// /// Build the image name from the URL passed in.
+// /// So oci://example.com/foo:latest will become example.com/foo:latest
+// ///
+// /// If parsing fails, this will emit an error.
+// fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
+//     let name = uri.path().trim_start_matches('/');
+//     let port = uri.port().map(|p| format!(":{}", p)).unwrap_or_default();
+//     let r: Reference = match uri.host() {
+//         Some(host) => format!("{}{}/{}", host, port, name).parse(),
+//         None => name.parse(),
+//     }?;
+//     Ok(r) // Because who doesn't love OKRs.
+// }
 
 #[cfg(test)]
 mod test {
-    use super::{url_to_oci};
-
     // const ROUTES_WAT: &str = r#"
     // (module
     //     (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
@@ -702,28 +700,5 @@ mod test {
             uri.path()
         );
         assert!(uri.host().is_none());
-    }
-
-    #[test]
-    fn test_url_to_oci() {
-        let uri = url::Url::parse("oci:foo:bar").expect("parse URL");
-        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
-        assert_eq!("foo:bar", oci.whole().as_str());
-
-        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
-        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
-        assert_eq!("example.com/foo:dev", oci.whole().as_str());
-
-        let uri = url::Url::parse("oci:example/foo:1.2.3").expect("parse URL");
-        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
-        assert_eq!("example/foo:1.2.3", oci.whole().as_str());
-
-        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
-        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
-        assert_eq!("example.com/foo:dev", oci.whole().as_str());
-
-        let uri = url::Url::parse("oci://example.com:9000/foo:dev").expect("parse URL");
-        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
-        assert_eq!("example.com:9000/foo:dev", oci.whole().as_str());
     }
 }

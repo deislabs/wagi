@@ -84,7 +84,7 @@ impl WagiConfiguration {
 
         match handler_configuration_metadata {
             HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
-                handlers_for_module_map(&module_map_configuration).await,
+                handlers_for_module_map(&module_map_configuration, self).await,
             HandlerConfiguration::Bindle(invoice) =>
                 handlers_for_bindle(&invoice, emplacer).await,
         }
@@ -197,11 +197,11 @@ pub struct BindleParcel {
 //     }
 // }
 
-async fn handlers_for_module_map(module_map: &ModuleMapConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
     let loaders = module_map
         .entries
         .iter()
-        .map(|e| handler_for_module_map_entry(e));
+        .map(|e| handler_for_module_map_entry(e, configuration));
 
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
     
@@ -232,8 +232,8 @@ async fn handlers_for_bindle(invoice: &bindle::Invoice, emplacer: &Emplacer) -> 
     Ok(LoadedHandlerConfiguration::Bindle(bindle_entries))
 }
 
-async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
-    crate::module_loader::load_from_module_map_entry(module_map_entry)
+async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
+    crate::module_loader::load_from_module_map_entry(module_map_entry, configuration)
         .await
         .map(|v| Loaded::new(module_map_entry, v))
 }

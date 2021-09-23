@@ -1,9 +1,19 @@
 use core::convert::TryFrom;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
+// TODO: move OCI-specific stuff out to a helper file
+use oci_distribution::client::{Client, ClientConfig};
+use oci_distribution::secrets::RegistryAuth;
+use oci_distribution::Reference;
+use docker_credential;
+use docker_credential::DockerCredential;
+use sha2::{Digest, Sha256};
+use url::Url;
+
+use crate::wagi_config::WagiConfiguration;
 use crate::{wagi_config::{ModuleMapConfigurationEntry}};
 
-pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry) -> anyhow::Result<Vec<u8>> {
+pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
     // TODO: code far too similar to required blobs stuff
     let module_ref = module_map_entry.module.clone();
     match url::Url::parse(&module_ref) {
@@ -28,10 +38,91 @@ pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfiguratio
                 // TODO: Ok(bindle_client.get_parcel(&bindle_id, what).await?)
             },
             // "parcel" => self.load_parcel(&uri, store.engine(), cache).await,  // TODO: this is not mentioned in the spec...?
-            "oci" => /* TODO: copy stuff */ Err(anyhow::anyhow!("we don't do OCI yet")),
+            "oci" => load_from_oci(&uri, &configuration.asset_cache_dir).await,
             s => Err(anyhow::anyhow!("Unknown scheme {} in module reference {}", s, module_ref)),
         }
     }
+}
+
+const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
+
+#[tracing::instrument(level = "info", skip(cache))]
+async fn load_from_oci(
+    uri: &url::Url,
+    cache: impl AsRef<Path>,
+) -> anyhow::Result<Vec<u8>> {
+    let cache_file_name = hash_name(uri);
+    let cache_file_path = cache.as_ref().join(cache_file_name);
+
+    if cache_file_path.is_file() {
+        if let Ok(bytes) = tokio::fs::read(cache_file_path).await {
+            return Ok(bytes);
+        }
+    }
+
+    let config = ClientConfig {
+        protocol: oci_distribution::client::ClientProtocol::HttpsExcept(vec![
+            "localhost:5000".to_owned(),
+            "127.0.0.1:5000".to_owned(),
+        ]),
+    };
+    let mut oc = Client::new(config);
+
+    let mut auth = RegistryAuth::Anonymous;
+
+    if let Ok(credential ) = docker_credential::get_credential(uri.as_str()) {
+        if let DockerCredential::UsernamePassword(user_name, password) = credential {
+            auth = RegistryAuth::Basic(user_name, password);
+        };
+    };
+
+    let img = url_to_oci(uri).map_err(|e| {
+        tracing::error!(
+            error = %e,
+            "Could not convert uri to OCI reference"
+        );
+        e
+    })?;
+    let data = oc
+        .pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE])
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Pull failed");
+            e
+        })?;
+    if data.layers.is_empty() {
+        tracing::error!(image = %img, "Image has no layers");
+        anyhow::bail!("image has no layers");
+    }
+    let first_layer = data.layers.get(0).unwrap();
+
+    // If a cache write fails, log it but continue on.
+    tracing::trace!("writing layer to module cache");
+    if let Err(e) =
+        tokio::fs::write(cache.as_ref().join(hash_name(&uri)), &first_layer.data).await
+    {
+        tracing::warn!(error = %e, "failed to write module to cache");
+    }
+
+    let bytes = first_layer.data.clone();
+    Ok(bytes)
+}
+
+fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
+    let name = uri.path().trim_start_matches('/');
+    let port = uri.port().map(|p| format!(":{}", p)).unwrap_or_default();
+    let r: Reference = match uri.host() {
+        Some(host) => format!("{}{}/{}", host, port, name).parse(),
+        None => name.parse(),
+    }?;
+    Ok(r) // Because who doesn't love OKRs.
+}
+
+fn hash_name(url: &Url) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(&url.as_str());
+    let result = hasher.finalize();
+    format!("{:x}", result)
 }
 
 // pub async fn load_from_bindle(invoice_id: &bindle::Id, parcel: &Parcel, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
@@ -65,5 +156,33 @@ impl<T: Clone> Loaded<T> {
             metadata: metadata.clone(),
             content: Arc::new(content),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_url_to_oci() {
+        let uri = url::Url::parse("oci:foo:bar").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("foo:bar", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com/foo:dev", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci:example/foo:1.2.3").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example/foo:1.2.3", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com/foo:dev", oci.whole().as_str());
+
+        let uri = url::Url::parse("oci://example.com:9000/foo:dev").expect("parse URL");
+        let oci = url_to_oci(&uri).expect("parsing the URL should succeed");
+        assert_eq!("example.com:9000/foo:dev", oci.whole().as_str());
     }
 }
