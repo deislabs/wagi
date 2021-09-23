@@ -178,6 +178,8 @@ pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
         .value_of(ARG_DEFAULT_HOSTNAME)
         .unwrap_or("localhost:3000");
 
+    // TODO: this means that we effectively default to no caching between
+    // runs - this seems non-optimal
     let mc = match matches.value_of(ARG_REMOTE_MODULE_CACHE_DIR) {
         Some(m) => std::path::PathBuf::from(m),
         None => tempfile::tempdir()?.into_path(),
