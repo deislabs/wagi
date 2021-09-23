@@ -1,11 +1,9 @@
 use core::convert::TryFrom;
 use std::sync::Arc;
 
-use bindle::Parcel;
+use crate::{wagi_config::{ModuleMapConfigurationEntry}};
 
-use crate::{caching_bindle_client::CachingBindleClient, wagi_config::{HandlerConfigurationSource, ModuleMapConfigurationEntry, WagiConfiguration}};
-
-pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
+pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry) -> anyhow::Result<Vec<u8>> {
     // TODO: code far too similar to required blobs stuff
     let module_ref = module_map_entry.module.clone();
     match url::Url::parse(&module_ref) {
@@ -36,25 +34,25 @@ pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfiguratio
     }
 }
 
-pub async fn load_from_bindle(invoice_id: &bindle::Id, parcel: &Parcel, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
-    match &configuration.handlers {
-        HandlerConfigurationSource::ModuleConfigFile(_) => panic!("load_from_bindle called when modules.toml config specified"),
-        HandlerConfigurationSource::StandaloneBindle(base_path, _) => {
-            let reader = bindle::standalone::StandaloneRead::new(&base_path, invoice_id).await?;
-            let mpath = reader.parcel_dir
-                .join(format!("{}.dat", parcel.label.sha256))
-                .to_string_lossy()
-                .to_string();
-            let parcel_bytes = tokio::fs::read(mpath).await?;
-            Ok(parcel_bytes)
-        },
-        HandlerConfigurationSource::RemoteBindle(server_url, _) => {
-            let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
-            let parcel_bytes = client.get_module_parcel(invoice_id, &parcel).await?;
-            Ok(parcel_bytes)
-        },
-    }
-}
+// pub async fn load_from_bindle(invoice_id: &bindle::Id, parcel: &Parcel, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
+//     match &configuration.handlers {
+//         HandlerConfigurationSource::ModuleConfigFile(_) => panic!("load_from_bindle called when modules.toml config specified"),
+//         HandlerConfigurationSource::StandaloneBindle(base_path, _) => {
+//             let reader = bindle::standalone::StandaloneRead::new(&base_path, invoice_id).await?;
+//             let mpath = reader.parcel_dir
+//                 .join(format!("{}.dat", parcel.label.sha256))
+//                 .to_string_lossy()
+//                 .to_string();
+//             let parcel_bytes = tokio::fs::read(mpath).await?;
+//             Ok(parcel_bytes)
+//         },
+//         HandlerConfigurationSource::RemoteBindle(server_url, _) => {
+//             let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
+//             let parcel_bytes = client.get_module_parcel(invoice_id, &parcel).await?;
+//             Ok(parcel_bytes)
+//         },
+//     }
+// }
 
 pub struct Loaded<T> {
     pub metadata: T,

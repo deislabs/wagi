@@ -1,10 +1,9 @@
-use core::convert::TryFrom;
 use std::{collections::HashMap, net::SocketAddr, path::{Path, PathBuf}};
 
 use bindle::{Invoice, standalone::StandaloneRead};
 use serde::Deserialize;
 
-use crate::{bindle_util::{self, InterestingParcel, InvoiceUnderstander, WagiHandlerInfo, is_file}, caching_bindle_client::CachingBindleClient, module_loader::{Loaded}};
+use crate::{bindle_util::{InterestingParcel, InvoiceUnderstander, WagiHandlerInfo}, emplacer::{Emplacer}, module_loader::{Loaded}, request::RequestGlobalContext};
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {
@@ -63,31 +62,42 @@ pub enum HandlerConfiguration {
 
 pub enum LoadedHandlerConfiguration {
     ModuleMapFile(Vec<Loaded<ModuleMapConfigurationEntry>>),
-    Bindle(Vec<Loaded<WagiHandlerInfo>>, PathBuf),
+    Bindle(Vec<(WagiHandlerInfo, crate::emplacer::Bits)>)
 }
 
 impl WagiConfiguration {
     // TODO: we might need to do some renaming here to reflect that the source
     // may include non-handler roles in future
-    pub async fn read_handler_configuration(&self) -> anyhow::Result<HandlerConfiguration> {
+    pub async fn read_handler_configuration(&self, emplacer: &Emplacer) -> anyhow::Result<HandlerConfiguration> {
         match &self.handlers {
             HandlerConfigurationSource::ModuleConfigFile(path) =>
                 read_module_map_configuration(path).await.map(HandlerConfiguration::ModuleMapFile),
             HandlerConfigurationSource::StandaloneBindle(path, bindle_id) =>
                 read_standalone_bindle_invoice(path, bindle_id).await.map(HandlerConfiguration::Bindle),
-            HandlerConfigurationSource::RemoteBindle(server_url, bindle_id) =>
-                read_remote_bindle_invoice(server_url, bindle_id, &self.asset_cache_dir).await.map(HandlerConfiguration::Bindle),
+            HandlerConfigurationSource::RemoteBindle(_, bindle_id) =>
+                read_bindle_invoice(emplacer, bindle_id).await.map(HandlerConfiguration::Bindle),
         }
     }
 
-    pub async fn load_handler_configuration(&self) -> anyhow::Result<LoadedHandlerConfiguration> {
-        let handler_configuration_metadata = self.read_handler_configuration().await?;
+    pub async fn load_handler_configuration(&self, emplacer: &Emplacer) -> anyhow::Result<LoadedHandlerConfiguration> {
+        let handler_configuration_metadata = self.read_handler_configuration(emplacer).await?;
 
         match handler_configuration_metadata {
             HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
-                handlers_for_module_map(&module_map_configuration, self).await,
+                handlers_for_module_map(&module_map_configuration).await,
             HandlerConfiguration::Bindle(invoice) =>
-                handlers_for_bindle(&invoice, self).await,
+                handlers_for_bindle(&invoice, emplacer).await,
+        }
+    }
+
+    pub fn request_global_context(&self) -> RequestGlobalContext {
+        RequestGlobalContext {
+            cache_config_path: self.wasm_cache_config_file.clone(),
+            module_cache_dir: self.asset_cache_dir.clone(),
+            base_log_dir: self.log_dir.clone(),
+            default_host: self.http_configuration.default_hostname.to_owned(),
+            use_tls: self.http_configuration.tls.is_some(),
+            global_env_vars: self.env_vars.clone(),
         }
     }
 }
@@ -119,12 +129,8 @@ async fn read_standalone_bindle_invoice(path: impl AsRef<Path>, bindle_id: &bind
     Ok(invoice)
 }
 
-async fn read_remote_bindle_invoice(server_url: &url::Url, bindle_id: &bindle::Id, asset_cache_dir: impl AsRef<Path>) -> anyhow::Result<bindle::Invoice> {
-    tracing::info!(%bindle_id, "Loading remote bindle");
-    let bindler = CachingBindleClient::new(server_url, asset_cache_dir)?;
-
-    let invoice = bindler.get_invoice(bindle_id).await?;
-    Ok(invoice)
+async fn read_bindle_invoice(emplacer: &Emplacer, bindle_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
+    emplacer.read_invoice(bindle_id).await
 }
 
 pub struct RequiredBlob {
@@ -153,61 +159,57 @@ pub struct BindleParcel {
 //     }
 // }
 
-fn required_blobs_for_module_map(module_map_config: &ModuleMapConfiguration) -> anyhow::Result<Vec<RequiredBlob>> {
-    module_map_config.entries
-        .iter()
-        .map(|e| parse_module_ref(e))
-        .collect()
-}
+// fn required_blobs_for_module_map(module_map_config: &ModuleMapConfiguration) -> anyhow::Result<Vec<RequiredBlob>> {
+//     module_map_config.entries
+//         .iter()
+//         .map(|e| parse_module_ref(e))
+//         .collect()
+// }
 
-fn parse_module_ref(module: &ModuleMapConfigurationEntry) -> anyhow::Result<RequiredBlob> {
-    let module_ref = &module.module;
-    match url::Url::parse(module_ref) {
-        Err(e) => {
-            tracing::debug!(
-                error = %e,
-                "Error parsing module URI. Assuming this is a local file"
-            );
-            Ok(RequiredBlob {
-                source: BlobSource::FileLegacy(PathBuf::from(module_ref)),
-            })
-        },
-        Ok(uri) => match uri.scheme() {
-            "file" => match uri.to_file_path() {
-                Ok(p) => Ok(RequiredBlob { source: BlobSource::File(p) }),
-                Err(e) => Err(anyhow::anyhow!("Cannot get path to file {}: {:#?}", module_ref, e)),
-            }
-            "bindle" => {
-                // TODO: should we allow --bindle-server so modules.toml can resolve?  This is deprecated so not keen
-                let bindle_server = module.bindle_server.as_ref().ok_or_else(|| anyhow::anyhow!("No Bindle server specified for module {}", module_ref))?;
-                let bindle_server_url = url::Url::parse(bindle_server)?;
-                let bindle_id = bindle::Id::try_from(uri.path())?;
-                Ok(RequiredBlob { source: BlobSource::BindleLegacy(bindle_server_url, bindle_id) })
-            },
-            // "parcel" => self.load_parcel(&uri, store.engine(), cache).await,  // TODO: this is not mentioned in the spec...?
-            "oci" => Ok(RequiredBlob { source: BlobSource::Oci(uri.path().to_owned()) }),
-            s => Err(anyhow::anyhow!("Unknown scheme {} in module reference {}", s, module_ref)),
-        }
-    }
-}
+// fn parse_module_ref(module: &ModuleMapConfigurationEntry) -> anyhow::Result<RequiredBlob> {
+//     let module_ref = &module.module;
+//     match url::Url::parse(module_ref) {
+//         Err(e) => {
+//             tracing::debug!(
+//                 error = %e,
+//                 "Error parsing module URI. Assuming this is a local file"
+//             );
+//             Ok(RequiredBlob {
+//                 source: BlobSource::FileLegacy(PathBuf::from(module_ref)),
+//             })
+//         },
+//         Ok(uri) => match uri.scheme() {
+//             "file" => match uri.to_file_path() {
+//                 Ok(p) => Ok(RequiredBlob { source: BlobSource::File(p) }),
+//                 Err(e) => Err(anyhow::anyhow!("Cannot get path to file {}: {:#?}", module_ref, e)),
+//             }
+//             "bindle" => {
+//                 // TODO: should we allow --bindle-server so modules.toml can resolve?  This is deprecated so not keen
+//                 let bindle_server = module.bindle_server.as_ref().ok_or_else(|| anyhow::anyhow!("No Bindle server specified for module {}", module_ref))?;
+//                 let bindle_server_url = url::Url::parse(bindle_server)?;
+//                 let bindle_id = bindle::Id::try_from(uri.path())?;
+//                 Ok(RequiredBlob { source: BlobSource::BindleLegacy(bindle_server_url, bindle_id) })
+//             },
+//             // "parcel" => self.load_parcel(&uri, store.engine(), cache).await,  // TODO: this is not mentioned in the spec...?
+//             "oci" => Ok(RequiredBlob { source: BlobSource::Oci(uri.path().to_owned()) }),
+//             s => Err(anyhow::anyhow!("Unknown scheme {} in module reference {}", s, module_ref)),
+//         }
+//     }
+// }
 
-async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+async fn handlers_for_module_map(module_map: &ModuleMapConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
     let loaders = module_map
         .entries
         .iter()
-        .map(|e| handler_for_module_map_entry(e, configuration));
+        .map(|e| handler_for_module_map_entry(e));
 
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
     
     loadeds.map(|entries| LoadedHandlerConfiguration::ModuleMapFile(entries))
 }
 
-async fn handlers_for_bindle(invoice: &bindle::Invoice, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+async fn handlers_for_bindle(invoice: &bindle::Invoice, emplacer: &Emplacer) -> anyhow::Result<LoadedHandlerConfiguration> {
     let invoice = InvoiceUnderstander::new(invoice);
-    let invoice_id = invoice.id();
-    // TODO: THIS IS ABSOLUTELY SHOCKING IVAN WHAT THE DEVIL WERE YOU THINKING
-    let dummy_url_no_no_no = url::Url::parse("http://dummy/")?;
-    let asset_base = CachingBindleClient::new(&dummy_url_no_no_no, &configuration.asset_cache_dir)?.asset_path_for(&invoice_id);
 
     let top = invoice.top_modules();
     tracing::debug!(
@@ -215,46 +217,32 @@ async fn handlers_for_bindle(invoice: &bindle::Invoice, configuration: &WagiConf
         "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
     );
 
-    let interesting_parcels: Vec<_> = top.iter().filter_map(|p| invoice.classify_parcel(p)).collect();
-
-    let loaders = interesting_parcels.iter().filter_map(|p|
+    let interesting_parcels = top.iter().filter_map(|p| invoice.classify_parcel(p));
+    let wagi_handlers: Vec<_> = interesting_parcels.filter_map(|p|
         match p {
-            InterestingParcel::WagiHandler(wagi_handler) => Some(handler_for_parcel(&invoice_id, wagi_handler.clone(), configuration)),
+            InterestingParcel::WagiHandler(h) => Some(h),
         }
-    );
+    ).collect();
+
+    let loaders = wagi_handlers.iter().map(|h| emplacer.get_bits_for(h));
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
 
-    // TODO: this is a very ugly place to put this - emplacing the assets should not occur as
-    // invisible side effect of loading the handler WASM bytes
-    match &configuration.handlers {
-        HandlerConfigurationSource::RemoteBindle(server_url, _) => {
-            let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
-            for p in interesting_parcels {
-                match p {
-                    InterestingParcel::WagiHandler(wagi_handler) => {
-                        let asset_parcels: Vec<_> = wagi_handler.required_parcels.iter().filter(|p| is_file(p)).collect();
-                        client.emplace_asset_parcels(&invoice_id, &asset_parcels).await?
-                    }
-                }
-            }
-        },
-        _ => (),
-    }
+    let bindle_entries = wagi_handlers.into_iter().zip(loadeds?.into_iter()).collect();
 
-    loadeds.map(|parcels| LoadedHandlerConfiguration::Bindle(parcels, asset_base))
+    Ok(LoadedHandlerConfiguration::Bindle(bindle_entries))
 }
 
-async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
-    crate::module_loader::load_from_module_map_entry(module_map_entry, configuration)
+async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
+    crate::module_loader::load_from_module_map_entry(module_map_entry)
         .await
         .map(|v| Loaded::new(module_map_entry, v))
 }
 
-async fn handler_for_parcel(invoice_id: &bindle::Id, handler_info: WagiHandlerInfo, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<WagiHandlerInfo>> {
-    crate::module_loader::load_from_bindle(invoice_id, &handler_info.parcel, configuration)
-        .await
-        .map(|v| Loaded::new(&handler_info, v))
-}
+// async fn handler_for_parcel(invoice_id: &bindle::Id, handler_info: WagiHandlerInfo, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<WagiHandlerInfo>> {
+//     crate::module_loader::load_from_bindle(invoice_id, &handler_info.parcel, configuration)
+//         .await
+//         .map(|v| Loaded::new(&handler_info, v))
+// }
 
 // fn required_blobs_for_bindle(invoice: &bindle::Invoice) -> anyhow::Result<Vec<RequiredBlob>> {
 //     let top = crate::bindle_util::top_modules(invoice);

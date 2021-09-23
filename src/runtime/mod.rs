@@ -515,9 +515,6 @@ fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
 mod test {
     use super::{url_to_oci};
 
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
     // const ROUTES_WAT: &str = r#"
     // (module
     //     (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))

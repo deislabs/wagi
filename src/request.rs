@@ -8,6 +8,7 @@ pub struct RequestRouteContext {
     pub entrypoint: String,
 }
 
+#[derive(Clone, Debug)]
 pub struct RequestGlobalContext {
     pub cache_config_path: PathBuf,
     pub module_cache_dir: PathBuf,

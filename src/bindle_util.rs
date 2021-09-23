@@ -49,6 +49,7 @@ impl InvoiceUnderstander {
                 match wagi_features.get("route") {
                     Some(route) => {
                         let handler_info = WagiHandlerInfo {
+                            invoice_id: self.id(),
                             parcel: parcel.clone(),
                             route: route.to_owned(),
                             entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
@@ -70,6 +71,7 @@ pub enum InterestingParcel {
 
 #[derive(Clone)]
 pub struct WagiHandlerInfo {
+    pub invoice_id: bindle::Id,
     pub parcel: Parcel,
     pub route: String,
     pub entrypoint: Option<String>,
@@ -77,13 +79,19 @@ pub struct WagiHandlerInfo {
     pub required_parcels: Vec<Parcel>,
 }
 
-impl InterestingParcel {
-    pub fn parcel(&self) -> &Parcel {
-        match self {
-            Self::WagiHandler(handler_info) => &handler_info.parcel,
-        }
+impl WagiHandlerInfo {
+    pub fn asset_parcels(&self) -> Vec<Parcel> {
+        self.required_parcels.iter().filter(|p| is_file(p)).cloned().collect()
     }
 }
+
+// impl InterestingParcel {
+//     pub fn parcel(&self) -> &Parcel {
+//         match self {
+//             Self::WagiHandler(handler_info) => &handler_info.parcel,
+//         }
+//     }
+// }
 
 const NO_PARCELS: Vec<Parcel> = vec![];
 

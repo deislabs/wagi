@@ -1,16 +1,16 @@
-use std::{path::{Path, PathBuf}};
+// use std::{path::{Path, PathBuf}};
 
-use bindle::{client::Client, Id, Invoice, Parcel};
-use sha2::{Digest, Sha256};
-use tracing::{instrument, trace, warn};
-use url::Url;
+// use bindle::{client::Client, Id, Invoice, Parcel};
+// use sha2::{Digest, Sha256};
+// use tracing::{instrument, trace, warn};
+// use url::Url;
 
-pub(crate) fn bindle_cache_key(uri: &Url) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(uri.path());
-    let result = hasher.finalize();
-    format!("{:x}", result)
-}
+// pub(crate) fn bindle_cache_key(uri: &Url) -> String {
+//     let mut hasher = Sha256::new();
+//     hasher.update(uri.path());
+//     let result = hasher.finalize();
+//     format!("{:x}", result)
+// }
 
 // /// Given a server and a URI, attempt to load the bindle identified in the URI.
 // ///
@@ -102,155 +102,155 @@ pub(crate) fn bindle_cache_key(uri: &Url) -> String {
 //     wasmtime::Module::new(engine, p)
 // }
 
-pub async fn load_parcel(
-    server: &str,
-    uri: &Url,
-    engine: &wasmtime::Engine,
-    cache: &Path,
-) -> anyhow::Result<wasmtime::Module> {
-    let bindler = Client::new(server)?;
-    let parcel_sha = uri.fragment();
-    if parcel_sha.is_none() {
-        anyhow::bail!("No parcel sha was found in URI: {}", uri)
-    }
+// pub async fn load_parcel(
+//     server: &str,
+//     uri: &Url,
+//     engine: &wasmtime::Engine,
+//     cache: &Path,
+// ) -> anyhow::Result<wasmtime::Module> {
+//     let bindler = Client::new(server)?;
+//     let parcel_sha = uri.fragment();
+//     if parcel_sha.is_none() {
+//         anyhow::bail!("No parcel sha was found in URI: {}", uri)
+//     }
 
-    let p = load_parcel_asset(&bindler, uri).await?;
-    if let Err(e) = tokio::fs::write(cache.join(parcel_sha.unwrap()), &p).await {
-        tracing::warn!("Failed to cache bindle: {}", e)
-    }
-    wasmtime::Module::new(engine, p)
-}
+//     let p = load_parcel_asset(&bindler, uri).await?;
+//     if let Err(e) = tokio::fs::write(cache.join(parcel_sha.unwrap()), &p).await {
+//         tracing::warn!("Failed to cache bindle: {}", e)
+//     }
+//     wasmtime::Module::new(engine, p)
+// }
 
-/// Load a parcel, but make no assumptions about what is in the parcel.
-pub async fn load_parcel_asset(bindler: &Client, uri: &Url) -> anyhow::Result<Vec<u8>> {
-    let bindle_name = uri.path();
-    let parcel_sha = uri.fragment();
-    if parcel_sha.is_none() {
-        anyhow::bail!("No parcel sha was found in URI: {}", uri)
-    }
-    trace!("fetching parcel asset from bindle server");
-    let r = bindler.get_parcel(bindle_name, parcel_sha.unwrap()).await?;
-    trace!("received parcel");
-    Ok(r)
-}
+// /// Load a parcel, but make no assumptions about what is in the parcel.
+// pub async fn load_parcel_asset(bindler: &Client, uri: &Url) -> anyhow::Result<Vec<u8>> {
+//     let bindle_name = uri.path();
+//     let parcel_sha = uri.fragment();
+//     if parcel_sha.is_none() {
+//         anyhow::bail!("No parcel sha was found in URI: {}", uri)
+//     }
+//     trace!("fetching parcel asset from bindle server");
+//     let r = bindler.get_parcel(bindle_name, parcel_sha.unwrap()).await?;
+//     trace!("received parcel");
+//     Ok(r)
+// }
 
-/// Copy a parcel from a bindle directory into cache and then return the path to the cached
-/// version.
-///
-/// Wagi creates a local cache of all of the file assets for a particular bindle.  These assets are
-/// stored in a directory, and then during exection of a module, the directory is mounted to the
-/// wasm module as `/`.
-///
-/// This is part of a workaround for Wasmtime. When Wasmtime can mount files directly, this method
-/// will be removed and the runtime will mount files directly from the parcel.
-pub async fn copy_parcel_asset(
-    local_path: PathBuf,
-    uri: &Url,
-    asset_cache: PathBuf,
-    guest_path: String,
-) -> anyhow::Result<PathBuf> {
-    trace!("caching parcel as asset");
-    let hash = bindle_cache_key(&uri);
-    let dest = asset_cache.join(hash);
+// /// Copy a parcel from a bindle directory into cache and then return the path to the cached
+// /// version.
+// ///
+// /// Wagi creates a local cache of all of the file assets for a particular bindle.  These assets are
+// /// stored in a directory, and then during exection of a module, the directory is mounted to the
+// /// wasm module as `/`.
+// ///
+// /// This is part of a workaround for Wasmtime. When Wasmtime can mount files directly, this method
+// /// will be removed and the runtime will mount files directly from the parcel.
+// pub async fn copy_parcel_asset(
+//     local_path: PathBuf,
+//     uri: &Url,
+//     asset_cache: PathBuf,
+//     guest_path: String,
+// ) -> anyhow::Result<PathBuf> {
+//     trace!("caching parcel as asset");
+//     let hash = bindle_cache_key(&uri);
+//     let dest = asset_cache.join(hash);
 
-    // Now we can create the cache directory.
-    // If it already exists, create_dir_all will not return an error.
-    tokio::fs::create_dir_all(&dest).await.map_err(|e| {
-        anyhow::anyhow!(
-            "Could not create asset cache directory at {}: {}",
-            dest.display(),
-            e
-        )
-    })?;
+//     // Now we can create the cache directory.
+//     // If it already exists, create_dir_all will not return an error.
+//     tokio::fs::create_dir_all(&dest).await.map_err(|e| {
+//         anyhow::anyhow!(
+//             "Could not create asset cache directory at {}: {}",
+//             dest.display(),
+//             e
+//         )
+//     })?;
 
-    // Next, we dump the parcel into the cache directory, creating directories as needed.
-    let internal_path = dest.join(guest_path);
-    if !internal_path.starts_with(&dest) {
-        anyhow::bail!(
-            "Attempt to breakout of cache: Parcel tried to write to {}",
-            internal_path.display()
-        );
-    }
+//     // Next, we dump the parcel into the cache directory, creating directories as needed.
+//     let internal_path = dest.join(guest_path);
+//     if !internal_path.starts_with(&dest) {
+//         anyhow::bail!(
+//             "Attempt to breakout of cache: Parcel tried to write to {}",
+//             internal_path.display()
+//         );
+//     }
 
-    // We have already checked to make sure there is no breakout.
-    // So now we are just looking to make sure that the parent directory exists.
-    let parent = internal_path.parent().unwrap_or(&dest);
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create asset subdirectories: {}", e))?;
+//     // We have already checked to make sure there is no breakout.
+//     // So now we are just looking to make sure that the parent directory exists.
+//     let parent = internal_path.parent().unwrap_or(&dest);
+//     tokio::fs::create_dir_all(parent)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("Failed to create asset subdirectories: {}", e))?;
 
-    tokio::fs::copy(local_path, internal_path).await?;
-    Ok(dest)
-}
+//     tokio::fs::copy(local_path, internal_path).await?;
+//     Ok(dest)
+// }
 
-/// Load a parcel, cache it locally on disk, and then return the path to the cached version.
-///
-/// Wagi creates a local cache of all of the file assets for a particular bindle.
-/// These assets are stored in a directory, and then during exection of a module,
-/// the directory is mounted to the wasm module as `/`.
-///
-/// This is part of a workaround for Wasmtime. When Wasmtime can be safely used in
-/// async, this method will be removed and the runtime will directly load from the parcel.
-pub async fn cache_parcel_asset(
-    bindler: &Client,
-    uri: &Url,
-    asset_cache: PathBuf,
-    guest_path: String,
-) -> anyhow::Result<PathBuf> {
-    trace!("caching parcel as asset");
-    let hash = bindle_cache_key(&uri);
-    let dest = asset_cache.join(hash);
+// /// Load a parcel, cache it locally on disk, and then return the path to the cached version.
+// ///
+// /// Wagi creates a local cache of all of the file assets for a particular bindle.
+// /// These assets are stored in a directory, and then during exection of a module,
+// /// the directory is mounted to the wasm module as `/`.
+// ///
+// /// This is part of a workaround for Wasmtime. When Wasmtime can be safely used in
+// /// async, this method will be removed and the runtime will directly load from the parcel.
+// pub async fn cache_parcel_asset(
+//     bindler: &Client,
+//     uri: &Url,
+//     asset_cache: PathBuf,
+//     guest_path: String,
+// ) -> anyhow::Result<PathBuf> {
+//     trace!("caching parcel as asset");
+//     let hash = bindle_cache_key(&uri);
+//     let dest = asset_cache.join(hash);
 
-    // Now we can create the cache directory.
-    // If it already exists, create_dir_all will not return an error.
-    tokio::fs::create_dir_all(&dest).await.map_err(|e| {
-        anyhow::anyhow!(
-            "Could not create asset cache directory at {}: {}",
-            dest.display(),
-            e
-        )
-    })?;
+//     // Now we can create the cache directory.
+//     // If it already exists, create_dir_all will not return an error.
+//     tokio::fs::create_dir_all(&dest).await.map_err(|e| {
+//         anyhow::anyhow!(
+//             "Could not create asset cache directory at {}: {}",
+//             dest.display(),
+//             e
+//         )
+//     })?;
 
-    // Next, we dump the parcel into the cache directory, creating directories as needed.
-    let internal_path = dest.join(guest_path);
-    if !internal_path.starts_with(&dest) {
-        anyhow::bail!(
-            "Attempt to breakout of cache: Parcel tried to write to {}",
-            internal_path.display()
-        );
-    }
+//     // Next, we dump the parcel into the cache directory, creating directories as needed.
+//     let internal_path = dest.join(guest_path);
+//     if !internal_path.starts_with(&dest) {
+//         anyhow::bail!(
+//             "Attempt to breakout of cache: Parcel tried to write to {}",
+//             internal_path.display()
+//         );
+//     }
 
-    // We have already checked to make sure there is no breakout.
-    // So now we are just looking to make sure that the parent directory exists.
-    let parent = internal_path.parent().unwrap_or(&dest);
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create asset subdirectories: {}", e))?;
+//     // We have already checked to make sure there is no breakout.
+//     // So now we are just looking to make sure that the parent directory exists.
+//     let parent = internal_path.parent().unwrap_or(&dest);
+//     tokio::fs::create_dir_all(parent)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("Failed to create asset subdirectories: {}", e))?;
 
-    // Next, we fetch the actual data from the Bindle server and then write it to
-    // the newly created path on disk.
-    let data = load_parcel_asset(bindler, uri).await?;
-    tokio::fs::write(&internal_path, data)
-        .await
-        .map_err(|e| anyhow::anyhow!("Could not create parcel data file: {}", e))?;
+//     // Next, we fetch the actual data from the Bindle server and then write it to
+//     // the newly created path on disk.
+//     let data = load_parcel_asset(bindler, uri).await?;
+//     tokio::fs::write(&internal_path, data)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("Could not create parcel data file: {}", e))?;
 
-    Ok(dest)
-}
+//     Ok(dest)
+// }
 
 // TODO: this potentially relates to `bindle:` URIs in module refs?
-/// Convenience function for generating an internal Parcel URL.
-///
-/// Internally, a parcel URL is represented as `parcel:$NAME/$VERSION#$PARCEL_SHA`
-/// This is not a general convention, but is used to pass parcel information into
-/// and out of a module configuration.
-fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
-    format!(
-        "parcel:{}/{}#{}",
-        bindle_id.name(),
-        bindle_id.version_string(),
-        parcel_sha
-    )
-}
+// /// Convenience function for generating an internal Parcel URL.
+// ///
+// /// Internally, a parcel URL is represented as `parcel:$NAME/$VERSION#$PARCEL_SHA`
+// /// This is not a general convention, but is used to pass parcel information into
+// /// and out of a module configuration.
+// fn parcel_url(bindle_id: &Id, parcel_sha: String) -> String {
+//     format!(
+//         "parcel:{}/{}#{}",
+//         bindle_id.name(),
+//         bindle_id.version_string(),
+//         parcel_sha
+//     )
+// }
 
 // TODO: need bring dependency groups code across
 /*
@@ -446,30 +446,30 @@ pub async fn invoice_to_modules(
 */
 
 // TODO: replace these functions.  (Currently used by tests.)
-fn group_members(invoice: &Invoice, name: &str) -> Vec<Parcel> {
-    invoice
-        .parcel
-        .clone()
-        .unwrap_or_default()
-        .iter()
-        .filter(|p| p.member_of(name))
-        .cloned()
-        .collect()
-}
+// fn group_members(invoice: &Invoice, name: &str) -> Vec<Parcel> {
+//     invoice
+//         .parcel
+//         .clone()
+//         .unwrap_or_default()
+//         .iter()
+//         .filter(|p| p.member_of(name))
+//         .cloned()
+//         .collect()
+// }
 
-fn is_file(parcel: &Parcel) -> bool {
-    let wagi_key = "wagi".to_owned();
-    let file_key = "file".to_owned();
-    parcel
-        .label
-        .feature
-        .as_ref()
-        .map(|f| {
-            f.get(&wagi_key).map(|g| match g.get(&file_key) {
-                Some(v) => "true" == v,
-                None => false,
-            })
-        })
-        .flatten()
-        .unwrap_or(false)
-}
+// fn is_file(parcel: &Parcel) -> bool {
+//     let wagi_key = "wagi".to_owned();
+//     let file_key = "file".to_owned();
+//     parcel
+//         .label
+//         .feature
+//         .as_ref()
+//         .map(|f| {
+//             f.get(&wagi_key).map(|g| match g.get(&file_key) {
+//                 Some(v) => "true" == v,
+//                 None => false,
+//             })
+//         })
+//         .flatten()
+//         .unwrap_or(false)
+// }

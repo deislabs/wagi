@@ -1,13 +1,13 @@
-use std::iter::FromIterator;
+use std::net::SocketAddr;
 use std::{collections::HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::sync::{Arc, RwLock};
 
 use cap_std::fs::Dir;
 use hyper::{
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
-    Body, Response, StatusCode,
+    Body, Request, Response, StatusCode,
 };
 use sha2::{Digest, Sha256};
 use tracing::{debug, instrument};
@@ -16,7 +16,8 @@ use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
-use crate::http_util::{internal_error, parse_cgi_headers};
+use crate::emplacer::Bits;
+use crate::http_util::{internal_error, not_found, parse_cgi_headers};
 use crate::module_loader::Loaded;
 use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 
@@ -29,6 +30,7 @@ const STDERR_FILE: &str = "module.stderr";
 #[derive(Clone, Debug)]
 pub struct RoutingTable {
     pub entries: Vec<RoutingTableEntry>,
+    pub global_context: RequestGlobalContext,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +69,34 @@ pub struct WasmRouteHandler {
 }
 
 impl RoutingTable {
+    pub async fn handle_request(
+        &self,
+        req: Request<Body>,
+        client_addr: SocketAddr,
+    ) -> Result<Response<Body>, hyper::Error> {
+        tracing::trace!("Processing request");
+
+        let uri_path = req.uri().path().to_owned();
+
+        let (parts, body) = req.into_parts();
+        let data = hyper::body::to_bytes(body)
+            .await
+            .unwrap_or_default()
+            .to_vec();
+
+        match self.route_for(&uri_path) {
+            Ok(rte) => {
+                let request_context = RequestContext {
+                    client_addr,
+                };
+                let response = rte.handle_request(&parts, data, &request_context, &self.global_context);
+                Ok(response)
+            },
+            Err(_) => Ok(not_found()),
+        }
+
+    }
+
     #[instrument(level = "trace", skip(self))]
     pub fn route_for(&self, uri_fragment: &str) -> Result<RoutingTableEntry, anyhow::Error> {
         for r in &self.entries {
@@ -107,15 +137,15 @@ impl RoutingTableEntry {
         })
     }
 
-    fn build_from_parcel(source: &Loaded<WagiHandlerInfo>, asset_base: &PathBuf) -> Option<anyhow::Result<RoutingTableEntry>> {
-        let wagi_handler = &source.metadata;
+    fn build_from_bindle_entry(source: &(WagiHandlerInfo, Bits)) -> Option<anyhow::Result<RoutingTableEntry>> {
+        let (wagi_handler, bits) = source;
 
         let route_pattern = RoutePattern::parse(&wagi_handler.route);
-        let wasm_source = WasmModuleSource::Blob(source.content.clone());
+        let wasm_source = WasmModuleSource::Blob(bits.wasm_module.clone());
         let wasm_route_handler = WasmRouteHandler {
             wasm_module_source: wasm_source,
             entrypoint: wagi_handler.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-            volumes: asset_dir_volume_mount(asset_base),
+            volumes: bits.volume_mounts.clone(),
             allowed_hosts: wagi_handler.allowed_hosts.clone(),
             http_max_concurrency: None,
         };
@@ -180,12 +210,6 @@ impl RoutingTableEntry {
             }
         }
     }
-}
-
-fn asset_dir_volume_mount(asset_base: &PathBuf) -> HashMap<String, String> {
-    let mut volumes = HashMap::new();
-    volumes.insert("/".to_owned(), asset_base.display().to_string());  // TODO: maybe volumes should map PathBufs // or struct of host and guest
-    volumes
 }
 
 impl WasmRouteHandler {
@@ -380,17 +404,20 @@ impl RoutePattern {
 }
 
 impl RoutingTable {
-    pub fn build(source: &LoadedHandlerConfiguration) -> anyhow::Result<RoutingTable> {
+    pub fn build(source: &LoadedHandlerConfiguration, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
         let user_entries = match source {
             LoadedHandlerConfiguration::ModuleMapFile(module_map_entries) =>
                 Self::build_from_modules_toml(module_map_entries),
-            LoadedHandlerConfiguration::Bindle(parcels, asset_base) =>
-                Self::build_from_parcels(parcels, asset_base),
+            LoadedHandlerConfiguration::Bindle(bindle_entries) =>
+                Self::build_from_bindle_entries(bindle_entries),
         }?;
         let built_in_entries = Self::inbuilt_patterns();
 
         let entries = user_entries.into_iter().chain(built_in_entries).collect();
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            global_context,
+        })
     }
 
     fn build_from_modules_toml(module_map_entries: &Vec<Loaded<ModuleMapConfigurationEntry>>) -> anyhow::Result<Vec<RoutingTableEntry>> {
@@ -401,10 +428,10 @@ impl RoutingTable {
             .collect()
     }
 
-    fn build_from_parcels(parcels: &Vec<Loaded<WagiHandlerInfo>>, asset_base: &PathBuf) -> anyhow::Result<Vec<RoutingTableEntry>> {
-        parcels
+    fn build_from_bindle_entries(bindle_entries: &Vec<(WagiHandlerInfo, Bits)>) -> anyhow::Result<Vec<RoutingTableEntry>> {
+        bindle_entries
             .iter()
-            .filter_map(|p| RoutingTableEntry::build_from_parcel(&p, asset_base))
+            .filter_map(|e| RoutingTableEntry::build_from_bindle_entry(e))
             .collect()
     }
 

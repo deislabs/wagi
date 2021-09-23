@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
+use crate::dispatcher::RoutingTable;
 use crate::{tls, wagi_config::TlsConfiguration};
 use crate::wagi_config::WagiConfiguration;
-use crate::Router;
 
 use hyper::{
     server::conn::AddrStream,
@@ -13,15 +13,15 @@ use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 
 pub struct WagiServer {
-    router: Router,
+    routing_table: RoutingTable,
     tls: Option<TlsConfiguration>,
     address: SocketAddr,
 }
 
 impl WagiServer {
-    pub async fn new(configuration: &WagiConfiguration, router: Router) -> anyhow::Result<Self> {
+    pub async fn new(configuration: &WagiConfiguration, routing_table: RoutingTable) -> anyhow::Result<Self> {
         Ok(Self {
-            router,
+            routing_table,
             tls: configuration.http_configuration.tls.clone(),
             address: configuration.http_configuration.listen_on.clone(),
         })
@@ -39,7 +39,7 @@ impl WagiServer {
                     // We are mapping the error because the normal error types are not cloneable and
                     // service functions do not like captured vars, even when moved
                     let addr_res = inner.peer_addr().map_err(|e| e.to_string());
-                    let r = self.router.clone();
+                    let r = self.routing_table.clone();
                     Box::pin(async move {
                         Ok::<_, std::convert::Infallible>(service_fn(move |req| {
                             let r2 = r.clone();
@@ -52,7 +52,7 @@ impl WagiServer {
                             let a_res = addr_res.clone();
                             async move {
                                 match a_res {
-                                    Ok(addr) => r2.route(req, addr).await,
+                                    Ok(addr) => r2.handle_request(req, addr).await,
                                     Err(e) => {
                                         tracing::error!(error = %e, "Socket connection error on new connection");
                                         Ok(Response::builder()
@@ -72,11 +72,11 @@ impl WagiServer {
             None => {
                 let mk_svc = make_service_fn(move |conn: &AddrStream| {
                     let addr = conn.remote_addr();
-                    let r = self.router.clone();
+                    let r = self.routing_table.clone();
                     async move {
                         Ok::<_, std::convert::Infallible>(service_fn(move |req| {
                             let r2 = r.clone();
-                            async move { r2.route(req, addr).await }
+                            async move { r2.handle_request(req, addr).await }
                         }))
                     }
                 });
