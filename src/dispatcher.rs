@@ -40,13 +40,6 @@ pub struct RoutingTableEntry {
     pub handler_name: String,
 }
 
-// TODO: TEMPORARY FOR SERDE
-impl Default for RoutingTableEntry {
-    fn default() -> Self {
-        Self { route_pattern: RoutePattern::parse("/..."), handler_info: RouteHandler::HealthCheck, handler_name: "fake".to_owned() }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum RoutePattern {
     Exact(String),
