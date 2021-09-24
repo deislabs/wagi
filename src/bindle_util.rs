@@ -85,14 +85,6 @@ impl WagiHandlerInfo {
     }
 }
 
-// impl InterestingParcel {
-//     pub fn parcel(&self) -> &Parcel {
-//         match self {
-//             Self::WagiHandler(handler_info) => &handler_info.parcel,
-//         }
-//     }
-// }
-
 const NO_PARCELS: Vec<Parcel> = vec![];
 
 pub fn is_file(parcel: &Parcel) -> bool {
