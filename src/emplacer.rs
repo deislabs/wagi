@@ -11,12 +11,6 @@ pub struct Emplacer {
     source: HandlerConfigurationSource,
 }
 
-// pub enum EmplacementSource {
-//     ModuleMap,
-//     StandaloneBindle(PathBuf, bindle::Id),
-//     RemoteBindle(Url, bindle::Id),
-// }
-
 pub struct Bits {
     pub wasm_module: Arc<Vec<u8>>,
     pub volume_mounts: HashMap<String, String>,
