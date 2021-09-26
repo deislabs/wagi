@@ -1,0 +1,97 @@
+bindleVersion = '1.0.0'
+
+[bindle]
+name = 'itowlson/toast-on-demand'
+version = '0.1.0-ivan-2021.09.24.17.06.16.069'
+authors = ['itowlson']
+
+[[parcel]]
+[parcel.label]
+sha256 = 'd7cc2648c55b8b1896472b1f87da9d80c26c8e9bd71602ba981123639140bf77'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/toast-on-demand.wasm'
+size = 1761014
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/toast-on-demand.wasm-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = 'd7cc2648c55b8b1896472b1f87da9d80c26c8e9bd71602ba981123639140bf77'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/toast-on-demand.wasm'
+size = 1761014
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/thing'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/toast-on-demand.wasm-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = 'd7cc2648c55b8b1896472b1f87da9d80c26c8e9bd71602ba981123639140bf77'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/toast-on-demand.wasm'
+size = 1761014
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/blah/...'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/toast-on-demand.wasm-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = '9ab62770d7e69fa16243e6b0d199fcfd1c733f1d710297b505c98938a36a9be4'
+mediaType = 'application/wasm'
+name = 'fileserver.gr.wasm'
+size = 190934
+
+[parcel.label.annotations]
+hippos_do_not_stage = 'true'
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/assets/...'
+
+[parcel.conditions]
+requires = ['import:fileserver/0.4.1:static-at-/assets/...-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = '9e6ab7aecbf6ee392f5e62cd4e5a4aee2474c50095953aac7d53eb37fc353fac'
+mediaType = 'image/png'
+name = 'images/derrida.png'
+size = 27611
+[parcel.label.feature.wagi]
+file = 'true'
+
+[parcel.conditions]
+memberOf = ['import:fileserver/0.4.1:static-at-/assets/...-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = '41357daa4b91a9ab6f5c855fc606962d66fd6542e920d11e7ace9eaefc1745a9'
+mediaType = 'image/jpeg'
+name = 'images/raw-toast.jpeg'
+size = 105208
+[parcel.label.feature.wagi]
+file = 'true'
+
+[parcel.conditions]
+memberOf = ['import:fileserver/0.4.1:static-at-/assets/...-files']
+
+[[group]]
+name = 'target/wasm32-wasi/release/toast-on-demand.wasm-files'
+
+[[group]]
+name = 'target/wasm32-wasi/release/toast-on-demand.wasm-files'
+
+[[group]]
+name = 'target/wasm32-wasi/release/toast-on-demand.wasm-files'
+
+[[group]]
+name = 'import:fileserver/0.4.1:static-at-/assets/...-files'

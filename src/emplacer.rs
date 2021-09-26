@@ -18,12 +18,19 @@ pub struct Bits {
 
 impl Emplacer {
     pub async fn new(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
-        let cache_path = configuration.asset_cache_dir.clone();
+        Self::new_from_settings(
+            &configuration.asset_cache_dir,
+            &configuration.handlers
+        ).await
+    }
+
+    async fn new_from_settings(asset_cache_dir: &PathBuf, handlers: &HandlerConfigurationSource) -> anyhow::Result<Self> {
+        let cache_path = asset_cache_dir.clone();
         tokio::fs::create_dir_all(&cache_path).await
             .with_context(|| format!("Can't create asset cache directory {}", cache_path.display()))?;
         Ok(Self {
             cache_path,
-            source: configuration.handlers.clone(),
+            source: handlers.clone(),
         })
     }
 
@@ -69,7 +76,7 @@ impl Emplacer {
         self.emplace_bindle(&client, id).await
     }
 
-    async fn emplace_bindle(&self, reader: &impl ParcelReader, id: &bindle::Id) -> anyhow::Result<()> {
+    async fn emplace_bindle(&self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<()> {
         let invoice_path = self.invoice_path(id);
         if !invoice_path.is_file() {
             let invoice_text = reader.get_invoice_bytes(id).await?;
@@ -101,13 +108,13 @@ impl Emplacer {
         }
     }
 
-    async fn emplace_module_and_assets(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, handler: &WagiHandlerInfo) -> anyhow::Result<()> {
+    async fn emplace_module_and_assets(&self, reader: &impl BindleReader, invoice_id: &bindle::Id, handler: &WagiHandlerInfo) -> anyhow::Result<()> {
         self.emplace_module(reader, invoice_id, &handler.parcel).await?;
         self.emplace_as_assets(reader, invoice_id, &handler.asset_parcels()).await?;
         Ok(())
     }
 
-    async fn emplace_module(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
+    async fn emplace_module(&self, reader: &impl BindleReader, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
         let parcel_path = self.cache_path.join(&parcel.label.sha256);
         if parcel_path.is_file() {
             return Ok(());
@@ -118,7 +125,7 @@ impl Emplacer {
             .with_context(|| format!("Error caching parcel {} at {}", parcel.label.name, parcel_path.display()))
     }
 
-    async fn emplace_as_asset(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
+    async fn emplace_as_asset(&self, reader: &impl BindleReader, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
         let parcel_path = self.asset_parcel_path(invoice_id, parcel);
         if parcel_path.is_file() {
             return Ok(());
@@ -130,7 +137,7 @@ impl Emplacer {
         Ok(())
     }
 
-    async fn emplace_as_assets(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, parcels: &Vec<bindle::Parcel>) -> anyhow::Result<()> {
+    async fn emplace_as_assets(&self, reader: &impl BindleReader, invoice_id: &bindle::Id, parcels: &Vec<bindle::Parcel>) -> anyhow::Result<()> {
         let placement_futures = parcels.iter().map(|parcel| self.emplace_as_asset(reader, invoice_id, parcel));
         let all_placements = futures::future::join_all(placement_futures).await;
         let first_error = all_placements.into_iter().find(|p| p.is_err());
@@ -192,7 +199,7 @@ async fn safely_write(path: impl AsRef<Path>, content: Vec<u8>) -> std::io::Resu
 }
 
 #[async_trait::async_trait]
-trait ParcelReader {
+trait BindleReader {
     // We have to flatten the error type at this point because standalone and remote
     // have different error types.
     async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>>;
@@ -200,7 +207,7 @@ trait ParcelReader {
 }
 
 #[async_trait::async_trait]
-impl ParcelReader for bindle::client::Client {
+impl BindleReader for bindle::client::Client {
     async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>> {
         let invoice = self.get_invoice(id).await
             .with_context(|| format!("Error fetching remote invoice {}", &id))?;
@@ -216,7 +223,7 @@ impl ParcelReader for bindle::client::Client {
 
 
 #[async_trait::async_trait]
-impl ParcelReader for bindle::standalone::StandaloneRead {
+impl BindleReader for bindle::standalone::StandaloneRead {
     async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>> {
         let invoice_bytes = tokio::fs::read(&self.invoice_file).await
             .with_context(|| format!("Error reading bindle invoice {} from {}", id, self.invoice_file.display()))?;
@@ -226,5 +233,56 @@ impl ParcelReader for bindle::standalone::StandaloneRead {
         let path = self.parcel_dir.join(format!("{}.dat", parcel.label.sha256));
         tokio::fs::read(&path).await
             .with_context(|| format!("Error reading standalone parcel {} from {}", parcel.label.name, path.display()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+
+    use super::*;
+
+    fn test_data_dir() -> PathBuf {
+        let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        project_path.join("testdata").join("standalone-bindles")
+    }
+
+    fn pick_test_dir() -> PathBuf {
+        let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let timestamp = chrono::Local::now()
+            .format("%Y.%m.%d.%H.%M.%S.%3f")
+            .to_string();
+        project_path.join("tests_working_dir").join(timestamp)
+    }
+
+    #[tokio::test]
+    async fn can_emplace_standalone_bindle() {
+        let test_id = bindle::Id::from_str("itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069")
+            .expect("Test bindle ID should have been valid");
+        let asset_cache_dir = pick_test_dir();
+        let handlers = HandlerConfigurationSource::StandaloneBindle(test_data_dir(), test_id);
+        let emplacer = Emplacer::new_from_settings(&asset_cache_dir, &handlers).await
+            .expect("Should have created emplacer");
+        emplacer.emplace_all().await
+            .expect("Should have emplaced files");
+
+        // Module parcels should be emplaced at top level with filename=SHA
+        assert!(asset_cache_dir.join("d7cc2648c55b8b1896472b1f87da9d80c26c8e9bd71602ba981123639140bf77").is_file(),
+            "Expected module parcel in asset directory but not found");
+        assert!(asset_cache_dir.join("9ab62770d7e69fa16243e6b0d199fcfd1c733f1d710297b505c98938a36a9be4").is_file(),
+            "Expected module parcel in asset directory but not found");
+
+        // There should be an asset directory with the SHA of the invoice ID
+        assert!(asset_cache_dir.join("_ASSETS/5c168e0e969ec344be4044dccd4f68e26f20976a5edac0d49e0c28c57ba465b5").is_dir(),
+            "Expected invoice asset dir in asset directory but not found");
+
+        // There should be assets in the asset directory
+        assert!(asset_cache_dir.join("_ASSETS/5c168e0e969ec344be4044dccd4f68e26f20976a5edac0d49e0c28c57ba465b5/images/raw-toast.jpeg").is_file(),
+            "Expected image file in invoice asset directory but not found");
+        assert!(asset_cache_dir.join("_ASSETS/5c168e0e969ec344be4044dccd4f68e26f20976a5edac0d49e0c28c57ba465b5/images/derrida.png").is_file(),
+            "Where in the world in Jacques Derrida?");
+
+        tokio::fs::remove_dir_all(&asset_cache_dir).await
+            .expect("(note: test body passed, but cleanup failed");
     }
 }

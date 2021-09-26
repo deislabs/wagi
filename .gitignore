@@ -3,3 +3,4 @@ wagi-cache/
 /ssl-example.*
 .vscode/
 _scratch/
+tests_working_dir/
