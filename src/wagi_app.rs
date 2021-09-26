@@ -245,10 +245,10 @@ fn parse_handler_configuration_source(
     // and you want to ignore it in favour of a standalone file. This should be resolved by looking
     // at sources rather than by allowing confusing combinations though!
     match (
-        matches.value_of(ARG_BINDLE_ID),
-        matches.value_of(ARG_BINDLE_STANDALONE_DIR),
-        matches.value_of(ARG_BINDLE_URL),
-        matches.value_of(ARG_MODULES_CONFIG),
+        matches.value_of(ARG_BINDLE_ID).ignore_if_empty(),
+        matches.value_of(ARG_BINDLE_STANDALONE_DIR).ignore_if_empty(),
+        matches.value_of(ARG_BINDLE_URL).ignore_if_empty(),
+        matches.value_of(ARG_MODULES_CONFIG).ignore_if_empty(),
     ) {
         (None, None, None, modules_config_opt) => {
             let modules_config = modules_config_opt.unwrap_or("modules.toml");
@@ -366,6 +366,20 @@ fn parse_env_var(val: &str) -> anyhow::Result<(String, String)> {
     };
 
     Ok((key.to_owned(), final_value))
+}
+
+trait EmptyIgnorer {
+    fn ignore_if_empty(&self) -> Self;
+}
+
+impl EmptyIgnorer for Option<&str> {
+    fn ignore_if_empty(&self) -> Self {
+        match self {
+            Some("") => None,
+            None => None,
+            Some(s) => Some(s),
+        }
+    }
 }
 
 #[cfg(test)]

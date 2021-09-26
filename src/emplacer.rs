@@ -62,10 +62,43 @@ impl Emplacer {
         Ok(invoice)
     }
 
-    async fn emplace_standalone_bindle(&self, _bindle_base_dir: &PathBuf, _id: &bindle::Id) -> anyhow::Result<()> {
-        // let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await?;
-        // reader.
-        todo!("YOU HAVEN'T DONE THIS BIT YET TOWLSON!");
+    async fn emplace_standalone_bindle(&self, bindle_base_dir: &PathBuf, id: &bindle::Id) -> anyhow::Result<()> {
+        let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await
+            .with_context(|| format!("Error constructing bindle reader for {} in {}", id, bindle_base_dir.display()))?;
+
+        let invoice_path = self.invoice_path(id);
+        if !invoice_path.is_file() {
+            // tokio::fs::copy fails if destination dir doesn't exist; let's just save special
+            // and do a manual read-then-safely_write
+            let invoice_text = tokio::fs::read(&reader.invoice_file).await
+                .with_context(|| format!("Error reading bindle invoice {} from {}", id, reader.invoice_file.display()))?;
+            safely_write(&invoice_path, invoice_text).await
+                .with_context(|| format!("Error writing invoice {} to cache", &id))?;
+        }
+
+        let invoice_text = tokio::fs::read(&invoice_path).await
+            .with_context(|| format!("Error reading cached invoice file {}", invoice_path.display()))?;
+        let invoice = toml::from_slice(&invoice_text)
+            .with_context(|| format!("Error parsing cached invoice file {}", invoice_path.display()))?;
+
+        let invoice = InvoiceUnderstander::new(&invoice);
+
+        // TODO: this is duplicate!
+        let module_parcels: Vec<_> = invoice
+            .top_modules().iter()
+            .filter_map(|parcel| invoice.classify_parcel(parcel))
+            .filter_map(|parcel| match parcel {
+                InterestingParcel::WagiHandler(h) => Some(h),
+            })
+            .collect();
+
+        let module_placements = module_parcels.iter().map(|h| self.emplace_module_and_assets(&reader, &id, &h));
+        let all_module_placements = futures::future::join_all(module_placements).await;
+
+        match all_module_placements.into_iter().find_map(|e| e.err()) {
+            Some(e) => Err(e),
+            None => Ok(())
+        }
     }
 
     async fn emplace_remote_bindle(&self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<()> {
@@ -107,39 +140,37 @@ impl Emplacer {
         }
     }
 
-    async fn emplace_module_and_assets(&self, client: &bindle::client::Client, invoice_id: &bindle::Id, handler: &WagiHandlerInfo) -> anyhow::Result<()> {
-        self.emplace_module(client, invoice_id, &handler.parcel).await?;
-        self.emplace_as_assets(client, invoice_id, &handler.asset_parcels()).await?;
+    async fn emplace_module_and_assets(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, handler: &WagiHandlerInfo) -> anyhow::Result<()> {
+        self.emplace_module(reader, invoice_id, &handler.parcel).await?;
+        self.emplace_as_assets(reader, invoice_id, &handler.asset_parcels()).await?;
         Ok(())
     }
 
-    async fn emplace_module(&self, client: &bindle::client::Client, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
+    async fn emplace_module(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
         let parcel_path = self.cache_path.join(&parcel.label.sha256);
         if parcel_path.is_file() {
             return Ok(());
         }
 
-        let parcel_data = client.get_parcel(invoice_id, &parcel.label.sha256).await
-            .with_context(|| format!("Error fetching remote parcel {}", parcel.label.name))?;
+        let parcel_data = reader.get_parcel(invoice_id, &parcel).await?;
         safely_write(&parcel_path, parcel_data).await
             .with_context(|| format!("Error caching parcel {} at {}", parcel.label.name, parcel_path.display()))
     }
 
-    pub async fn emplace_as_asset(&self, client: &bindle::client::Client, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
+    async fn emplace_as_asset(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<()> {
         let parcel_path = self.asset_parcel_path(invoice_id, parcel);
         if parcel_path.is_file() {
             return Ok(());
         }
 
-        let parcel_data = client.get_parcel(invoice_id, &parcel.label.sha256).await
-            .with_context(|| format!("Error fetching remote parcel {}", parcel.label.name))?;
+        let parcel_data = reader.get_parcel(invoice_id, &parcel).await?;
         safely_write(&parcel_path, parcel_data).await
             .with_context(|| format!("Error caching parcel {} at {}", parcel.label.name, parcel_path.display()))?;
         Ok(())
     }
 
-    async fn emplace_as_assets(&self, client: &bindle::client::Client, invoice_id: &bindle::Id, parcels: &Vec<bindle::Parcel>) -> anyhow::Result<()> {
-        let placement_futures = parcels.iter().map(|parcel| self.emplace_as_asset(client, invoice_id, parcel));
+    async fn emplace_as_assets(&self, reader: &impl ParcelReader, invoice_id: &bindle::Id, parcels: &Vec<bindle::Parcel>) -> anyhow::Result<()> {
+        let placement_futures = parcels.iter().map(|parcel| self.emplace_as_asset(reader, invoice_id, parcel));
         let all_placements = futures::future::join_all(placement_futures).await;
         let first_error = all_placements.into_iter().find(|p| p.is_err());
         first_error.unwrap_or(Ok(()))
@@ -197,4 +228,29 @@ async fn safely_write(path: impl AsRef<Path>, content: Vec<u8>) -> std::io::Resu
     )?;
     tokio::fs::create_dir_all(dir).await?;
     tokio::fs::write(path, content).await
+}
+
+#[async_trait::async_trait]
+trait ParcelReader {
+    // We have to flatten the error type at this point because standalone and remote
+    // have different error types.
+    async fn get_parcel(&self, id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<Vec<u8>>;
+}
+
+#[async_trait::async_trait]
+impl ParcelReader for bindle::client::Client {
+    async fn get_parcel(&self, id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<Vec<u8>> {
+        self.get_parcel(id, &parcel.label.sha256).await
+            .with_context(|| format!("Error fetching remote parcel {}", parcel.label.name))
+    }
+}
+
+
+#[async_trait::async_trait]
+impl ParcelReader for bindle::standalone::StandaloneRead {
+    async fn get_parcel(&self, _id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<Vec<u8>> {
+        let path = self.parcel_dir.join(format!("{}.dat", parcel.label.sha256));
+        tokio::fs::read(&path).await
+            .with_context(|| format!("Error reading standalone parcel {} from {}", parcel.label.name, path.display()))
+    }
 }

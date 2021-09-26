@@ -1,9 +1,11 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
+#[derive(Clone, Debug)]
 pub struct RequestContext {
     pub client_addr: SocketAddr,
 }
 
+#[derive(Clone, Debug)]
 pub struct RequestRouteContext {
     pub entrypoint: String,
 }
