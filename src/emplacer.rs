@@ -60,12 +60,19 @@ impl Emplacer {
         let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await
             .with_context(|| format!("Error constructing bindle reader for {} in {}", id, bindle_base_dir.display()))?;
 
+        self.emplace_bindle(&reader, id).await
+    }
+
+    async fn emplace_remote_bindle(&self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<()> {
+        let client = bindle::client::Client::new(bindle_base_url.as_str())?;
+
+        self.emplace_bindle(&client, id).await
+    }
+
+    async fn emplace_bindle(&self, reader: &impl ParcelReader, id: &bindle::Id) -> anyhow::Result<()> {
         let invoice_path = self.invoice_path(id);
         if !invoice_path.is_file() {
-            // tokio::fs::copy fails if destination dir doesn't exist; let's just save special
-            // and do a manual read-then-safely_write
-            let invoice_text = tokio::fs::read(&reader.invoice_file).await
-                .with_context(|| format!("Error reading bindle invoice {} from {}", id, reader.invoice_file.display()))?;
+            let invoice_text = reader.get_invoice_bytes(id).await?;
             safely_write(&invoice_path, invoice_text).await
                 .with_context(|| format!("Error writing invoice {} to cache", &id))?;
         }
@@ -77,7 +84,6 @@ impl Emplacer {
 
         let invoice = InvoiceUnderstander::new(&invoice);
 
-        // TODO: this is duplicate!
         let module_parcels: Vec<_> = invoice
             .top_modules().iter()
             .filter_map(|parcel| invoice.classify_parcel(parcel))
@@ -86,46 +92,7 @@ impl Emplacer {
             })
             .collect();
 
-        let module_placements = module_parcels.iter().map(|h| self.emplace_module_and_assets(&reader, &id, &h));
-        let all_module_placements = futures::future::join_all(module_placements).await;
-
-        match all_module_placements.into_iter().find_map(|e| e.err()) {
-            Some(e) => Err(e),
-            None => Ok(())
-        }
-    }
-
-    async fn emplace_remote_bindle(&self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<()> {
-        let client = bindle::client::Client::new(bindle_base_url.as_str())?;
-
-        let invoice_path = self.invoice_path(id);
-        let invoice = if invoice_path.is_file() {
-            // TODO: we should recover from this by going back to the bindle server
-            let invoice_text = tokio::fs::read(&invoice_path).await
-                .with_context(|| format!("Error reading cached invoice file {}", invoice_path.display()))?;
-            toml::from_slice(&invoice_text)
-                .with_context(|| format!("Error parsing cached invoice file {}", invoice_path.display()))?
-        } else {
-            let invoice = client.get_invoice(id).await
-                .with_context(|| format!("Error fetching remote invoice {}", &id))?;
-            let invoice_text = toml::to_vec(&invoice)
-                .with_context(|| format!("Error reserialising remote invoice {} to cache", &id))?;
-            safely_write(&invoice_path, invoice_text).await
-                .with_context(|| format!("Error writing remote invoice {} to cache", &id))?;
-            invoice
-        };
-
-        let invoice = InvoiceUnderstander::new(&invoice);
-
-        let module_parcels: Vec<_> = invoice
-            .top_modules().iter()
-            .filter_map(|parcel| invoice.classify_parcel(parcel))
-            .filter_map(|parcel| match parcel {
-                InterestingParcel::WagiHandler(h) => Some(h),
-            })
-            .collect();
-
-        let module_placements = module_parcels.iter().map(|h| self.emplace_module_and_assets(&client, &id, &h));
+        let module_placements = module_parcels.iter().map(|h| self.emplace_module_and_assets(reader, &id, &h));
         let all_module_placements = futures::future::join_all(module_placements).await;
 
         match all_module_placements.into_iter().find_map(|e| e.err()) {
@@ -228,11 +195,19 @@ async fn safely_write(path: impl AsRef<Path>, content: Vec<u8>) -> std::io::Resu
 trait ParcelReader {
     // We have to flatten the error type at this point because standalone and remote
     // have different error types.
+    async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>>;
     async fn get_parcel(&self, id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<Vec<u8>>;
 }
 
 #[async_trait::async_trait]
 impl ParcelReader for bindle::client::Client {
+    async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>> {
+        let invoice = self.get_invoice(id).await
+            .with_context(|| format!("Error fetching remote invoice {}", &id))?;
+        let invoice_bytes = toml::to_vec(&invoice)
+            .with_context(|| format!("Error reserialising remote invoice {} to cache", &id))?;
+        Ok(invoice_bytes)
+    }
     async fn get_parcel(&self, id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<Vec<u8>> {
         self.get_parcel(id, &parcel.label.sha256).await
             .with_context(|| format!("Error fetching remote parcel {}", parcel.label.name))
@@ -242,6 +217,11 @@ impl ParcelReader for bindle::client::Client {
 
 #[async_trait::async_trait]
 impl ParcelReader for bindle::standalone::StandaloneRead {
+    async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>> {
+        let invoice_bytes = tokio::fs::read(&self.invoice_file).await
+            .with_context(|| format!("Error reading bindle invoice {} from {}", id, self.invoice_file.display()))?;
+        Ok(invoice_bytes)
+    }
     async fn get_parcel(&self, _id: &bindle::Id, parcel: &bindle::Parcel) -> anyhow::Result<Vec<u8>> {
         let path = self.parcel_dir.join(format!("{}.dat", parcel.label.sha256));
         tokio::fs::read(&path).await
