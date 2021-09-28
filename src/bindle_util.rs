@@ -200,6 +200,7 @@ impl ParcelUtils for Parcel {
 fn parse_csv(text: &str) -> Vec<String> {
     text.split(',').map(|v| v.to_owned()).collect()  // TODO: trim etc.?
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
