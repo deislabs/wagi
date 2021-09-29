@@ -1,0 +1,4 @@
+[[module]]
+route = "/"
+# TODO: how to make portable absolute path?
+module = "file:///home/ivan/github/wagi/testdata/module-maps/toast-on-demand.wasm"
