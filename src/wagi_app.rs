@@ -2,7 +2,7 @@ use clap::{App, Arg, ArgMatches};
 use core::convert::TryFrom;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use wagi::wagi_config::{
+use crate::wagi_config::{
     HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration,
 };
 
@@ -47,12 +47,8 @@ const ARG_WASM_CACHE_CONFIG_FILE: &str = "cache";
 const ARG_REMOTE_MODULE_CACHE_DIR: &str = "module_cache";
 const ARG_LOG_DIR: &str = "log_dir";
 
-pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-    let matches = App::new("WAGI Server")
+pub fn wagi_app_definition() -> App<'static, 'static> {
+    App::new("WAGI Server")
     .version(clap::crate_version!())
     .author("DeisLabs")
     .about(ABOUT)
@@ -158,8 +154,20 @@ pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
             .multiple(true)
             .help("Read a file of NAME=VALUE pairs and parse it into environment variables for the guest module. Multiple files can be specified. See also '--env'.")
     )
-    .get_matches();
+}
 
+pub fn parse_command_line() -> anyhow::Result<WagiConfiguration> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    let wagi_app = wagi_app_definition();
+
+    let matches = wagi_app.get_matches();
+    parse_configuration_from(matches)
+}
+
+pub fn parse_configuration_from(matches: ArgMatches) -> anyhow::Result<WagiConfiguration> {
     let addr: SocketAddr = matches
         .value_of(ARG_LISTEN_ON)
         .unwrap_or("127.0.0.1:3000")

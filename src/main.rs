@@ -1,6 +1,4 @@
-mod wagi_app;
-
-use wagi::{wagi_server::WagiServer};
+use wagi::{wagi_app, wagi_server::WagiServer};
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
