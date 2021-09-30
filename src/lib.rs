@@ -20,7 +20,7 @@ mod upstream;
 
 #[cfg(test)]
 mod test {
-    use std::{net::SocketAddr, path::PathBuf};
+    use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
     use crate::{dispatcher::RoutingTable, wagi_app};
 
@@ -41,6 +41,8 @@ mod test {
         "123.4.5.6:7890".parse().expect("Failed to parse mock client address")
     }
 
+    const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
+    const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
     const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
 
@@ -151,5 +153,69 @@ mod test {
         let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, request).await;
 
         assert_eq!(hyper::StatusCode::NOT_FOUND, response.status());
+    }
+
+    fn parse_ev_line(line: &str) -> Option<(&str, &str)> {
+        line.find('=').and_then(|index| {
+            let left = &line[..index];
+            let right = &line[(index + 2)..];
+            Some((left.trim(), right.trim()))
+        })
+    }
+
+    #[tokio::test]
+    pub async fn http_settings_are_mapped_to_env_vars() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
+
+        let response = send_request_to_standalone_bindle(PRINT_ENV_SA_ID, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        assert_eq!("text/plain", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could bot get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        let parsed_response = response_text
+            .lines()
+            .filter_map(|line| parse_ev_line(line))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!("", parsed_response["PATH_INFO"]);
+        assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+        assert_eq!("/", parsed_response["X_MATCHED_ROUTE"]);
+        assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+        assert_eq!("/", parsed_response["SCRIPT_NAME"]);
+        assert_eq!("123.4.5.6", parsed_response["REMOTE_ADDR"]);
+        assert_eq!("GET", parsed_response["REQUEST_METHOD"]);
+    }
+
+    #[tokio::test]
+    pub async fn http_settings_are_mapped_to_env_vars_wildcard_route() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/test/fizz/buzz").body(empty_body);
+
+        let response = send_request_to_standalone_bindle(PRINT_ENV_SA_ID, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        assert_eq!("text/plain", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could bot get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        let parsed_response = response_text
+            .lines()
+            .filter_map(|line| parse_ev_line(line))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+        assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+        assert_eq!("/test/...", parsed_response["X_MATCHED_ROUTE"]);
+        assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+        assert_eq!("/test", parsed_response["SCRIPT_NAME"]);
+        assert_eq!("123.4.5.6", parsed_response["REMOTE_ADDR"]);
+        assert_eq!("GET", parsed_response["REQUEST_METHOD"]);
     }
 }

@@ -1,0 +1,38 @@
+bindleVersion = '1.0.0'
+
+[bindle]
+name = 'print-env'
+version = '0.1.0'
+authors = ['deislabs']
+
+[[parcel]]
+[parcel.label]
+sha256 = '06206983f7ffea2e246e95dff03e0d3bbf90c8c47a442f5f29261916e982c029'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/print-env.wasm'
+size = 1766143
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/print-env.wasm-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = '06206983f7ffea2e246e95dff03e0d3bbf90c8c47a442f5f29261916e982c029'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/print-env.wasm'
+size = 1766143
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/test/...'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/print-env.wasm-files']
+
+[[group]]
+name = 'target/wasm32-wasi/release/print-env.wasm-files'
+
+[[group]]
+name = 'target/wasm32-wasi/release/print-env.wasm-files'

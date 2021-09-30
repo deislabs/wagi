@@ -1,0 +1,12 @@
+[bindle]
+name = "print-env"
+version = "0.1.0"
+authors = ["deislabs"]
+
+[[handler]]
+route = "/"
+name = "target/wasm32-wasi/release/print-env.wasm"
+
+[[handler]]
+route = "/test/..."
+name = "target/wasm32-wasi/release/print-env.wasm"

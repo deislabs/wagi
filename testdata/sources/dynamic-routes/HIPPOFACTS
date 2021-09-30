@@ -1,0 +1,16 @@
+[bindle]
+name = "dynamic-routes"
+version = "0.1.0"
+authors = ["deislabs"]
+
+[[handler]]
+route = "/"
+name = "target/wasm32-wasi/release/dynamic-routes.wasm"
+
+[[handler]]
+route = "/exactparent"
+name = "target/wasm32-wasi/release/dynamic-routes.wasm"
+
+[[handler]]
+route = "/wildcardparent/..."
+name = "target/wasm32-wasi/release/dynamic-routes.wasm"
