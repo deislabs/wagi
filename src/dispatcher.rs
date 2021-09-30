@@ -7,6 +7,7 @@ use hyper::{
 use sha2::{Digest, Sha256};
 use tracing::{instrument};
 
+use crate::dynamic_route::{DynamicRoutes, interpret_routes};
 use crate::emplacer::Bits;
 use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
@@ -16,6 +17,7 @@ use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 use crate::bindle_util::{WagiHandlerInfo};
 use crate::wagi_config::{LoadedHandlerConfiguration, ModuleMapConfigurationEntry};
 use crate::wasm_module::WasmModuleSource;
+use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present};
 
 #[derive(Clone, Debug)]
 pub struct RoutingTable {
@@ -29,7 +31,7 @@ struct RoutingTableEntry {
     pub handler_info: RouteHandler,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RoutePattern {
     Exact(String),
     Prefix(String),
@@ -67,6 +69,9 @@ impl RoutingTable {
     #[instrument(level = "trace", skip(self))]
     fn route_for(&self, uri_fragment: &str) -> Result<RoutingTableEntry, anyhow::Error> {
         for r in &self.entries {
+            // TODO: I THINK THIS IS WRONG.  The spec says we need to match the *last* pattern
+            // if there are multiple matching wildcards (this is mentioned under the docs for
+            // the _routes feature).
             tracing::trace!(path = ?r.route_pattern, uri_fragment, "Trying route path");
             if r.is_match(uri_fragment) {
                 return Ok(r.clone());
@@ -226,6 +231,20 @@ impl RoutePattern {
         // so in that case the appropriate return is "".
         uri_path.strip_prefix(path_base).unwrap_or("").to_owned()
     }
+
+    pub fn append(&self, other: &RoutePattern) -> Self {
+        match self {
+            Self::Exact(path) => other.prepend(path),
+            Self::Prefix(prefix) => other.prepend(prefix),
+        }
+    }
+
+    fn prepend(&self, prefix: &str) -> Self {
+        match self {
+            Self::Exact(subpath) => Self::Exact(format!("{}{}", prefix, subpath)),
+            Self::Prefix(subpath) => Self::Prefix(format!("{}{}", prefix, subpath)),
+        }
+    }
 }
 
 impl RoutingTable {
@@ -236,9 +255,11 @@ impl RoutingTable {
             LoadedHandlerConfiguration::Bindle(bindle_entries) =>
                 Self::build_from_bindle_entries(bindle_entries),
         }?;
+        let full_user_entries = augment_dynamic_routes(user_entries, &global_context)?;
+
         let built_in_entries = Self::inbuilt_patterns();
 
-        let entries = user_entries.into_iter().chain(built_in_entries).collect();
+        let entries = full_user_entries.into_iter().chain(built_in_entries).collect();
         Ok(Self {
             entries,
             global_context,
@@ -265,6 +286,63 @@ impl RoutingTable {
             RoutingTableEntry::inbuilt("/healthz", RouteHandler::HealthCheck),
         ]
     }
+}
+
+fn augment_dynamic_routes(base_entries: Vec<RoutingTableEntry>, global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    let results: anyhow::Result<Vec<_>> = base_entries.into_iter().map(|e| augment_one_with_dynamic_routes(e, global_context)).collect();
+    let augmented = results?.into_iter().flatten().collect();
+    Ok(augmented)
+}
+
+fn augment_one_with_dynamic_routes(routing_table_entry: RoutingTableEntry, global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    match &routing_table_entry.handler_info {
+        RouteHandler::Wasm(w) => augment_one_wasm_with_dynamic_routes(&routing_table_entry, w, global_context),
+        RouteHandler::HealthCheck => Ok(vec![routing_table_entry]),
+    }
+}
+
+fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    let redirects = prepare_stdio_streams(vec![] /* TODO: eww */, global_context, routing_table_entry.unique_key())?;
+
+    let ctx = build_wasi_context_for_dynamic_route_query(redirects.streams);
+
+    let (store, instance) = prepare_wasm_instance(global_context, ctx, &wasm_route_handler.wasm_module_source, |_| Ok(()))?;
+
+    match run_prepared_wasm_instance_if_present(instance, store, "_routes") {
+        RunWasmResult::WasmError(e) => return Err(anyhow::Error::from(e)),
+        RunWasmResult::EntrypointNotFound => Ok(vec![routing_table_entry.clone()]),
+        RunWasmResult::Ok(_) => {
+            let out = redirects.stdout_mutex.read().unwrap();
+            let dynamic_routes_text = std::str::from_utf8(&*out)?;
+            let dynamic_routes = interpret_routes(dynamic_routes_text)?;
+        
+            let mut dynamic_route_entries = append_all_dynamic_routes(&routing_table_entry, wasm_route_handler, dynamic_routes);
+            dynamic_route_entries.reverse();
+            dynamic_route_entries.push(routing_table_entry.clone());
+            Ok(dynamic_route_entries)
+        }
+    }
+}
+
+fn append_all_dynamic_routes(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, dynamic_routes: DynamicRoutes) -> Vec<RoutingTableEntry> {
+    dynamic_routes.subpath_entrypoints.iter().map(|dr| append_one_dynamic_route(&routing_table_entry, wasm_route_handler, &dr.0, &dr.1)).collect()
+}
+
+fn append_one_dynamic_route(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, dynamic_route_pattern: &RoutePattern, entrypoint: &str) -> RoutingTableEntry {
+    let mut subpath_handler = wasm_route_handler.clone();
+    subpath_handler.entrypoint = entrypoint.to_owned();
+    RoutingTableEntry {
+        route_pattern: routing_table_entry.route_pattern.append(dynamic_route_pattern),
+        handler_info: RouteHandler::Wasm(subpath_handler),
+    }
+}
+
+fn build_wasi_context_for_dynamic_route_query(redirects: crate::wasm_module::IOStreamRedirects) -> wasi_common::WasiCtx {
+    let builder = wasi_cap_std_sync::WasiCtxBuilder::new()
+        .stderr(Box::new(redirects.stderr))
+        .stdout(Box::new(redirects.stdout));
+
+    builder.build()
 }
 
 #[cfg(test)]

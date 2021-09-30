@@ -1,5 +1,4 @@
 use std::{collections::HashMap};
-use std::path::{Path};
 use std::sync::{Arc, RwLock};
 
 use cap_std::fs::Dir;
@@ -10,7 +9,6 @@ use hyper::{
 };
 use tracing::{debug};
 use wasi_cap_std_sync::WasiCtxBuilder;
-use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
@@ -19,8 +17,7 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
 
 use crate::wasm_module::WasmModuleSource;
-
-const STDERR_FILE: &str = "module.stderr";
+use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -60,7 +57,7 @@ impl WasmRouteHandler {
             &global_context.global_env_vars,
         );
 
-        let redirects = Self::prepare_stdio_streams(body, global_context, logging_key)?;
+        let redirects = prepare_stdio_streams(body, global_context, logging_key)?;
 
         let ctx = self.build_wasi_context_for_request(req, headers, redirects.streams)?;
 
@@ -69,40 +66,9 @@ impl WasmRouteHandler {
         // Drop manually to get instantiation time
         drop(startup_span);
 
-        self.run_prepared_wasm_instance(route_context, instance, store)?;
+        run_prepared_wasm_instance(instance, store, &route_context.entrypoint, &self.wasm_module_name)?;
 
         compose_response(redirects.stdout_mutex)
-    }
-
-    fn prepare_stdio_streams(body: Vec<u8>, global_context: &RequestGlobalContext, handler_id: String) -> Result<crate::wasm_module::IORedirectionInfo, Error> {
-        let stdin = ReadPipe::from(body);
-        let stdout_buf: Vec<u8> = vec![];
-        let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
-        let stdout = WritePipe::from_shared(stdout_mutex.clone());
-        let log_dir = global_context.base_log_dir.join(handler_id);
-
-        // The spec does not say what to do with STDERR.
-        // See specifically sections 4.2 and 6.1 of RFC 3875.
-        // Currently, we will attach to wherever logs go.
-        tracing::info!(log_dir = %log_dir.display(), "Using log dir");
-        std::fs::create_dir_all(&log_dir)?;
-        let stderr = cap_std::fs::File::from_std(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(log_dir.join(STDERR_FILE))?,
-            ambient_authority(),
-        );
-        let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
-
-        Ok(crate::wasm_module::IORedirectionInfo {
-            streams: crate::wasm_module::IOStreamRedirects {
-                stdin,
-                stdout,
-                stderr,
-            },
-            stdout_mutex,
-        })
     }
 
     fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
@@ -139,42 +105,15 @@ impl WasmRouteHandler {
     }
 
     fn prepare_wasm_instance(&self, global_context: &RequestGlobalContext, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
-        let (mut store, engine) = Self::new_store_and_engine(&global_context.cache_config_path, ctx)?;
-        let mut linker = Linker::new(&engine);
-        wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
-
-        let http = wasi_experimental_http_wasmtime::HttpCtx::new(
-            self.allowed_hosts.clone(),
-            self.http_max_concurrency,
-        )?;
-        http.add_to_linker(&mut linker)?;
-        
-        let module = self.wasm_module_source.load_module(&store)?;
-        let instance = linker.instantiate(&mut store, &module)?;
-        Ok((store, instance))
-    }
-
-    fn run_prepared_wasm_instance(&self, route_context: &RequestRouteContext, instance: Instance, mut store: Store<WasiCtx>) -> Result<(), Error> {
-        let ep = &route_context.entrypoint;
-        let start = instance
-            .get_func(&mut store, ep)
-            .ok_or_else(|| anyhow::anyhow!("No such function '{}' in {}", &ep, &self.wasm_module_name))?;
-        tracing::trace!("Calling Wasm entry point");
-        start.call(&mut store, &[])?;
-        Ok(())
-    }
-
-    fn new_store_and_engine(
-        cache_config_path: &Path,
-        ctx: WasiCtx,
-    ) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
-        let mut config = Config::default();
-        if let Ok(p) = std::fs::canonicalize(cache_config_path) {
-            config.cache_config_load(p)?;
+        let link_http = |mut linker: &mut Linker<WasiCtx>| -> anyhow::Result<()> {
+            let http = wasi_experimental_http_wasmtime::HttpCtx::new(
+                self.allowed_hosts.clone(),
+                self.http_max_concurrency,
+            )?;
+            http.add_to_linker(&mut linker)?;
+            Ok(())
         };
-
-        let engine = Engine::new(&config)?;
-        Ok((Store::new(&engine, ctx), engine))
+        prepare_wasm_instance(global_context, ctx, &self.wasm_module_source, link_http)
     }
 }
 

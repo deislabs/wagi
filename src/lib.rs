@@ -1,5 +1,6 @@
 pub(crate) mod bindle_util;
 pub mod dispatcher;
+pub(crate) mod dynamic_route;
 pub mod emplacer;
 pub(crate) mod handlers;
 pub(crate) mod header_util;
@@ -12,6 +13,7 @@ pub mod wagi_app;
 pub mod wagi_config;
 pub mod wagi_server;
 mod wasm_module;
+pub(crate) mod wasm_runner;
 
 #[cfg(test)]
 mod upstream;
