@@ -70,7 +70,7 @@ async fn load_from_oci(
 
     let mut auth = RegistryAuth::Anonymous;
 
-    if let Ok(credential ) = docker_credential::get_credential(uri.as_str()) {
+    if let Ok(credential) = docker_credential::get_credential(uri.as_str()) {
         if let DockerCredential::UsernamePassword(user_name, password) = credential {
             auth = RegistryAuth::Basic(user_name, password);
         };
