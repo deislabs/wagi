@@ -1,6 +1,7 @@
 use core::convert::TryFrom;
 use std::{path::Path, sync::Arc};
 
+use anyhow::Context;
 // TODO: move OCI-specific stuff out to a helper file
 use oci_distribution::client::{Client, ClientConfig};
 use oci_distribution::secrets::RegistryAuth;
@@ -26,7 +27,8 @@ pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfiguratio
         },
         Ok(uri) => match uri.scheme() {
             "file" => match uri.to_file_path() {
-                Ok(p) => Ok(tokio::fs::read(p).await?),  // TODO: include path in error
+                Ok(p) => Ok(tokio::fs::read(&p).await
+                    .with_context(|| format!("Error reading file '{}' referenced by module file: URI", p.display()))?),
                 Err(e) => Err(anyhow::anyhow!("Cannot get path to file {}: {:#?}", module_ref, e)),
             }
             "bindle" => {
