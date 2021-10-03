@@ -43,6 +43,9 @@ mod test {
     #[cfg(target_os = "windows")]
     #[tokio::test]
     async fn should_parse_file_with_all_the_windows_slashes() {
+        use wasi_cap_std_sync::WasiCtxBuilder;
+        use wasmtime::*;
+
         let tf = write_temp_wat(ROUTES_WAT).expect("wrote tempfile");
         let testcases = possible_slashes_for_paths(tf.path().to_string_lossy().to_string());
         for test in testcases {
