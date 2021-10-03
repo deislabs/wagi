@@ -1,4 +1,5 @@
 [[module]]
 route = "/"
-# TODO: how to make portable absolute path?
-module = "file:///home/ivan/github/wagi/testdata/module-maps/toast-on-demand.wasm"
+# THIS MAKES IT NOT A REAL MODULES.TOML! The test infra replaces the ${...}
+# with the right string.
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/toast-on-demand.wasm"

@@ -41,6 +41,29 @@ mod test {
         "123.4.5.6:7890".parse().expect("Failed to parse mock client address")
     }
 
+    async fn point_placeholder_at_real(original_map_file: &str) -> PathBuf {
+        let orig_content = tokio::fs::read(module_map_path(original_map_file)).await
+            .expect(&format!("Error reading test file {}", original_map_file));
+        let toml_text = std::str::from_utf8(&orig_content)
+            .expect(&format!("Error treating test file {} as text", original_map_file));
+
+        let project_root = env!("CARGO_MANIFEST_DIR");
+        let timestamp = chrono::Local::now()
+            .format("%Y.%m.%d.%H.%M.%S.%3f")
+            .to_string();
+        let tempfile_dir = PathBuf::from(project_root)
+            .join("tests_working_dir")
+            .join(timestamp);
+        tokio::fs::create_dir_all(&tempfile_dir).await
+            .expect("Error creating temp directory");
+        let tempfile_path = tempfile_dir.join("modules.toml");
+
+        let final_text = toml_text.replace("${PROJECT_ROOT}", project_root);
+        tokio::fs::write(&tempfile_path, final_text).await
+            .expect("Error saving modified modules file to test working dir");
+        tempfile_path
+    }
+
     const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
     const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
     const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
@@ -83,9 +106,10 @@ mod test {
         // Clear any env vars that would cause conflicts if set
         std::env::remove_var("BINDLE_URL");
 
+        let modules_toml_path = point_placeholder_at_real(&map_file).await;
         let matches = wagi_app::wagi_app_definition().get_matches_from(vec![
             "wagi",
-            "-c", &module_map_path(map_file).display().to_string(),
+            "-c", &modules_toml_path.display().to_string(),
         ]);
         let configuration = wagi_app::parse_configuration_from(matches)
             .expect("Fake command line was not valid");
