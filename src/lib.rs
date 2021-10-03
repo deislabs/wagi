@@ -3,7 +3,6 @@ pub mod dispatcher;
 pub(crate) mod dynamic_route;
 pub mod emplacer;
 pub(crate) mod handlers;
-pub(crate) mod header_util;
 mod http_util;
 pub (crate) mod module_loader;
 mod request;
@@ -41,6 +40,10 @@ mod test {
         "123.4.5.6:7890".parse().expect("Failed to parse mock client address")
     }
 
+    // This ugliness is because file: URLs in modules.toml are meant to be absolute, but
+    // we don't know where the project (and therefore the test WASM modules) will reside
+    // on any given machine. So we need to sub in the path where the WASM file will
+    // actually be found.
     async fn point_placeholder_at_real(original_map_file: &str) -> PathBuf {
         let orig_content = tokio::fs::read(module_map_path(original_map_file)).await
             .expect(&format!("Error reading test file {}", original_map_file));

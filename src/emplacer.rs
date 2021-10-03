@@ -181,7 +181,7 @@ impl Emplacer {
     
 }
 
-pub(crate) fn invoice_cache_key(id: &bindle::Id) -> String {
+fn invoice_cache_key(id: &bindle::Id) -> String {
     let invoice_id_string = format!("{}/{}", id.name(), id.version_string());
     let mut hasher = Sha256::new();
     hasher.update(invoice_id_string);
