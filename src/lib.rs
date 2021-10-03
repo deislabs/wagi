@@ -61,7 +61,7 @@ mod test {
             .expect("Error creating temp directory");
         let tempfile_path = tempfile_dir.join("modules.toml");
 
-        let final_text = toml_text.replace("${PROJECT_ROOT}", project_root);
+        let final_text = toml_text.replace("${PROJECT_ROOT}", &project_root.escape_default().to_string());
         tokio::fs::write(&tempfile_path, final_text).await
             .expect("Error saving modified modules file to test working dir");
         tempfile_path

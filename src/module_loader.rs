@@ -15,7 +15,6 @@ use crate::wagi_config::WagiConfiguration;
 use crate::{wagi_config::{ModuleMapConfigurationEntry}};
 
 pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
-    // TODO: code far too similar to required blobs stuff
     let module_ref = module_map_entry.module.clone();
     match url::Url::parse(&module_ref) {
         Err(e) => {
