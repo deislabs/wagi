@@ -44,7 +44,7 @@ mod test {
     // we don't know where the project (and therefore the test WASM modules) will reside
     // on any given machine. So we need to sub in the path where the WASM file will
     // actually be found.
-    async fn point_placeholder_at_real(original_map_file: &str) -> PathBuf {
+    async fn replace_placeholders(original_map_file: &str, custom_subs: Option<HashMap<String, String>>) -> PathBuf {
         let orig_content = tokio::fs::read(module_map_path(original_map_file)).await
             .expect(&format!("Error reading test file {}", original_map_file));
         let toml_text = std::str::from_utf8(&orig_content)
@@ -61,7 +61,11 @@ mod test {
             .expect("Error creating temp directory");
         let tempfile_path = tempfile_dir.join("modules.toml");
 
-        let final_text = toml_text.replace("${PROJECT_ROOT}", &project_root.escape_default().to_string());
+        let mut final_text = toml_text.replace("${PROJECT_ROOT}", &project_root.escape_default().to_string());
+        for (k, v) in custom_subs.unwrap_or_default() {
+            let pattern = format!("${{{}}}", k);
+            final_text = final_text.replace(&pattern, &v.escape_default().to_string());
+        }
         tokio::fs::write(&tempfile_path, final_text).await
             .expect("Error saving modified modules file to test working dir");
         tempfile_path
@@ -71,6 +75,8 @@ mod test {
     const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
     const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
+    #[cfg(target_os = "windows")]
+    const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
 
     async fn build_routing_table_for_standalone_bindle(bindle_id: &str) -> RoutingTable {
         // Clear any env vars that would cause conflicts if set
@@ -105,11 +111,11 @@ mod test {
         .expect("Error producing HTTP response")
     }
 
-    async fn build_routing_table_for_module_map(map_file: &str) -> RoutingTable {
+    async fn build_routing_table_for_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>) -> RoutingTable {
         // Clear any env vars that would cause conflicts if set
         std::env::remove_var("BINDLE_URL");
 
-        let modules_toml_path = point_placeholder_at_real(&map_file).await;
+        let modules_toml_path = replace_placeholders(&map_file, custom_subs).await;
         let matches = wagi_app::wagi_app_definition().get_matches_from(vec![
             "wagi",
             "-c", &modules_toml_path.display().to_string(),
@@ -127,8 +133,8 @@ mod test {
             .expect("Failed to build routing table")
     }
 
-    async fn send_request_to_module_map(map_file: &str, request: hyper::http::Result<hyper::Request<hyper::body::Body>>) -> hyper::Response<hyper::body::Body> {
-        let routing_table = build_routing_table_for_module_map(map_file).await;
+    async fn send_request_to_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, request: hyper::http::Result<hyper::Request<hyper::body::Body>>) -> hyper::Response<hyper::body::Body> {
+        let routing_table = build_routing_table_for_module_map(map_file, custom_subs).await;
 
         routing_table.handle_request(
             request.expect("Failed to construct mock request"),
@@ -200,7 +206,7 @@ mod test {
         let empty_body = hyper::body::Body::empty();
         let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
 
-        let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, request).await;
+        let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, None, request).await;
 
         assert_eq!(hyper::StatusCode::OK, response.status());
         assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
@@ -211,9 +217,65 @@ mod test {
         let empty_body = hyper::body::Body::empty();
         let request = hyper::Request::get("http://127.0.0.1:3000/does/not/exist").body(empty_body);
 
-        let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, request).await;
+        let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, None, request).await;
 
         assert_eq!(hyper::StatusCode::NOT_FOUND, response.status());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    pub async fn can_serve_from_modules_toml_even_if_file_ref_has_all_sorts_of_windows_slashes() {
+        use std::iter::FromIterator;
+
+        let wasm_module_path = module_map_path("toast-on-demand.wasm").display().to_string();
+
+        for testcase in possible_slashes_for_paths(wasm_module_path) {
+            let subs = HashMap::from_iter(vec![
+                ("SLASHY_URL".to_owned(), testcase)
+            ]);
+
+            let empty_body = hyper::body::Body::empty();
+            let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
+
+            let response = send_request_to_module_map(TEST2_MODULE_MAP_FILE, Some(subs), request).await;
+
+            assert_eq!(hyper::StatusCode::OK, response.status());
+            assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn possible_slashes_for_paths(path: String) -> Vec<String> {
+        let mut res = vec![];
+
+        // this should transform the initial Windows path coming from
+        // the temoporary file to most common ways to define a module
+        // in modules.toml.
+
+        res.push(format!("file:{}", path));
+        res.push(format!("file:/{}", path));
+        res.push(format!("file://{}", path));
+        res.push(format!("file:///{}", path));
+
+        let double_backslash = str::replace(path.as_str(), "\\", "\\\\");
+        res.push(format!("file:{}", double_backslash));
+        res.push(format!("file:/{}", double_backslash));
+        res.push(format!("file://{}", double_backslash));
+        res.push(format!("file:///{}", double_backslash));
+
+        let forward_slash = str::replace(path.as_str(), "\\", "/");
+        res.push(format!("file:{}", forward_slash));
+        res.push(format!("file:/{}", forward_slash));
+        res.push(format!("file://{}", forward_slash));
+        res.push(format!("file:///{}", forward_slash));
+
+        let double_slash = str::replace(path.as_str(), "\\", "//");
+        res.push(format!("file:{}", double_slash));
+        res.push(format!("file:/{}", double_slash));
+        res.push(format!("file://{}", double_slash));
+        res.push(format!("file:///{}", double_slash));
+
+        res
     }
 
     fn parse_ev_line(line: &str) -> Option<(String, String)> {
