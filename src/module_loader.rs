@@ -22,7 +22,9 @@ pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfiguratio
                 error = %e,
                 "Error parsing module URI. Assuming this is a local file"
             );
-            Ok(tokio::fs::read(&module_ref).await?)
+            let bytes = tokio::fs::read(&module_ref).await
+                .with_context(|| format!("Error reading file '{}' referenced by module config", module_ref))?;
+            Ok(bytes)
         },
         Ok(uri) => match uri.scheme() {
             "file" => match uri.to_file_path() {
@@ -83,17 +85,19 @@ async fn load_from_oci(
             "Could not convert uri to OCI reference"
         );
         e
-    })?;
+    })
+        .with_context(|| format!("Could not convert URI '{}' to OCI reference", uri))?;
     let data = oc
         .pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE])
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Pull failed");
             e
-        })?;
+        })
+        .with_context(|| format!("Failed to pull OCI artifact {}", img))?;
     if data.layers.is_empty() {
         tracing::error!(image = %img, "Image has no layers");
-        anyhow::bail!("image has no layers");
+        anyhow::bail!("image {} has no layers", img);
     }
     let first_layer = data.layers.get(0).unwrap();
 
@@ -125,26 +129,6 @@ fn hash_name(url: &Url) -> String {
     let result = hasher.finalize();
     format!("{:x}", result)
 }
-
-// pub async fn load_from_bindle(invoice_id: &bindle::Id, parcel: &Parcel, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
-//     match &configuration.handlers {
-//         HandlerConfigurationSource::ModuleConfigFile(_) => panic!("load_from_bindle called when modules.toml config specified"),
-//         HandlerConfigurationSource::StandaloneBindle(base_path, _) => {
-//             let reader = bindle::standalone::StandaloneRead::new(&base_path, invoice_id).await?;
-//             let mpath = reader.parcel_dir
-//                 .join(format!("{}.dat", parcel.label.sha256))
-//                 .to_string_lossy()
-//                 .to_string();
-//             let parcel_bytes = tokio::fs::read(mpath).await?;
-//             Ok(parcel_bytes)
-//         },
-//         HandlerConfigurationSource::RemoteBindle(server_url, _) => {
-//             let client = CachingBindleClient::new(server_url, &configuration.asset_cache_dir)?;
-//             let parcel_bytes = client.get_module_parcel(invoice_id, &parcel).await?;
-//             Ok(parcel_bytes)
-//         },
-//     }
-// }
 
 pub struct Loaded<T> {
     pub metadata: T,

@@ -1,5 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, path::{Path, PathBuf}};
 
+use anyhow::Context;
 use bindle::{Invoice, standalone::StandaloneRead};
 use serde::Deserialize;
 
@@ -115,8 +116,10 @@ async fn read_module_map_configuration(path: &PathBuf) -> anyhow::Result<ModuleM
         ));
     }
 
-    let data = std::fs::read(path)?;
-    let modules: ModuleMapConfiguration = toml::from_slice(&data)?;
+    let data = std::fs::read(path)
+        .with_context(|| format!("Couldn't read module config file at {}", path.display()))?;
+    let modules: ModuleMapConfiguration = toml::from_slice(&data)
+        .with_context(|| format!("File {} contained invalid TOML or was not a WAGI module config", path.display()))?;
     Ok(modules)
 }
 
