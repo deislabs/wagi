@@ -139,14 +139,7 @@ impl RoutingTableEntry {
 
     /// Returns a unique ID for the routing table entry.
     ///
-    /// This is the SHA256 sum of the following data, written into the hasher in the following order
-    /// (skipping any `None`s):
-    ///
-    /// - route
-    /// - host
-    //
-    // TODO: this ^^ is the original comment on Module::id() but it doesn't seem to
-    // actually use the host
+    /// This is the SHA256 sum of the route.
     fn unique_key(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&self.route_pattern.original_text());
