@@ -77,6 +77,7 @@ mod test {
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
     #[cfg(target_os = "windows")]
     const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
+    const TEST_HEALTHZ_MODULE_MAP_FILE: &str = "test_healthz_override.toml";
 
     async fn build_routing_table_for_standalone_bindle(bindle_id: &str) -> RoutingTable {
         // Clear any env vars that would cause conflicts if set
@@ -432,5 +433,20 @@ mod test {
             assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/wildcardparent/wildcard", parsed_response["SCRIPT_NAME"]);
         }
+    }
+
+    #[tokio::test]
+    pub async fn health_check_builtin_takes_precedence_over_user_routes() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/healthz").body(empty_body);
+
+        let response = send_request_to_module_map(TEST_HEALTHZ_MODULE_MAP_FILE, None, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could bot get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        assert_eq!("OK", response_text);
     }
 }

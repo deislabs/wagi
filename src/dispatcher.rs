@@ -259,7 +259,7 @@ impl RoutingTable {
 
         let built_in_entries = Self::inbuilt_patterns();
 
-        let entries = full_user_entries.into_iter().chain(built_in_entries).collect();
+        let entries = built_in_entries.into_iter().chain(full_user_entries).collect();
         Ok(Self {
             entries,
             global_context,
