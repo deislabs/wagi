@@ -1,4 +1,3 @@
-use core::convert::TryFrom;
 use std::{path::Path, sync::Arc};
 
 use anyhow::Context;
@@ -35,10 +34,7 @@ pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfiguratio
             "bindle" => {
                 // TODO: should we allow --bindle-server so modules.toml can resolve?  This is deprecated so not keen
                 let bindle_server = module_map_entry.bindle_server.as_ref().ok_or_else(|| anyhow::anyhow!("No Bindle server specified for module {}", module_ref))?;
-                let _bindle_id = bindle::Id::try_from(uri.path())?;
-                let _bindle_client = bindle::client::Client::new(bindle_server)?;
-                Err(anyhow::anyhow!("not sure which parcel to get from bindle"))
-                // TODO: Ok(bindle_client.get_parcel(&bindle_id, what).await?)
+                load_bindle(bindle_server, &uri, &configuration.asset_cache_dir).await
             },
             // "parcel" => self.load_parcel(&uri, store.engine(), cache).await,  // TODO: this is not mentioned in the spec...?
             "oci" => load_from_oci(&uri, &configuration.asset_cache_dir).await,
@@ -58,7 +54,7 @@ async fn load_from_oci(
     let cache_file_path = cache.as_ref().join(cache_file_name);
 
     if cache_file_path.is_file() {
-        if let Ok(bytes) = tokio::fs::read(cache_file_path).await {
+        if let Ok(bytes) = tokio::fs::read(&cache_file_path).await {
             return Ok(bytes);
         }
     }
@@ -100,16 +96,15 @@ async fn load_from_oci(
         anyhow::bail!("image {} has no layers", img);
     }
     let first_layer = data.layers.get(0).unwrap();
+    let bytes = first_layer.data.clone();
 
     // If a cache write fails, log it but continue on.
     tracing::trace!("writing layer to module cache");
-    if let Err(e) =
-        tokio::fs::write(cache.as_ref().join(hash_name(&uri)), &first_layer.data).await
+    if let Err(e) = safely_write(&cache_file_path, &bytes).await
     {
         tracing::warn!(error = %e, "failed to write module to cache");
     }
 
-    let bytes = first_layer.data.clone();
     Ok(bytes)
 }
 
@@ -123,11 +118,129 @@ fn url_to_oci(uri: &Url) -> anyhow::Result<Reference> {
     Ok(r) // Because who doesn't love OKRs.
 }
 
+// NOTE: load_bindle is copied with minor modifications from pre-refactor source.
+// It has not been tidied because we expect to deprecate this.
+
+/// Given a server and a URI, attempt to load the bindle identified in the URI.
+///
+/// TODO: this currently fetches the first application/wasm condition-less parcel from the bindle and tries
+/// to load it.
+#[tracing::instrument(level = "info", skip(cache))]
+async fn load_bindle(
+    server: &str,
+    uri: &url::Url,
+    cache: impl AsRef<Path>,
+) -> anyhow::Result<Vec<u8>> {
+    let cache_file_name = hash_name(uri);
+    let cache_file_path = cache.as_ref().join(cache_file_name);
+
+    if cache_file_path.is_file() {
+        if let Ok(bytes) = tokio::fs::read(&cache_file_path).await {
+            return Ok(bytes);
+        }
+    }
+
+    let bindle_name = uri.path();
+
+    tracing::debug!(
+        %bindle_name,
+        "Loading bindle",
+    );
+
+    let bindler = bindle::client::Client::new(server)?;
+    let invoice = bindler.get_invoice(bindle_name).await?;
+
+    // TODO: We need to load a keyring and then get it all the way here.
+    //invoice.verify(keyring)
+
+    // TODO: We should probably turn on the LRU.
+
+    tracing::trace!(
+        parcels = %invoice
+            .parcel
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .map(|p| p.label.name.clone())
+            .collect::<Vec<_>>()
+            .join(","),
+        "All bindle parcels",
+    );
+
+    // For now, we grab a list of parcels that have no conditions.
+    // This is definitely not the best strategy.
+    let parcels = invoice.parcel;
+    let to_fetch: Vec<bindle::Parcel> = parcels
+        .unwrap_or_default()
+        .iter()
+        .filter(|parcel| {
+            if parcel.label.media_type.as_str() == crate::bindle_util::WASM_MEDIA_TYPE {
+                let is_default = parcel.is_global_group();
+                if !is_default {
+                    tracing::warn!("The parcel {} is not in the default group (it has a non-empty memberOf), and is ignored.", parcel.label.name);
+                }
+                return is_default
+            }
+            false
+        })
+        .cloned()
+        .collect();
+
+    tracing::trace!(
+        candidates = %to_fetch
+            .clone()
+            .iter()
+            .map(|p| p.label.name.clone())
+            .collect::<Vec<_>>()
+            .join(","),
+        "Module candidates",
+    );
+
+    if to_fetch.is_empty() {
+        tracing::error!("No parcels were module candidates");
+        anyhow::bail!("No suitable parcel found in module ref '{}'", uri);
+    }
+
+    let first = to_fetch.get(0).unwrap();
+
+    tracing::trace!(parcel_name = %first.label.name, "Fetching module parcel");
+    let bytes = bindler
+        .get_parcel(bindle_name, first.label.sha256.as_str())
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Error downloading parcel");
+            e
+        })?;
+
+    tracing::trace!("Writing module parcel to cache");
+    if let Err(e) = safely_write(&cache_file_path, &bytes).await {
+        tracing::warn!(error = %e, "Failed to cache bindle")
+    }
+
+    Ok(bytes)
+}
+
 fn hash_name(url: &Url) -> String {
     let mut hasher = Sha256::new();
     hasher.update(&url.as_str());
     let result = hasher.finalize();
     format!("{:x}", result)
+}
+
+// TODO: this is copied from `emplacer`*.  As emplacer is effectively a cache manager,
+// we should look at combining this module with that (in whatever suitable way).
+// Leaving this for now, though, until we figure out what we are deprecating (and
+// so this refactor doesn't go on forever).
+//
+// *Except I changed it to take an &Vec instead of a Vec but I am sure our mighty
+// brains can reconcile that if and when the moment comes.
+async fn safely_write(path: impl AsRef<Path>, content: &Vec<u8>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    let dir = path.parent().ok_or_else(||
+        std::io::Error::new(std::io::ErrorKind::Other, format!("cache location {} has no parent directory", path.display()))
+    )?;
+    tokio::fs::create_dir_all(dir).await?;
+    tokio::fs::write(path, content).await
 }
 
 pub struct Loaded<T> {
