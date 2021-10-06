@@ -1,0 +1,9 @@
+[[module]]
+route = "/"
+# THIS MAKES IT NOT A REAL MODULES.TOML! The test infra replaces the ${...}
+# with the right string.
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/toast-on-demand.wasm"
+
+[[module]]
+route = "/healthz"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/toast-on-demand.wasm"

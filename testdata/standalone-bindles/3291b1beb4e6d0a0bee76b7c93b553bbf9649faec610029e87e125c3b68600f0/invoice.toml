@@ -1,0 +1,54 @@
+bindleVersion = '1.0.0'
+
+[bindle]
+name = 'dynamic-routes'
+version = '0.1.0'
+authors = ['deislabs']
+
+[[parcel]]
+[parcel.label]
+sha256 = '73496d7c3d8be18a5f276785c3f0d36b809c180e2f5c7febbdd8b8f034ff3a4a'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/dynamic-routes.wasm'
+size = 1767204
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/dynamic-routes.wasm-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = '73496d7c3d8be18a5f276785c3f0d36b809c180e2f5c7febbdd8b8f034ff3a4a'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/dynamic-routes.wasm'
+size = 1767204
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/exactparent'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/dynamic-routes.wasm-files']
+
+[[parcel]]
+[parcel.label]
+sha256 = '73496d7c3d8be18a5f276785c3f0d36b809c180e2f5c7febbdd8b8f034ff3a4a'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/dynamic-routes.wasm'
+size = 1767204
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/wildcardparent/...'
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/dynamic-routes.wasm-files']
+
+[[group]]
+name = 'target/wasm32-wasi/release/dynamic-routes.wasm-files'
+
+[[group]]
+name = 'target/wasm32-wasi/release/dynamic-routes.wasm-files'
+
+[[group]]
+name = 'target/wasm32-wasi/release/dynamic-routes.wasm-files'

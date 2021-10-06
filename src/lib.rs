@@ -1,421 +1,452 @@
-use crate::http_util::*;
-use crate::runtime::*;
-
-use indexmap::IndexSet;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use hyper::{Body, Request, Response};
-use serde::Deserialize;
-use tokio::sync::{Notify, RwLock};
-use tracing::instrument;
-
-use ::bindle::standalone::StandaloneRead;
-use ::bindle::Invoice;
-
+pub(crate) mod bindle_util;
+pub mod dispatcher;
+pub(crate) mod dynamic_route;
+pub mod emplacer;
+pub(crate) mod handlers;
 mod http_util;
-pub mod runtime;
+pub (crate) mod module_loader;
+mod request;
+mod tls;
 pub mod version;
+pub mod wagi_app;
+pub mod wagi_config;
+pub mod wagi_server;
+mod wasm_module;
+pub(crate) mod wasm_runner;
 
-/// The default host is 'localhost:3000' because that is the port and host WAGI has used since introduction.
-pub const DEFAULT_HOST: &str = "localhost:3000";
-
-#[derive(Clone)]
-/// A router is responsible for taking an inbound request and sending it to the appropriate handler.
-/// The only way to construct a router is with the [`RouterBuilder`](crate::RouterBuilder)
-pub struct Router {
-    module_store: ModuleStore,
-    base_log_dir: PathBuf,
-    cache_config_path: PathBuf,
-    module_cache: PathBuf,
-    default_host: String,
-    use_tls: bool,
-    global_env_vars: HashMap<String, String>,
-}
-
-impl Router {
-    /// Creates a new router builder with empty values. For default values, use
-    /// [RouterBuilder::default]
-    pub fn builder() -> RouterBuilder {
-        RouterBuilder {
-            cache_config_path: PathBuf::default(),
-            module_cache_dir: PathBuf::default(),
-            base_log_dir: PathBuf::default(),
-            default_host: String::default(),
-            global_env_vars: HashMap::new(),
-            use_tls: false,
-        }
-    }
-
-    /// Route the request to the correct handler
-    ///
-    /// Some routes are built in (like healthz), while others are dynamically
-    /// dispatched.
-    #[instrument(level = "info", skip(self, req), fields(uri = %req.uri()))]
-    pub async fn route(
-        &self,
-        req: Request<Body>,
-        client_addr: SocketAddr,
-    ) -> Result<Response<Body>, hyper::Error> {
-        // TODO: Improve the loading. See issue #3
-        //
-        // Additionally, we could implement an LRU to cache WASM modules. This would
-        // greatly reduce the amount of load time per request. But this would come with two
-        // drawbacks: (a) it would be different than CGI, and (b) it would involve a cache
-        // clear during debugging, which could be a bit annoying.
-
-        tracing::trace!("Processing request");
-
-        let uri_path = req.uri().path();
-        match uri_path {
-            "/healthz" => Ok(Response::new(Body::from("OK"))),
-            _ => match self.module_store.handler_for_path(uri_path).await {
-                Ok(h) => {
-                    let info = RouterInfo{
-                        entrypoint: h.entrypoint,
-                        client_addr: client_addr,
-                        cache_config_path: self.cache_config_path.clone(),
-                        module_cache_dir: self.module_cache.clone(),
-                        base_log_dir: self.base_log_dir.clone(),
-                        default_host: self.default_host.to_owned(),
-                        use_tls : self.use_tls,
-                        env_vars: self.global_env_vars.clone(),
-                    };
-
-                    let res = h
-                        .module
-                        .execute(
-                            req,
-                            info,
-                        )
-                        .await;
-                    Ok(res)
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "error when routing");
-                    Ok(not_found())
-                }
-            },
-        }
-    }
-}
-
-/// A builder for setting up a WAGI router. Created from [Router::builder]
-pub struct RouterBuilder {
-    cache_config_path: PathBuf,
-    module_cache_dir: PathBuf,
-    base_log_dir: PathBuf,
-    default_host: String,
-    global_env_vars: HashMap<String, String>,
-    use_tls: bool,
-}
-
-impl Default for RouterBuilder {
-    fn default() -> Self {
-        // NOTE: Because we default to tempdirs, there is the very small chance this could fail, so
-        // we just log a warning in that case. If there is a better way to do this, we can change it
-        // in the future
-        RouterBuilder {
-            cache_config_path: PathBuf::from("cache.toml"),
-            module_cache_dir: tempfile::tempdir()
-                .map_err(|e| {
-                    tracing::warn!(error = %e, "Error while trying to create temporary directory for module cache");
-                    e
-                })
-                .map(|td| td.into_path())
-                .unwrap_or_default(),
-            base_log_dir: tempfile::tempdir()
-                .map_err(|e| {
-                    tracing::warn!(
-                        "Error while trying to create temporary directory for logging: {}",
-                        e
-                    );
-                    e
-                })
-                .map(|td| td.into_path())
-                .unwrap_or_default(),
-            default_host: String::from("localhost:3000"),
-            global_env_vars: HashMap::new(),
-            use_tls: false,
-        }
-    }
-}
-
-impl RouterBuilder {
-    /// Sets a location for the wasmtime config cache
-    pub fn cache_config_path(mut self, cache_config_path: impl AsRef<Path>) -> Self {
-        self.cache_config_path = cache_config_path.as_ref().to_owned();
-        self
-    }
-
-    /// Sets a location for caching downloaded Wasm modules
-    pub fn module_cache_dir(mut self, module_cache_dir: impl AsRef<Path>) -> Self {
-        self.module_cache_dir = module_cache_dir.as_ref().to_owned();
-        self
-    }
-
-    /// Sets the base log directory which is used as a location for storing module logs in unique
-    /// subdirectories
-    pub fn base_log_dir(mut self, base_log_dir: impl AsRef<Path>) -> Self {
-        self.base_log_dir = base_log_dir.as_ref().to_owned();
-        self
-    }
-
-    /// Sets the default host. This is used when the client does not specify
-    /// a HOST header.
-    pub fn default_host(mut self, host: &str) -> Self {
-        self.default_host = host.to_owned();
-        self
-    }
-
-    pub fn global_env_vars(mut self, vars: HashMap<String, String>) -> Self {
-        self.global_env_vars = vars;
-        self
-    }
-
-    pub fn uses_tls(mut self, enabled: bool) -> Self {
-        self.use_tls = enabled;
-        self
-    }
-
-    /// Build the router, loading the config from a toml file at the given path
-    pub async fn build_from_modules_toml(self, path: impl AsRef<Path>) -> anyhow::Result<Router> {
-        if !tokio::fs::metadata(&path)
-            .await
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-        {
-            return Err(anyhow::anyhow!(
-                "no modules configuration file found at {}",
-                path.as_ref().display()
-            ));
-        }
-
-        let data = std::fs::read(path)?;
-        let mut modules: ModuleConfig = toml::from_slice(&data)?;
-
-        modules
-            .build_registry(
-                &self.cache_config_path,
-                &self.module_cache_dir,
-                &self.base_log_dir,
-            )
-            .await?;
-
-        Ok(self.build(modules))
-    }
-
-    /// Build the router, loading the config from a bindle with the given name from a standalone
-    /// bindle.
-    pub async fn build_from_standalone_bindle(
-        self,
-        name: &str,
-        base_path: &str,
-    ) -> anyhow::Result<Router> {
-        tracing::info!(name, "Loading standalone bindle");
-        let reader = StandaloneRead::new(base_path, name).await?;
-
-        let data = tokio::fs::read(&reader.invoice_file).await?;
-        let invoice: Invoice = toml::from_slice(&data)?;
-
-        let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods =
-            runtime::bindle::standalone_invoice_to_modules(&invoice, reader.parcel_dir, cache_dir)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
-                })?;
-
-        mods.build_registry(
-            &self.cache_config_path,
-            &self.module_cache_dir,
-            &self.base_log_dir,
-        )
-        .await?;
-
-        Ok(self.build(mods))
-    }
-
-    /// Build the router, loading the config from a bindle with the given name fetched from the
-    /// provided server
-    pub async fn build_from_bindle(
-        self,
-        name: &str,
-        bindle_server: &str,
-    ) -> anyhow::Result<Router> {
-        tracing::info!(name, "Loading bindle");
-        let cache_dir = self.module_cache_dir.join("_ASSETS");
-        let mut mods = runtime::bindle::bindle_to_modules(name, bindle_server, cache_dir)
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to turn Bindle into module configuration: {}", e)
-            })?;
-
-        mods.build_registry(
-            &self.cache_config_path,
-            &self.module_cache_dir,
-            &self.base_log_dir,
-        )
-        .await?;
-
-        Ok(self.build(mods))
-    }
-
-    fn build(self, config: ModuleConfig) -> Router {
-        let module_store = ModuleStore::new(config);
-        Router {
-            module_store,
-            base_log_dir: self.base_log_dir,
-            cache_config_path: self.cache_config_path,
-            module_cache: self.module_cache_dir,
-            default_host: self.default_host,
-            use_tls: self.use_tls,
-            global_env_vars: self.global_env_vars,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ModuleStore {
-    module_config: Arc<RwLock<ModuleConfig>>,
-    notify: Arc<Notify>,
-}
-
-impl ModuleStore {
-    fn new(config: ModuleConfig) -> Self {
-        ModuleStore {
-            module_config: Arc::new(RwLock::new(config)),
-            notify: Arc::new(Notify::new()),
-        }
-    }
-
-    async fn handler_for_path(&self, uri_fragment: &str) -> anyhow::Result<Handler> {
-        self.module_config
-            .read()
-            .await
-            .handler_for_path(uri_fragment)
-    }
-}
-
-/// The configuration for all modules in a WAGI site
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModuleConfig {
-    /// De-serialize [[module]] as modules
-    #[serde(rename = "module")]
-    pub modules: IndexSet<crate::runtime::Module>,
-
-    /// Cache of routes.
-    ///
-    /// This is built by calling `build_registry`.
-    #[serde(skip)]
-    route_cache: Option<Vec<Handler>>,
-}
-
-impl ModuleConfig {
-    /// Construct a registry of all routes.
-    async fn build_registry(
-        &mut self,
-        cache_config_path: &Path,
-        module_cache_dir: &Path,
-        base_log_dir: &Path,
-    ) -> anyhow::Result<()> {
-        let mut routes = vec![];
-
-        let mut failed_modules: Vec<String> = Vec::new();
-
-        for m in self.modules.iter().cloned() {
-            let cccp = cache_config_path.to_owned();
-            let module = m.clone();
-            let mcd = module_cache_dir.to_owned();
-            let bld = base_log_dir.to_owned();
-            let res =
-                tokio::task::spawn_blocking(move || module.load_routes(&cccp, &mcd, &bld)).await?;
-            match res {
-                Err(e) => {
-                    // FIXME: I think we could do something better here.
-                    failed_modules.push(e.to_string())
-                }
-                Ok(subroutes) => subroutes
-                    .into_iter()
-                    .for_each(|entry| routes.push(Handler::new(entry, m.clone()))),
-            }
-        }
-
-        if !failed_modules.is_empty() {
-            let msg = failed_modules.join(", ");
-            return Err(anyhow::anyhow!("Not all routes could be built: {}", msg));
-        }
-
-        self.route_cache = Some(routes);
-        Ok(())
-    }
-
-    /// Get a handler for a URI fragment (path) or return an error.
-    #[instrument(level = "trace", skip(self))]
-    fn handler_for_path(&self, uri_fragment: &str) -> Result<Handler, anyhow::Error> {
-        if let Some(routes) = self.route_cache.as_ref() {
-            for r in routes {
-                tracing::trace!(path = %r.path, "Trying route path");
-                // The important detail here is that strip_suffix returns None if the suffix
-                // does not exist. So ONLY paths that end with /... are substring-matched.
-                let route_match = r
-                    .path
-                    .strip_suffix("/...")
-                    .map(|i| {
-                        tracing::trace!(path = %r.path, "Comparing uri fragment to path");
-                        uri_fragment.starts_with(i)
-                    })
-                    .unwrap_or_else(|| r.path == uri_fragment);
-                if route_match {
-                    return Ok(r.clone());
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!("No handler for path {}", uri_fragment))
-    }
-}
+#[cfg(test)]
+mod upstream;
 
 #[cfg(test)]
 mod test {
-    use super::runtime::Module;
-    use super::ModuleConfig;
+    use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
+
+    use crate::{dispatcher::RoutingTable, wagi_app};
+
+    fn test_data_dir() -> PathBuf {
+        let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        project_path.join("testdata")
+    }
+
+    fn test_standalone_bindle_data_dir() -> PathBuf {
+        test_data_dir().join("standalone-bindles")
+    }
+
+    fn module_map_path(name: &str) -> PathBuf {
+        test_data_dir().join("module-maps").join(name)
+    }
+
+    fn mock_client_addr() -> SocketAddr {
+        "123.4.5.6:7890".parse().expect("Failed to parse mock client address")
+    }
+
+    // This ugliness is because file: URLs in modules.toml are meant to be absolute, but
+    // we don't know where the project (and therefore the test WASM modules) will reside
+    // on any given machine. So we need to sub in the path where the WASM file will
+    // actually be found.
+    async fn replace_placeholders(original_map_file: &str, custom_subs: Option<HashMap<String, String>>) -> PathBuf {
+        let orig_content = tokio::fs::read(module_map_path(original_map_file)).await
+            .expect(&format!("Error reading test file {}", original_map_file));
+        let toml_text = std::str::from_utf8(&orig_content)
+            .expect(&format!("Error treating test file {} as text", original_map_file));
+
+        let project_root = env!("CARGO_MANIFEST_DIR");
+        let timestamp = chrono::Local::now()
+            .format("%Y.%m.%d.%H.%M.%S.%3f")
+            .to_string();
+        let tempfile_dir = PathBuf::from(project_root)
+            .join("tests_working_dir")
+            .join(timestamp);
+        tokio::fs::create_dir_all(&tempfile_dir).await
+            .expect("Error creating temp directory");
+        let tempfile_path = tempfile_dir.join("modules.toml");
+
+        let mut final_text = toml_text.replace("${PROJECT_ROOT}", &project_root.escape_default().to_string());
+        for (k, v) in custom_subs.unwrap_or_default() {
+            let pattern = format!("${{{}}}", k);
+            final_text = final_text.replace(&pattern, &v.escape_default().to_string());
+        }
+        tokio::fs::write(&tempfile_path, final_text).await
+            .expect("Error saving modified modules file to test working dir");
+        tempfile_path
+    }
+
+    const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
+    const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
+    const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
+    const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
+    #[cfg(target_os = "windows")]
+    const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
+    const TEST_HEALTHZ_MODULE_MAP_FILE: &str = "test_healthz_override.toml";
+
+    async fn build_routing_table_for_standalone_bindle(bindle_id: &str) -> RoutingTable {
+        // Clear any env vars that would cause conflicts if set
+        std::env::remove_var("BINDLE_URL");
+
+        let matches = wagi_app::wagi_app_definition().get_matches_from(vec![
+            "wagi",
+            "-b", bindle_id,
+            "--bindle-path", &test_standalone_bindle_data_dir().display().to_string(),
+        ]);
+        let configuration = wagi_app::parse_configuration_from(matches)
+            .expect("Fake command line was not valid");
+
+        let emplacer = crate::emplacer::Emplacer::new(&configuration).await
+            .expect("Failed to create emplacer");
+        emplacer.emplace_all().await
+            .expect("Failed to emplace bindle data");
+        let handlers = configuration.load_handler_configuration(&emplacer).await
+            .expect("Failed to load handlers");
+        crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
+            .expect("Failed to build routing table")
+    }
+
+    // Accepting a Result<Request> here reduces noise in the actual tests
+    async fn send_request_to_standalone_bindle(bindle_id: &str, request: hyper::http::Result<hyper::Request<hyper::body::Body>>) -> hyper::Response<hyper::body::Body> {
+        let routing_table = build_routing_table_for_standalone_bindle(bindle_id).await;
+
+        routing_table.handle_request(
+            request.expect("Failed to construct mock request"),
+            mock_client_addr()
+        ).await
+        .expect("Error producing HTTP response")
+    }
+
+    async fn build_routing_table_for_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>) -> RoutingTable {
+        // Clear any env vars that would cause conflicts if set
+        std::env::remove_var("BINDLE_URL");
+
+        let modules_toml_path = replace_placeholders(&map_file, custom_subs).await;
+        let matches = wagi_app::wagi_app_definition().get_matches_from(vec![
+            "wagi",
+            "-c", &modules_toml_path.display().to_string(),
+        ]);
+        let configuration = wagi_app::parse_configuration_from(matches)
+            .expect("Fake command line was not valid");
+
+        let emplacer = crate::emplacer::Emplacer::new(&configuration).await
+            .expect("Failed to create emplacer");
+        emplacer.emplace_all().await
+            .expect("Failed to emplace bindle data");
+        let handlers = configuration.load_handler_configuration(&emplacer).await
+            .expect("Failed to load handlers");
+        crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
+            .expect("Failed to build routing table")
+    }
+
+    async fn send_request_to_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, request: hyper::http::Result<hyper::Request<hyper::body::Body>>) -> hyper::Response<hyper::body::Body> {
+        let routing_table = build_routing_table_for_module_map(map_file, custom_subs).await;
+
+        routing_table.handle_request(
+            request.expect("Failed to construct mock request"),
+            mock_client_addr()
+        ).await
+        .expect("Error producing HTTP response")
+    }
+
+    async fn get_plain_text_response_from_standalone_bindle(bindle_id: &str, route: &str) -> String {
+        let empty_body = hyper::body::Body::empty();
+        let uri = format!("http://127.0.0.1:3000{}", route);
+        let request = hyper::Request::get(&uri).body(empty_body);
+
+        let response = send_request_to_standalone_bindle(bindle_id, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+
+        // Content-Type could include a charset
+        let content_type = response.headers().get("Content-Type").expect("Expected Content-Type header").to_str().unwrap();
+        assert!(content_type.starts_with("text/plain"));
+
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could bot get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        response_text.to_owned()
+    }
+
+    async fn get_decription_and_evs_from_standalone_bindle(bindle_id: &str, route: &str) -> (String, HashMap<String, String>) {
+        let response_text = get_plain_text_response_from_standalone_bindle(bindle_id, route).await;
+
+        let description = response_text.lines().nth(0).unwrap().to_owned();
+        
+        let env_vars = response_text
+            .lines()
+            .skip(1)
+            .filter_map(|line| parse_ev_line(line))
+            .collect::<HashMap<_, _>>();
+
+        (description, env_vars)
+    }
+
+    // TODO: set up more specific and focused WASM apps that allow better testing
+    // of routes, headers, EVs, and responses.
 
     #[tokio::test]
-    async fn handler_should_match_path() {
-        let cache = std::path::PathBuf::from("cache.toml");
-        let mod_cache = tempfile::tempdir().expect("temp dir created");
+    pub async fn can_serve_from_bindle() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
 
-        let module = Module::new("/".to_string(), "examples/hello.wat".to_owned());
-        // We should be able to mount the same wasm at a separate route.
-        let module2 = Module::new("/foo".to_string(), "examples/hello.wasm".to_owned());
+        let response = send_request_to_standalone_bindle(TOAST_ON_DEMAND_SA_ID, request).await;
 
-        let mut mc = ModuleConfig {
-            modules: vec![module.clone(), module2.clone()].into_iter().collect(),
-            route_cache: None,
-        };
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+    }
 
-        let tempdir = tempfile::tempdir().expect("Unable to create tempdir");
+    #[tokio::test]
+    pub async fn bindle_unmapped_route_returns_not_found() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/does/not/exist").body(empty_body);
 
-        mc.build_registry(&cache, mod_cache.path(), tempdir.path())
-            .await
-            .expect("registry built cleanly");
+        let response = send_request_to_standalone_bindle(TOAST_ON_DEMAND_SA_ID, request).await;
 
-        // This should match a default handler
-        let default_handler = mc
-            .handler_for_path("/")
-            .expect("foo.example.com handler found");
-        assert_eq!("examples/hello.wat", default_handler.module.module);
+        assert_eq!(hyper::StatusCode::NOT_FOUND, response.status());
+    }
 
-        // This should match a handler with host example.com
-        let foo_handler = mc
-            .handler_for_path("/foo")
-            .expect("example.com handler found");
-        assert_eq!("examples/hello.wasm", foo_handler.module.module);
+    #[tokio::test]
+    pub async fn can_serve_from_modules_toml() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
 
-        // This should not match any handlers
-        assert!(mc.handler_for_path("/bar").is_err());
+        let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, None, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+    }
+
+    #[tokio::test]
+    pub async fn modules_toml_unmapped_route_returns_not_found() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/does/not/exist").body(empty_body);
+
+        let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, None, request).await;
+
+        assert_eq!(hyper::StatusCode::NOT_FOUND, response.status());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    pub async fn can_serve_from_modules_toml_even_if_file_ref_has_all_sorts_of_windows_slashes() {
+        use std::iter::FromIterator;
+
+        let wasm_module_path = module_map_path("toast-on-demand.wasm").display().to_string();
+
+        for testcase in possible_slashes_for_paths(wasm_module_path) {
+            let subs = HashMap::from_iter(vec![
+                ("SLASHY_URL".to_owned(), testcase)
+            ]);
+
+            let empty_body = hyper::body::Body::empty();
+            let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
+
+            let response = send_request_to_module_map(TEST2_MODULE_MAP_FILE, Some(subs), request).await;
+
+            assert_eq!(hyper::StatusCode::OK, response.status());
+            assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn possible_slashes_for_paths(path: String) -> Vec<String> {
+        let mut res = vec![];
+
+        // this should transform the initial Windows path coming from
+        // the temoporary file to most common ways to define a module
+        // in modules.toml.
+
+        res.push(format!("file:{}", path));
+        res.push(format!("file:/{}", path));
+        res.push(format!("file://{}", path));
+        res.push(format!("file:///{}", path));
+
+        let double_backslash = str::replace(path.as_str(), "\\", "\\\\");
+        res.push(format!("file:{}", double_backslash));
+        res.push(format!("file:/{}", double_backslash));
+        res.push(format!("file://{}", double_backslash));
+        res.push(format!("file:///{}", double_backslash));
+
+        let forward_slash = str::replace(path.as_str(), "\\", "/");
+        res.push(format!("file:{}", forward_slash));
+        res.push(format!("file:/{}", forward_slash));
+        res.push(format!("file://{}", forward_slash));
+        res.push(format!("file:///{}", forward_slash));
+
+        let double_slash = str::replace(path.as_str(), "\\", "//");
+        res.push(format!("file:{}", double_slash));
+        res.push(format!("file:/{}", double_slash));
+        res.push(format!("file://{}", double_slash));
+        res.push(format!("file:///{}", double_slash));
+
+        res
+    }
+
+    fn parse_ev_line(line: &str) -> Option<(String, String)> {
+        line.find('=').and_then(|index| {
+            let left = &line[..index];
+            let right = &line[(index + 2)..];
+            Some((left.trim().to_owned(), right.trim().to_owned()))
+        })
+    }
+
+    #[tokio::test]
+    pub async fn http_settings_are_mapped_to_env_vars() {
+        let response_text = get_plain_text_response_from_standalone_bindle(PRINT_ENV_SA_ID, "/").await;
+        let parsed_response = response_text
+            .lines()
+            .filter_map(|line| parse_ev_line(line))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!("", parsed_response["PATH_INFO"]);
+        assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+        assert_eq!("/", parsed_response["X_MATCHED_ROUTE"]);
+        assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+        assert_eq!("/", parsed_response["SCRIPT_NAME"]);
+        assert_eq!("123.4.5.6", parsed_response["REMOTE_ADDR"]);
+        assert_eq!("GET", parsed_response["REQUEST_METHOD"]);
+    }
+
+    #[tokio::test]
+    pub async fn http_settings_are_mapped_to_env_vars_wildcard_route() {
+        let response_text = get_plain_text_response_from_standalone_bindle(PRINT_ENV_SA_ID, "/test/fizz/buzz").await;
+        let parsed_response = response_text
+            .lines()
+            .filter_map(|line| parse_ev_line(line))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+        assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+        assert_eq!("/test/...", parsed_response["X_MATCHED_ROUTE"]);
+        assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+        assert_eq!("/test", parsed_response["SCRIPT_NAME"]);
+        assert_eq!("123.4.5.6", parsed_response["REMOTE_ADDR"]);
+        assert_eq!("GET", parsed_response["REQUEST_METHOD"]);
+    }
+
+    #[tokio::test]
+    pub async fn dynamic_routes_set_path_env_vars_correctly() {
+        let bindle_id = DYNAMIC_ROUTES_SA_ID;
+
+        {
+            let route = "/";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/exactparent";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparent", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparent", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            // In a _routes scenario, it is not clear how to canonically parse the URL.
+            // We choose treat the CGI script name as the *full* routing path, i.e. the
+            // *concatenation* of the static parent path and the dynamic _routes-supplied
+            // subpath. This is not currently specified by the WAGI spec, though, and earlier
+            // implementations of Rust WAGI handled it differently!
+            let route = "/exactparent/exact";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the .../exact handler", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparent/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparent/exact", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/exactparent/wildcard/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the .../wildcard/... handler", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparent/wildcard", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent/exact";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the .../exact handler", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent/exact", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent/wildcard/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the .../wildcard/... handler", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent/wildcard", parsed_response["SCRIPT_NAME"]);
+        }
+    }
+
+    #[tokio::test]
+    pub async fn health_check_builtin_takes_precedence_over_user_routes() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/healthz").body(empty_body);
+
+        let response = send_request_to_module_map(TEST_HEALTHZ_MODULE_MAP_FILE, None, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could bot get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        assert_eq!("OK", response_text);
     }
 }
