@@ -12,7 +12,7 @@ use crate::emplacer::Bits;
 use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
 use crate::module_loader::Loaded;
-use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
+use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::bindle_util::{WagiHandlerInfo};
 use crate::wagi_config::{LoadedHandlerConfiguration, ModuleMapConfigurationEntry};
@@ -159,8 +159,7 @@ impl RoutingTableEntry {
         match &self.handler_info {
             RouteHandler::HealthCheck => Response::new(Body::from("OK")),
             RouteHandler::Wasm(w) => {
-                let route_context = RequestRouteContext { entrypoint: w.entrypoint.clone() };
-                let response = w.handle_request(&self.route_pattern, req, body, request_context, &route_context, global_context, self.unique_key());
+                let response = w.handle_request(&self.route_pattern, req, body, request_context, global_context, self.unique_key());
                 match response {
                     Ok(res) => res,
                     Err(e) => {

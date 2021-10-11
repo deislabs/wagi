@@ -14,7 +14,7 @@ use wasmtime_wasi::*;
 
 use crate::dispatcher::RoutePattern;
 use crate::http_util::{internal_error, parse_cgi_headers};
-use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
+use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
 use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance};
@@ -42,7 +42,6 @@ impl WasmRouteHandler {
         req: &Parts,
         body: Vec<u8>,
         request_context: &RequestContext,
-        route_context: &RequestRouteContext,
         global_context: &RequestGlobalContext,
         logging_key: String,
     ) -> Result<Response<Body>, anyhow::Error> {
@@ -66,7 +65,7 @@ impl WasmRouteHandler {
         // Drop manually to get instantiation time
         drop(startup_span);
 
-        run_prepared_wasm_instance(instance, store, &route_context.entrypoint, &self.wasm_module_name)?;
+        run_prepared_wasm_instance(instance, store, &self.entrypoint, &self.wasm_module_name)?;
 
         compose_response(redirects.stdout_mutex)
     }
