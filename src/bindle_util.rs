@@ -111,7 +111,7 @@ pub fn is_file(parcel: &Parcel) -> bool {
 pub fn parcels_required_for(parcel: &Parcel, full_dep_map: &HashMap<String, Vec<Parcel>>) -> Vec<Parcel> {
     let mut required = HashSet::new();
     for group in parcel.directly_requires() {
-        required.extend(full_dep_map.get(&group).unwrap_or(&NO_PARCELS).iter().map(|p| p.clone()));
+        required.extend(full_dep_map.get(&group).unwrap_or(&NO_PARCELS).iter().cloned());
     }
     Vec::from_iter(required)
 }
@@ -142,7 +142,7 @@ pub fn build_full_memberships(invoice: &Invoice) -> HashMap<String, Vec<Parcel>>
     for group in direct_memberships.keys() {
         let mut all_members = HashSet::new();
         for dep_group in gg_deps.get(group).unwrap() {
-            all_members.extend(direct_memberships.get(dep_group).unwrap_or(&NO_PARCELS).iter().map(|p| p.clone()));
+            all_members.extend(direct_memberships.get(dep_group).unwrap_or(&NO_PARCELS).iter().cloned());
         }
         full_memberships.insert(group.to_owned(), Vec::from_iter(all_members));
     }
@@ -160,7 +160,7 @@ fn group_to_group_direct_dependencies(direct_memberships: &HashMap<String, Vec<P
     ggd
 }
 
-fn direct_deps_not_already_in_list(list: &Vec<String>, direct_dep_map: &HashMap<String, Vec<String>>) -> Vec<String> {
+fn direct_deps_not_already_in_list(list: &[String], direct_dep_map: &HashMap<String, Vec<String>>) -> Vec<String> {
     let mut new_dds = vec![];
     for group in list {
         if let Some(child_groups) = direct_dep_map.get(group) {

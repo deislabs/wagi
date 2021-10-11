@@ -5,7 +5,6 @@ use anyhow::Context;
 use oci_distribution::client::{Client, ClientConfig};
 use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
-use docker_credential;
 use docker_credential::DockerCredential;
 use sha2::{Digest, Sha256};
 use url::Url;

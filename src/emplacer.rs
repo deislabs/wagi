@@ -24,8 +24,8 @@ impl Emplacer {
         ).await
     }
 
-    async fn new_from_settings(asset_cache_dir: &PathBuf, handlers: &HandlerConfigurationSource) -> anyhow::Result<Self> {
-        let cache_path = asset_cache_dir.clone();
+    async fn new_from_settings(asset_cache_dir: &Path, handlers: &HandlerConfigurationSource) -> anyhow::Result<Self> {
+        let cache_path = asset_cache_dir.to_owned();
         tokio::fs::create_dir_all(&cache_path).await
             .with_context(|| format!("Can't create asset cache directory {}", cache_path.display()))?;
         Ok(Self {
@@ -40,7 +40,7 @@ impl Emplacer {
             HandlerConfigurationSource::StandaloneBindle(bindle_base_dir, id) =>
                 self.emplace_standalone_bindle(bindle_base_dir, id).await,
             HandlerConfigurationSource::RemoteBindle(bindle_base_url, id) =>
-                self.emplace_remote_bindle(&bindle_base_url, id).await,
+                self.emplace_remote_bindle(bindle_base_url, id).await,
         }.with_context(|| "Error caching assets from bindle")
     }
 
@@ -63,7 +63,7 @@ impl Emplacer {
         Ok(invoice)
     }
 
-    async fn emplace_standalone_bindle(&self, bindle_base_dir: &PathBuf, id: &bindle::Id) -> anyhow::Result<()> {
+    async fn emplace_standalone_bindle(&self, bindle_base_dir: &Path, id: &bindle::Id) -> anyhow::Result<()> {
         let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await
             .with_context(|| format!("Error constructing bindle reader for {} in {}", id, bindle_base_dir.display()))?;
 
@@ -114,7 +114,7 @@ impl Emplacer {
             return Ok(());
         }
 
-        let parcel_data = reader.get_parcel(invoice_id, &parcel).await?;
+        let parcel_data = reader.get_parcel(invoice_id, parcel).await?;
         safely_write(&parcel_path, parcel_data).await
             .with_context(|| format!("Error caching parcel {} at {}", parcel.label.name, parcel_path.display()))
     }
