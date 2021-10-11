@@ -69,10 +69,8 @@ async fn load_from_oci(
 
     let mut auth = RegistryAuth::Anonymous;
 
-    if let Ok(credential) = docker_credential::get_credential(uri.as_str()) {
-        if let DockerCredential::UsernamePassword(user_name, password) = credential {
-            auth = RegistryAuth::Basic(user_name, password);
-        };
+    if let Ok(DockerCredential::UsernamePassword(user_name, password)) = docker_credential::get_credential(uri.as_str()) {
+        auth = RegistryAuth::Basic(user_name, password);
     };
 
     let img = url_to_oci(uri).map_err(|e| {
@@ -234,7 +232,7 @@ fn hash_name(url: &Url) -> String {
 //
 // *Except I changed it to take an &Vec instead of a Vec but I am sure our mighty
 // brains can reconcile that if and when the moment comes.
-async fn safely_write(path: impl AsRef<Path>, content: &Vec<u8>) -> std::io::Result<()> {
+async fn safely_write(path: impl AsRef<Path>, content: &[u8]) -> std::io::Result<()> {
     let path = path.as_ref();
     let dir = path.parent().ok_or_else(||
         std::io::Error::new(std::io::ErrorKind::Other, format!("cache location {} has no parent directory", path.display()))

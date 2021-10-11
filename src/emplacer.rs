@@ -4,7 +4,7 @@ use anyhow::Context;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::{bindle_util::{InterestingParcel, InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}};
+use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}};
 
 pub struct Emplacer {
     cache_path: PathBuf,
@@ -91,15 +91,9 @@ impl Emplacer {
 
         let invoice = InvoiceUnderstander::new(&invoice);
 
-        let module_parcels: Vec<_> = invoice
-            .top_modules().iter()
-            .filter_map(|parcel| invoice.classify_parcel(parcel))
-            .filter_map(|parcel| match parcel {
-                InterestingParcel::WagiHandler(h) => Some(h),
-            })
-            .collect();
+        let module_parcels = invoice.parse_wagi_handlers();
 
-        let module_placements = module_parcels.iter().map(|h| self.emplace_module_and_assets(reader, &id, &h));
+        let module_placements = module_parcels.iter().map(|h| self.emplace_module_and_assets(reader, id, h));
         let all_module_placements = futures::future::join_all(module_placements).await;
 
         match all_module_placements.into_iter().find_map(|e| e.err()) {
@@ -131,13 +125,13 @@ impl Emplacer {
             return Ok(());
         }
 
-        let parcel_data = reader.get_parcel(invoice_id, &parcel).await?;
+        let parcel_data = reader.get_parcel(invoice_id, parcel).await?;
         safely_write(&parcel_path, parcel_data).await
             .with_context(|| format!("Error caching parcel {} at {}", parcel.label.name, parcel_path.display()))?;
         Ok(())
     }
 
-    async fn emplace_as_assets(&self, reader: &impl BindleReader, invoice_id: &bindle::Id, parcels: &Vec<bindle::Parcel>) -> anyhow::Result<()> {
+    async fn emplace_as_assets(&self, reader: &impl BindleReader, invoice_id: &bindle::Id, parcels: &[bindle::Parcel]) -> anyhow::Result<()> {
         let placement_futures = parcels.iter().map(|parcel| self.emplace_as_asset(reader, invoice_id, parcel));
         let all_placements = futures::future::join_all(placement_futures).await;
         let first_error = all_placements.into_iter().find(|p| p.is_err());

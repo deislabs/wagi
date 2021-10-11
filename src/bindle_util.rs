@@ -63,6 +63,16 @@ impl InvoiceUnderstander {
             })
         })
     }
+
+    pub fn parse_wagi_handlers(&self) -> Vec<WagiHandlerInfo> {
+        self
+            .top_modules().iter()
+            .filter_map(|parcel| self.classify_parcel(parcel))
+            .map(|parcel| match parcel {    // If there are other cases of InterestingParcel this may need to become a filter_map, but right now that makes Clippy mad
+                InterestingParcel::WagiHandler(h) => h,
+            })
+            .collect()
+    }
 }
 
 pub enum InterestingParcel {
