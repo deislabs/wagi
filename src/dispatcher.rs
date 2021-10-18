@@ -184,10 +184,14 @@ impl RoutePattern {
         }
     }
 
+    // TODO: there is probably scope for an optimisation so we don't need to do the
+    // format! on every match attempt.
+    //
+    // The intent is that '/foo/...' should match '/foo' and '/foo/bar' but not '/foobar'
     pub fn is_match(&self, uri_fragment: &str) -> bool {
         match self {
             Self::Exact(path) => path == uri_fragment,
-            Self::Prefix(prefix) => uri_fragment.starts_with(prefix),
+            Self::Prefix(prefix) => prefix == uri_fragment || uri_fragment.starts_with(&format!("{}/", prefix)),
         }
     }
 
@@ -233,10 +237,26 @@ impl RoutePattern {
 
     fn prepend(&self, prefix: &str) -> Self {
         match self {
-            Self::Exact(subpath) => Self::Exact(format!("{}{}", prefix, subpath)),
-            Self::Prefix(subpath) => Self::Prefix(format!("{}{}", prefix, subpath)),
+            Self::Exact(subpath) => Self::Exact(concat_no_duplicate_slash(prefix, subpath)),
+            Self::Prefix(subpath) => Self::Prefix(concat_no_duplicate_slash(prefix, subpath)),
         }
     }
+}
+
+fn concat_no_duplicate_slash(prefix: &str, suffix: &str) -> String {
+    let safe_prefix = if prefix.ends_with('/') {
+        &prefix[..(prefix.len() - 1)]
+    } else {
+        prefix
+    };
+
+    let safe_suffix = if suffix.starts_with('/') {
+        &suffix[1..]
+    } else {
+        suffix
+    };
+
+    format!("{}/{}", safe_prefix, safe_suffix)
 }
 
 impl RoutingTable {
@@ -369,5 +389,57 @@ mod test {
         // behavior. So this test is a canary for a breaking change.
         let rp5 = RoutePattern::parse("/foo");
         assert_eq!("", rp5.relative_path("/bar"));
+    }
+
+    #[test]
+    fn exact_patterns_should_match_exact() {
+        let pattern = RoutePattern::parse("/foo");
+        assert!(pattern.is_match("/foo"));
+    }
+
+    #[test]
+    fn exact_patterns_should_consider_trailing_slash() {
+        let pattern1 = RoutePattern::parse("/foo");
+        assert!(pattern1.is_match("/foo"));
+        assert!(!pattern1.is_match("/foo/"));
+
+        let pattern2 = RoutePattern::parse("/foo/");
+        assert!(!pattern2.is_match("/foo"));
+        assert!(pattern2.is_match("/foo/"));
+    }
+
+    #[test]
+    fn exact_patterns_should_not_match_subpaths() {
+        let pattern = RoutePattern::parse("/foo");
+        assert!(!pattern.is_match("/foo/bar"));
+        assert!(!pattern.is_match("/foo/wizz/skronk"));
+    }
+
+    #[test]
+    fn exact_patterns_should_not_match_superstrings() {
+        let pattern = RoutePattern::parse("/foo");
+        assert!(!pattern.is_match("/foobar"));
+        assert!(!pattern.is_match("/foowizz/foo/skronk"));
+    }
+
+    #[test]
+    fn prefix_patterns_should_match_exact() {
+        let pattern = RoutePattern::parse("/foo/...");
+        assert!(pattern.is_match("/foo"));
+        assert!(pattern.is_match("/foo/"));
+    }
+
+    #[test]
+    fn prefix_patterns_should_match_subpaths() {
+        let pattern = RoutePattern::parse("/foo/...");
+        assert!(pattern.is_match("/foo/bar"));
+        assert!(pattern.is_match("/foo/wizz/skronk"));
+    }
+
+    #[test]
+    fn prefix_patterns_should_not_match_superstrings() {
+        let pattern = RoutePattern::parse("/foo/...");
+        assert!(!pattern.is_match("/foobar"));
+        assert!(!pattern.is_match("/foowizz/foo/skronk"));
     }
 }

@@ -1,0 +1,15 @@
+[[module]]
+route = "/"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/dynamic-routes.wasm"
+
+[[module]]
+route = "/exactparent"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/dynamic-routes.wasm"
+
+[[module]]
+route = "/exactparentslash/"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/dynamic-routes.wasm"
+
+[[module]]
+route = "/wildcardparent/..."
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/dynamic-routes.wasm"
