@@ -1,0 +1,15 @@
+[[module]]
+route = "/defaultep"
+# THIS MAKES IT NOT A REAL MODULES.TOML! The test infra replaces the ${...}
+# with the right string.
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/multiple-entrypoints.wasm"
+
+[[module]]
+route = "/ep1"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/multiple-entrypoints.wasm"
+entrypoint = "ep1"
+
+[[module]]
+route = "/ep2"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/multiple-entrypoints.wasm"
+entrypoint = "ep2"

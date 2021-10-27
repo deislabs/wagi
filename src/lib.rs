@@ -77,6 +77,7 @@ mod test {
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
     #[cfg(target_os = "windows")]
     const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
+    const TEST3_MODULE_MAP_FILE: &str = "test3.toml";
     const TEST_HEALTHZ_MODULE_MAP_FILE: &str = "test_healthz_override.toml";
 
     async fn build_routing_table_for_standalone_bindle(bindle_id: &str) -> RoutingTable {
@@ -142,6 +143,26 @@ mod test {
             mock_client_addr()
         ).await
         .expect("Error producing HTTP response")
+    }
+
+    async fn get_plain_text_response_from_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, route: &str) -> String {
+        let empty_body = hyper::body::Body::empty();
+        let uri = format!("http://127.0.0.1:3000{}", route);
+        let request = hyper::Request::get(&uri).body(empty_body);
+
+        let response = send_request_to_module_map(map_file, custom_subs, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+
+        // Content-Type could include a charset
+        let content_type = response.headers().get("Content-Type").expect("Expected Content-Type header").to_str().unwrap();
+        assert!(content_type.starts_with("text/plain"));
+
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could bot get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        response_text.to_owned()
     }
 
     async fn get_plain_text_response_from_standalone_bindle(bindle_id: &str, route: &str) -> String {
@@ -277,6 +298,30 @@ mod test {
         res.push(format!("file:///{}", double_slash));
 
         res
+    }
+
+    #[tokio::test]
+    pub async fn can_serve_multiple_static_entrypoints() {
+        {
+            let route = "/defaultep";
+
+            let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
+            assert_eq!("Default entrypoint\n", response);
+        }
+
+        {
+            let route = "/ep1";
+
+            let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
+            assert_eq!("Entrypoint 1\n", response);
+        }
+
+        {
+            let route = "/ep2";
+
+            let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
+            assert_eq!("Entrypoint 2\n", response);
+        }
     }
 
     fn parse_ev_line(line: &str) -> Option<(String, String)> {

@@ -23,7 +23,7 @@ impl WagiServer {
         Ok(Self {
             routing_table,
             tls: configuration.http_configuration.tls.clone(),
-            address: configuration.http_configuration.listen_on.clone(),
+            address: configuration.http_configuration.listen_on,
         })
     }
 

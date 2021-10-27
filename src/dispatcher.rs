@@ -12,7 +12,7 @@ use crate::emplacer::Bits;
 use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
 use crate::module_loader::Loaded;
-use crate::request::{RequestContext, RequestGlobalContext, RequestRouteContext};
+use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::bindle_util::{WagiHandlerInfo};
 use crate::wagi_config::{LoadedHandlerConfiguration, ModuleMapConfigurationEntry};
@@ -159,8 +159,7 @@ impl RoutingTableEntry {
         match &self.handler_info {
             RouteHandler::HealthCheck => Response::new(Body::from("OK")),
             RouteHandler::Wasm(w) => {
-                let route_context = RequestRouteContext { entrypoint: w.entrypoint.clone() };
-                let response = w.handle_request(&self.route_pattern, req, body, request_context, &route_context, global_context, self.unique_key());
+                let response = w.handle_request(&self.route_pattern, req, body, request_context, global_context, self.unique_key());
                 match response {
                     Ok(res) => res,
                     Err(e) => {
@@ -259,7 +258,7 @@ impl RoutingTable {
         })
     }
 
-    fn build_from_modules_toml(module_map_entries: &Vec<Loaded<ModuleMapConfigurationEntry>>) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    fn build_from_modules_toml(module_map_entries: &[Loaded<ModuleMapConfigurationEntry>]) -> anyhow::Result<Vec<RoutingTableEntry>> {
         // TODO: look for `_routes` function
         module_map_entries
             .iter()
@@ -267,7 +266,7 @@ impl RoutingTable {
             .collect()
     }
 
-    fn build_from_bindle_entries(bindle_entries: &Vec<(WagiHandlerInfo, Bits)>) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    fn build_from_bindle_entries(bindle_entries: &[(WagiHandlerInfo, Bits)]) -> anyhow::Result<Vec<RoutingTableEntry>> {
         bindle_entries
             .iter()
             .filter_map(|e| RoutingTableEntry::build_from_bindle_entry(e))
@@ -302,14 +301,14 @@ fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry,
     let (store, instance) = prepare_wasm_instance(global_context, ctx, &wasm_route_handler.wasm_module_source, |_| Ok(()))?;
 
     match run_prepared_wasm_instance_if_present(instance, store, "_routes") {
-        RunWasmResult::WasmError(e) => return Err(anyhow::Error::from(e)),
+        RunWasmResult::WasmError(e) => Err(e),
         RunWasmResult::EntrypointNotFound => Ok(vec![routing_table_entry.clone()]),
         RunWasmResult::Ok(_) => {
             let out = redirects.stdout_mutex.read().unwrap();
             let dynamic_routes_text = std::str::from_utf8(&*out)?;
             let dynamic_routes = interpret_routes(dynamic_routes_text)?;
         
-            let mut dynamic_route_entries = append_all_dynamic_routes(&routing_table_entry, wasm_route_handler, dynamic_routes);
+            let mut dynamic_route_entries = append_all_dynamic_routes(routing_table_entry, wasm_route_handler, dynamic_routes);
             dynamic_route_entries.reverse();
             dynamic_route_entries.push(routing_table_entry.clone());
             Ok(dynamic_route_entries)
@@ -318,7 +317,10 @@ fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry,
 }
 
 fn append_all_dynamic_routes(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, dynamic_routes: DynamicRoutes) -> Vec<RoutingTableEntry> {
-    dynamic_routes.subpath_entrypoints.iter().map(|dr| append_one_dynamic_route(&routing_table_entry, wasm_route_handler, &dr.0, &dr.1)).collect()
+    dynamic_routes
+        .subpath_entrypoints.iter()
+        .map(|dr| append_one_dynamic_route(routing_table_entry, wasm_route_handler, &dr.0, &dr.1))
+        .collect()
 }
 
 fn append_one_dynamic_route(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, dynamic_route_pattern: &RoutePattern, entrypoint: &str) -> RoutingTableEntry {

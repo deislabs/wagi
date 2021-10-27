@@ -4,7 +4,7 @@ use anyhow::Context;
 use bindle::{Invoice, standalone::StandaloneRead};
 use serde::Deserialize;
 
-use crate::{bindle_util::{InterestingParcel, InvoiceUnderstander, WagiHandlerInfo}, emplacer::{Emplacer}, module_loader::{Loaded}, request::RequestGlobalContext};
+use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, emplacer::{Emplacer}, module_loader::{Loaded}, request::RequestGlobalContext};
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {
@@ -56,6 +56,7 @@ pub struct ModuleMapConfigurationEntry {
     pub http_max_concurrency: Option<u32>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum HandlerConfiguration {
     ModuleMapFile(ModuleMapConfiguration),
     Bindle(Invoice),
@@ -103,7 +104,7 @@ impl WagiConfiguration {
     }
 }
 
-async fn read_module_map_configuration(path: &PathBuf) -> anyhow::Result<ModuleMapConfiguration> {
+async fn read_module_map_configuration(path: &Path) -> anyhow::Result<ModuleMapConfiguration> {
     tracing::info!(?path, "Loading modules config file");
     if !tokio::fs::metadata(&path)
         .await
@@ -144,24 +145,13 @@ async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configurat
 
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
     
-    loadeds.map(|entries| LoadedHandlerConfiguration::ModuleMapFile(entries))
+    loadeds.map(LoadedHandlerConfiguration::ModuleMapFile)
 }
 
 async fn handlers_for_bindle(invoice: &bindle::Invoice, emplacer: &Emplacer) -> anyhow::Result<LoadedHandlerConfiguration> {
     let invoice = InvoiceUnderstander::new(invoice);
 
-    let top = invoice.top_modules();
-    tracing::debug!(
-        default_modules = top.len(),
-        "Loaded modules from the default group (parcels that do not have conditions.memberOf set)"
-    );
-
-    let interesting_parcels = top.iter().filter_map(|p| invoice.classify_parcel(p));
-    let wagi_handlers: Vec<_> = interesting_parcels.filter_map(|p|
-        match p {
-            InterestingParcel::WagiHandler(h) => Some(h),
-        }
-    ).collect();
+    let wagi_handlers = invoice.parse_wagi_handlers();
 
     let loaders = wagi_handlers.iter().map(|h| emplacer.get_bits_for(h));
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
