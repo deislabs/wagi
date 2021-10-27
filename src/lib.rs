@@ -59,7 +59,7 @@ mod test {
             .join(timestamp);
         tokio::fs::create_dir_all(&tempfile_dir).await
             .expect("Error creating temp directory");
-        let tempfile_path = tempfile_dir.join("modules.toml");
+        let tempfile_path = tempfile_dir.join(original_map_file);
 
         let mut final_text = toml_text.replace("${PROJECT_ROOT}", &project_root.escape_default().to_string());
         for (k, v) in custom_subs.unwrap_or_default() {
@@ -79,6 +79,7 @@ mod test {
     const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
     const TEST3_MODULE_MAP_FILE: &str = "test3.toml";
     const TEST_HEALTHZ_MODULE_MAP_FILE: &str = "test_healthz_override.toml";
+    const TEST_DYNAMIC_ROUTES_MODULE_MAP_FILE: &str = "test_dynamic_routes.toml";
 
     async fn build_routing_table_for_standalone_bindle(bindle_id: &str) -> RoutingTable {
         // Clear any env vars that would cause conflicts if set
@@ -152,7 +153,7 @@ mod test {
 
         let response = send_request_to_module_map(map_file, custom_subs, request).await;
 
-        assert_eq!(hyper::StatusCode::OK, response.status());
+        assert_eq!(hyper::StatusCode::OK, response.status(), "Non-OK status getting route {}", route);
 
         // Content-Type could include a charset
         let content_type = response.headers().get("Content-Type").expect("Expected Content-Type header").to_str().unwrap();
@@ -172,7 +173,7 @@ mod test {
 
         let response = send_request_to_standalone_bindle(bindle_id, request).await;
 
-        assert_eq!(hyper::StatusCode::OK, response.status());
+        assert_eq!(hyper::StatusCode::OK, response.status(), "Non-OK status getting route {}", route);
 
         // Content-Type could include a charset
         let content_type = response.headers().get("Content-Type").expect("Expected Content-Type header").to_str().unwrap();
@@ -187,6 +188,20 @@ mod test {
 
     async fn get_decription_and_evs_from_standalone_bindle(bindle_id: &str, route: &str) -> (String, HashMap<String, String>) {
         let response_text = get_plain_text_response_from_standalone_bindle(bindle_id, route).await;
+
+        let description = response_text.lines().nth(0).unwrap().to_owned();
+        
+        let env_vars = response_text
+            .lines()
+            .skip(1)
+            .filter_map(|line| parse_ev_line(line))
+            .collect::<HashMap<_, _>>();
+
+        (description, env_vars)
+    }
+
+    async fn get_decription_and_evs_from_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, route: &str) -> (String, HashMap<String, String>) {
+        let response_text = get_plain_text_response_from_module_map(map_file, custom_subs, route).await;
 
         let description = response_text.lines().nth(0).unwrap().to_owned();
         
@@ -217,6 +232,16 @@ mod test {
     pub async fn bindle_unmapped_route_returns_not_found() {
         let empty_body = hyper::body::Body::empty();
         let request = hyper::Request::get("http://127.0.0.1:3000/does/not/exist").body(empty_body);
+
+        let response = send_request_to_standalone_bindle(TOAST_ON_DEMAND_SA_ID, request).await;
+
+        assert_eq!(hyper::StatusCode::NOT_FOUND, response.status());
+    }
+
+    #[tokio::test]
+    pub async fn bindle_wildcard_routes_match_only_at_slash() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/blahahahaha").body(empty_body);
 
         let response = send_request_to_standalone_bindle(TOAST_ON_DEMAND_SA_ID, request).await;
 
@@ -367,7 +392,7 @@ mod test {
     }
 
     #[tokio::test]
-    pub async fn dynamic_routes_set_path_env_vars_correctly() {
+    pub async fn dynamic_routes_set_path_env_vars_correctly_bindle() {
         let bindle_id = DYNAMIC_ROUTES_SA_ID;
 
         {
@@ -470,6 +495,164 @@ mod test {
             let route = "/wildcardparent/wildcard/fizz/buzz";
 
             let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            assert_eq!("This is the .../wildcard/... handler", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent/wildcard", parsed_response["SCRIPT_NAME"]);
+        }
+    }
+
+    #[tokio::test]
+    pub async fn dynamic_routes_set_path_env_vars_correctly_module_map() {
+        let map_file = TEST_DYNAMIC_ROUTES_MODULE_MAP_FILE;
+
+        {
+            let route = "/";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/exact";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the .../exact handler", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exact", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/exactparent";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparent", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparent", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            // In a _routes scenario, it is not clear how to canonically parse the URL.
+            // We choose treat the CGI script name as the *full* routing path, i.e. the
+            // *concatenation* of the static parent path and the dynamic _routes-supplied
+            // subpath. This is not currently specified by the WAGI spec, though, and earlier
+            // implementations of Rust WAGI handled it differently!
+            let route = "/exactparent/exact";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the .../exact handler", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparent/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparent/exact", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/exactparent/wildcard/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the .../wildcard/... handler", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparent/wildcard", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            // In a _routes scenario, it is not clear how to canonically parse the URL.
+            // We choose treat the CGI script name as the *full* routing path, i.e. the
+            // *concatenation* of the static parent path and the dynamic _routes-supplied
+            // subpath. This is not currently specified by the WAGI spec, though, and earlier
+            // implementations of Rust WAGI handled it differently!
+            let route = "/exactparentslash/exact";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the .../exact handler", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparentslash/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparentslash/exact", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/exactparentslash/wildcard/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the .../wildcard/... handler", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/exactparentslash/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/exactparentslash/wildcard", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the main entry point", description);
+            
+            assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
+            assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent/exact";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            assert_eq!("This is the .../exact handler", description);
+            
+            assert_eq!("", parsed_response["PATH_INFO"]);
+            assert_eq!("", parsed_response["PATH_TRANSLATED"]);
+            assert_eq!("/wildcardparent/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
+            assert_eq!("/wildcardparent/exact", parsed_response["SCRIPT_NAME"]);
+        }
+
+        {
+            let route = "/wildcardparent/wildcard/fizz/buzz";
+
+            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../wildcard/... handler", description);
             
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
