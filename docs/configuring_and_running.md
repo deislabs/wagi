@@ -114,7 +114,7 @@ volumes = {"/path/inside/wasm" = "/path/on/host"}
 ```
 
 In this case, the `volumes` directive tells WAGI to expose the contents of `/path/on/host` to the `bar.wasm` module.
-But `bar.wasm` will see that directory as `/path/inside/wasm`. Importantly, it will not be able to access any other parts of the filesystem. Fo example, it will not see anything on the path `/path/inside`. It _only_ has access to the paths specified
+But `bar.wasm` will see that directory as `/path/inside/wasm`. Importantly, it will not be able to access any other parts of the filesystem. For example, it will not see anything on the path `/path/inside`. It _only_ has access to the paths specified
 in the `volumes` directive.
 
 #### Environment Variables
