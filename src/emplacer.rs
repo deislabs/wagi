@@ -50,7 +50,12 @@ impl Emplacer {
         let module_parcel_path = self.module_parcel_path(&handler.parcel);
         let wasm_module = tokio::fs::read(&module_parcel_path).await
             .with_context(|| format!("Error reading module {} from cache path {}", handler.parcel.label.name, module_parcel_path.display()))?;
-        let volume_mounts = self.asset_dir_volume_mount(&handler.invoice_id);
+
+        let volume_mounts = if handler.asset_parcels().is_empty() {
+            HashMap::new()
+        } else {
+            self.asset_dir_volume_mount(&handler.invoice_id)
+        };
         Ok(Bits {
             wasm_module: Arc::new(wasm_module),
             volume_mounts,
