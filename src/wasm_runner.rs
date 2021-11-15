@@ -1,16 +1,20 @@
-use std::path::{Path};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
-use crate::request::{RequestGlobalContext};
+use crate::request::RequestGlobalContext;
 use crate::wasm_module::WasmModuleSource;
 
 const STDERR_FILE: &str = "module.stderr";
 
-pub fn prepare_stdio_streams(body: Vec<u8>, global_context: &RequestGlobalContext, handler_id: String) -> Result<crate::wasm_module::IORedirectionInfo, Error> {
+pub fn prepare_stdio_streams(
+    body: Vec<u8>,
+    global_context: &RequestGlobalContext,
+    handler_id: String,
+) -> Result<crate::wasm_module::IORedirectionInfo, Error> {
     let stdin = ReadPipe::from(body);
     let stdout_buf: Vec<u8> = vec![];
     let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
@@ -54,30 +58,44 @@ pub fn new_store_and_engine(
     Ok((Store::new(&engine, ctx), engine))
 }
 
-pub fn prepare_wasm_instance(global_context: &RequestGlobalContext, ctx: WasiCtx, wasm_module_source: &WasmModuleSource, customise_linker: impl Fn(&mut Linker<WasiCtx>) -> anyhow::Result<()>) -> Result<(Store<WasiCtx>, Instance), Error> {
+pub fn prepare_wasm_instance(
+    global_context: &RequestGlobalContext,
+    ctx: WasiCtx,
+    wasm_module_source: &WasmModuleSource,
+    customise_linker: impl Fn(&mut Linker<WasiCtx>) -> anyhow::Result<()>,
+) -> Result<(Store<WasiCtx>, Instance), Error> {
     let (mut store, engine) = new_store_and_engine(&global_context.cache_config_path, ctx)?;
     let mut linker = Linker::new(&engine);
     wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
     customise_linker(&mut linker)?;
-    
+
     let module = wasm_module_source.load_module(&store)?;
     let instance = linker.instantiate(&mut store, &module)?;
     Ok((store, instance))
 }
 
-pub fn run_prepared_wasm_instance(instance: Instance, mut store: Store<WasiCtx>, entrypoint: &str, wasm_module_name: &str) -> Result<(), Error> {
-    let start = instance
-        .get_func(&mut store, entrypoint)
-        .ok_or_else(|| anyhow::anyhow!("No such function '{}' in {}", entrypoint, wasm_module_name))?;
+pub fn run_prepared_wasm_instance(
+    instance: Instance,
+    mut store: Store<WasiCtx>,
+    entrypoint: &str,
+    wasm_module_name: &str,
+) -> Result<(), Error> {
+    let start = instance.get_func(&mut store, entrypoint).ok_or_else(|| {
+        anyhow::anyhow!("No such function '{}' in {}", entrypoint, wasm_module_name)
+    })?;
     tracing::trace!("Calling Wasm entry point");
-    start.call(&mut store, &[])?;
+    start.call(&mut store, &[], &mut vec![])?;
     Ok(())
 }
 
-pub fn run_prepared_wasm_instance_if_present(instance: Instance, mut store: Store<WasiCtx>, entrypoint: &str) -> RunWasmResult<(), Error> {
+pub fn run_prepared_wasm_instance_if_present(
+    instance: Instance,
+    mut store: Store<WasiCtx>,
+    entrypoint: &str,
+) -> RunWasmResult<(), Error> {
     match instance.get_func(&mut store, entrypoint) {
-        Some(func) => match func.call(&mut store, &[]) {
+        Some(func) => match func.call(&mut store, &[], &mut vec![]) {
             Ok(_) => RunWasmResult::Ok(()),
             Err(e) => RunWasmResult::WasmError(e),
         },
