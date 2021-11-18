@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::{Arc, RwLock}};
+use std::{fmt::Debug, io::Write, sync::{Arc, RwLock}};
 
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
@@ -31,13 +31,13 @@ impl Debug for WasmModuleSource {
 // constraints from the stdout_mutex. Not sure how to do this better.
 // (I don't want to .clone() the fields even though that would work,
 // because that is misleading about the semantics.)
-pub struct IOStreamRedirects {
+pub struct IOStreamRedirects<T: Write> {
     pub stdin: ReadPipe<std::io::Cursor<Vec<u8>>>,
-    pub stdout: WritePipe<Vec<u8>>,
+    pub stdout: WritePipe<T>,
     pub stderr: wasi_cap_std_sync::file::File,
 }
 
-pub struct IORedirectionInfo {
-    pub streams: IOStreamRedirects,
-    pub stdout_mutex: Arc<RwLock<Vec<u8>>>,
+pub struct IORedirectionInfo<T: Write> {
+    pub streams: IOStreamRedirects<T>,
+    pub stdout_mutex: Arc<RwLock<T>>,
 }

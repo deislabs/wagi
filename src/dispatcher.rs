@@ -352,7 +352,7 @@ fn append_one_dynamic_route(routing_table_entry: &RoutingTableEntry, wasm_route_
     }
 }
 
-fn build_wasi_context_for_dynamic_route_query(redirects: crate::wasm_module::IOStreamRedirects) -> wasi_common::WasiCtx {
+fn build_wasi_context_for_dynamic_route_query(redirects: crate::wasm_module::IOStreamRedirects<Vec<u8>>) -> wasi_common::WasiCtx {
     let builder = wasi_cap_std_sync::WasiCtxBuilder::new()
         .stderr(Box::new(redirects.stderr))
         .stdout(Box::new(redirects.stdout));

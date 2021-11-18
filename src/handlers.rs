@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::{collections::HashMap};
 use std::sync::{Arc, RwLock};
 
@@ -17,7 +18,7 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
+use crate::wasm_runner::{SenderPlusPlus2, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -40,7 +41,7 @@ impl WasmRouteHandler {
         &self,
         matched_route: &RoutePattern,
         req: &Parts,
-        body: Vec<u8>,
+        request_body: Vec<u8>,
         request_context: &RequestContext,
         global_context: &RequestGlobalContext,
         logging_key: String,
@@ -49,14 +50,16 @@ impl WasmRouteHandler {
         let headers = crate::http_util::build_headers(
             matched_route,
             req,
-            body.len(),
+            request_body.len(),
             request_context.client_addr,
             global_context.default_host.as_str(),
             global_context.use_tls,
             &global_context.global_env_vars,
         );
 
-        let redirects = prepare_stdio_streams(body, global_context, logging_key)?;
+        let stream_writer = crate::stream_writer::StreamWriter::new();
+
+        let redirects = prepare_stdio_streams_for_http(request_body, stream_writer.clone(), global_context, logging_key)?;
 
         let ctx = self.build_wasi_context_for_request(req, headers, redirects.streams)?;
 
@@ -65,12 +68,25 @@ impl WasmRouteHandler {
         // Drop manually to get instantiation time
         drop(startup_span);
 
-        run_prepared_wasm_instance(instance, store, &self.entrypoint, &self.wasm_module_name)?;
+        let entrypoint = self.entrypoint.clone();
+        let wasm_module_name = self.wasm_module_name.clone();
+        let mut sw = stream_writer.clone();
+        tokio::spawn(async move {
+            match run_prepared_wasm_instance(instance, store, &entrypoint, &wasm_module_name) {
+                Ok(()) => sw.done().unwrap(),  // TODO: <--
+                Err(e) => tracing::error!("oh no {}", e),
+            };
+        });
 
-        compose_response(redirects.stdout_mutex)
+        // compose_response(redirects.stdout_mutex)
+        let response = Response::new(Body::wrap_stream(stream_writer.as_stream()));
+        // tokio::time::sleep(tokio::time::Duration::from_nanos(10)).await;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        Ok(response)
     }
 
-    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
+    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects<crate::stream_writer::StreamWriter>) -> Result<WasiCtx, Error> {
         let uri_path = req.uri.path();
         let mut args = vec![uri_path.to_string()];
         req.uri
