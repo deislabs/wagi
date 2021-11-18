@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::{collections::HashMap};
 use std::sync::{Arc, RwLock};
 
@@ -18,7 +17,7 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{SenderPlusPlus2, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
+use crate::wasm_runner::{prepare_stdio_streams_for_http, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -74,14 +73,15 @@ impl WasmRouteHandler {
         tokio::spawn(async move {
             match run_prepared_wasm_instance(instance, store, &entrypoint, &wasm_module_name) {
                 Ok(()) => sw.done().unwrap(),  // TODO: <--
-                Err(e) => tracing::error!("oh no {}", e),
+                Err(e) => tracing::error!("oh no {}", e),  // TODO: behaviour? message? MESSAGE, IVAN?!
             };
         });
 
-        // compose_response(redirects.stdout_mutex)
         let response = Response::new(Body::wrap_stream(stream_writer.as_stream()));
-        // tokio::time::sleep(tokio::time::Duration::from_nanos(10)).await;
+        // TODO: c'mon man
         std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // TODO: headers headers headers
 
         Ok(response)
     }
