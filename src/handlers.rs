@@ -55,8 +55,7 @@ impl WasmRouteHandler {
 
         let response = compose_response(stream_writer).await?;  // TODO: handle errors
 
-        // TODO: c'mon man
-        tokio::time::sleep(tokio::time::Duration::from_micros(1)).await;
+        tokio::task::yield_now().await;
 
         Ok(response)
     }
