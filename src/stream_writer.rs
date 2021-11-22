@@ -33,7 +33,7 @@ impl StreamWriter {
                 Ok(())
             },
             Err(e) =>
-            Err(anyhow::anyhow!("Internal error: StreamWriter::append can't take lock: {}", e))
+                Err(anyhow::anyhow!("Internal error: StreamWriter::append can't take lock: {}", e))
         };
         // This was meant to wake up listener threads when there was new data but it ended up
         // just stalling until input was complete. TODO: investigate so we can get rid of the
@@ -181,6 +181,8 @@ fn split_at_two_newlines(source: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 
 #[cfg(test)]
 mod test {
+    use futures::StreamExt;
+
     use super::*;
 
     #[test]
@@ -204,5 +206,32 @@ mod test {
         let result = split_at_two_newlines(&source).expect("did not split at all");
         assert_eq!(vec![0x41, 0x42, 0x0a, 0x43, 0x44, 0x0a], result.0);
         assert!(result.1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn streaming_splits_out_headers() {
+        let mut sw = StreamWriter::new();
+        let mut sw2 = sw.clone();
+        tokio::spawn(async move {
+            write!(sw2, "Header 1\n").unwrap();
+            write!(sw2, "Header 2\n").unwrap();
+            write!(sw2, "\n").unwrap();
+            write!(sw2, "Body 1\n").unwrap();
+            write!(sw2, "Body 2\n").unwrap();
+            sw2.done().unwrap();
+        });
+        let header = sw.header_block().await.unwrap();
+        let header_text = String::from_utf8(header).unwrap();
+        assert!(header_text.contains("Header 1\n"));
+        assert!(header_text.contains("Header 2\n"));
+
+        let mut stm = Box::pin(sw.as_stream());
+        let mut body = vec![];
+        while let Some(Ok(v)) = stm.next().await {
+            body.extend_from_slice(&v);
+        }
+        let body_text = String::from_utf8(body).unwrap();
+        assert!(body_text.contains("Body 1\n"));
+        assert!(body_text.contains("Body 2\n"));
     }
 }
