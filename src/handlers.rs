@@ -53,7 +53,13 @@ impl WasmRouteHandler {
             self.set_up_runtime_environment(matched_route, req, request_body, request_context, global_context, logging_key)?;
         self.spawn_wasm_instance(instance, store, stream_writer.clone());
 
-        let response = compose_response(stream_writer).await?;  // TODO: handle errors
+        let response = match compose_response(stream_writer).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Error parsing guest output into HTTP response: {}", e);
+                internal_error("internal error calling application")
+            }
+        };
 
         tokio::task::yield_now().await;
 
@@ -87,11 +93,18 @@ impl WasmRouteHandler {
         let entrypoint = self.entrypoint.clone();
         let wasm_module_name = self.wasm_module_name.clone();
         
+        // This is fire and forget, so there's a limited amount of error handling we
+        // can do.
         tokio::spawn(async move {
             match run_prepared_wasm_instance(instance, store, &entrypoint, &wasm_module_name) {
-                Ok(()) => stream_writer.done().unwrap(),  // TODO: <--
-                Err(e) => tracing::error!("oh no {}", e),  // TODO: behaviour? message? MESSAGE, IVAN?!
+                Ok(()) => (),
+                Err(e) => tracing::error!("Error running Wasm module: {}", e),
             };
+            // TODO: should we attempt to write an error response to the StreamWriter here?
+            match stream_writer.done() {
+                Ok(()) => (),
+                Err(e) => tracing::error!("Error marking Wasm output as done: {}", e),
+            }
         });
     }
 
