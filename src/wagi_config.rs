@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, path::{Path, PathBuf}};
 
 use anyhow::Context;
-use bindle::{Invoice, standalone::StandaloneRead};
+use bindle::Invoice;
 use serde::Deserialize;
 
 use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, emplacer::{Emplacer}, module_loader::{Loaded}, request::RequestGlobalContext};
@@ -59,7 +59,7 @@ pub struct ModuleMapConfigurationEntry {
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerConfiguration {
     ModuleMapFile(ModuleMapConfiguration),
-    Bindle(Invoice),
+    Bindle(Emplacer, Invoice),
 }
 
 pub enum LoadedHandlerConfiguration {
@@ -67,28 +67,31 @@ pub enum LoadedHandlerConfiguration {
     Bindle(Vec<(WagiHandlerInfo, crate::emplacer::Bits)>)
 }
 
+pub enum PreHandlerConfiguration {
+    ModuleMapFile(PathBuf),
+    Bindle(Emplacer, Invoice),
+}
+
 impl WagiConfiguration {
     // TODO: we might need to do some renaming here to reflect that the source
     // may include non-handler roles in future
-    pub async fn read_handler_configuration(&self, emplacer: &Emplacer) -> anyhow::Result<HandlerConfiguration> {
-        match &self.handlers {
-            HandlerConfigurationSource::ModuleConfigFile(path) =>
-                read_module_map_configuration(path).await.map(HandlerConfiguration::ModuleMapFile),
-            HandlerConfigurationSource::StandaloneBindle(path, bindle_id) =>
-                read_standalone_bindle_invoice(path, bindle_id).await.map(HandlerConfiguration::Bindle),
-            HandlerConfigurationSource::RemoteBindle(_, bindle_id) =>
-                read_bindle_invoice(emplacer, bindle_id).await.map(HandlerConfiguration::Bindle),
+    pub async fn read_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<HandlerConfiguration> {
+        match pre_handler_config {
+            PreHandlerConfiguration::ModuleMapFile(path) =>
+                read_module_map_configuration(&path).await.map(HandlerConfiguration::ModuleMapFile),
+            PreHandlerConfiguration::Bindle(emplacer, invoice) =>
+                Ok(HandlerConfiguration::Bindle(emplacer, invoice)),
         }
     }
 
-    pub async fn load_handler_configuration(&self, emplacer: &Emplacer) -> anyhow::Result<LoadedHandlerConfiguration> {
-        let handler_configuration_metadata = self.read_handler_configuration(emplacer).await?;
+    pub async fn load_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+        let handler_configuration_metadata = self.read_handler_configuration(pre_handler_config).await?;
 
         match handler_configuration_metadata {
             HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
                 handlers_for_module_map(&module_map_configuration, self).await,
-            HandlerConfiguration::Bindle(invoice) =>
-                handlers_for_bindle(&invoice, emplacer).await,
+            HandlerConfiguration::Bindle(emplacer, invoice) =>
+                handlers_for_bindle(&invoice, &emplacer).await,
         }
     }
 
@@ -122,19 +125,6 @@ async fn read_module_map_configuration(path: &Path) -> anyhow::Result<ModuleMapC
     let modules: ModuleMapConfiguration = toml::from_slice(&data)
         .with_context(|| format!("File {} contained invalid TOML or was not a WAGI module config", path.display()))?;
     Ok(modules)
-}
-
-async fn read_standalone_bindle_invoice(path: impl AsRef<Path>, bindle_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
-    tracing::info!(%bindle_id, "Loading standalone bindle");
-    let reader = StandaloneRead::new(path, bindle_id).await?;
-
-    let data = tokio::fs::read(&reader.invoice_file).await?;
-    let invoice: Invoice = toml::from_slice(&data)?;
-    Ok(invoice)
-}
-
-async fn read_bindle_invoice(emplacer: &Emplacer, bindle_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
-    emplacer.read_invoice(bindle_id).await
 }
 
 async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {

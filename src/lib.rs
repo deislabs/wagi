@@ -95,9 +95,9 @@ mod test {
 
         let emplacer = crate::emplacer::Emplacer::new(&configuration).await
             .expect("Failed to create emplacer");
-        emplacer.emplace_all().await
+        let pre_handler_config = emplacer.emplace_all().await
             .expect("Failed to emplace bindle data");
-        let handlers = configuration.load_handler_configuration(&emplacer).await
+        let handlers = configuration.load_handler_configuration(pre_handler_config).await
             .expect("Failed to load handlers");
         crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
             .expect("Failed to build routing table")
@@ -128,9 +128,9 @@ mod test {
 
         let emplacer = crate::emplacer::Emplacer::new(&configuration).await
             .expect("Failed to create emplacer");
-        emplacer.emplace_all().await
+        let pre_handler_config = emplacer.emplace_all().await
             .expect("Failed to emplace bindle data");
-        let handlers = configuration.load_handler_configuration(&emplacer).await
+        let handlers = configuration.load_handler_configuration(pre_handler_config).await
             .expect("Failed to load handlers");
         crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
             .expect("Failed to build routing table")

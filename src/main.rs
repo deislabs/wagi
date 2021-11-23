@@ -7,9 +7,9 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let configuration = wagi_app::parse_command_line()?;
 
     let emplacer = wagi::emplacer::Emplacer::new(&configuration).await?;
-    emplacer.emplace_all().await?;
+    let pre_handler_config = emplacer.emplace_all().await?;
 
-    let handlers = configuration.load_handler_configuration(&emplacer).await?;
+    let handlers = configuration.load_handler_configuration(pre_handler_config).await?;
     let routing_table = wagi::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())?;
 
     let server = WagiServer::new(&configuration, routing_table).await?;

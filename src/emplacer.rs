@@ -4,7 +4,7 @@ use anyhow::Context;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}};
+use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, PreHandlerConfiguration, WagiConfiguration}};
 
 pub struct Emplacer {
     cache_path: PathBuf,
@@ -34,13 +34,14 @@ impl Emplacer {
         })
     }
 
-    pub async fn emplace_all(&self) -> anyhow::Result<()> {
-        match &self.source {
-            HandlerConfigurationSource::ModuleConfigFile(_) => Ok(()),
+    pub async fn emplace_all(self) -> anyhow::Result<PreHandlerConfiguration> {
+        match self.source.clone() {
+            HandlerConfigurationSource::ModuleConfigFile(path) =>
+                Ok(PreHandlerConfiguration::ModuleMapFile(path.clone())),
             HandlerConfigurationSource::StandaloneBindle(bindle_base_dir, id) =>
-                self.emplace_standalone_bindle(bindle_base_dir, id).await,
+                self.emplace_standalone_bindle(&bindle_base_dir, &id).await,
             HandlerConfigurationSource::RemoteBindle(bindle_base_url, id) =>
-                self.emplace_remote_bindle(bindle_base_url, id).await,
+                self.emplace_remote_bindle(&bindle_base_url, &id).await,
         }.with_context(|| "Error caching assets from bindle")
     }
 
@@ -49,7 +50,12 @@ impl Emplacer {
         let module_parcel_path = self.module_parcel_path(&handler.parcel);
         let wasm_module = tokio::fs::read(&module_parcel_path).await
             .with_context(|| format!("Error reading module {} from cache path {}", handler.parcel.label.name, module_parcel_path.display()))?;
-        let volume_mounts = self.asset_dir_volume_mount(&handler.invoice_id);
+
+        let volume_mounts = if handler.asset_parcels().is_empty() {
+            HashMap::new()
+        } else {
+            self.asset_dir_volume_mount(&handler.invoice_id)
+        };
         Ok(Bits {
             wasm_module: Arc::new(wasm_module),
             volume_mounts,
@@ -63,20 +69,20 @@ impl Emplacer {
         Ok(invoice)
     }
 
-    async fn emplace_standalone_bindle(&self, bindle_base_dir: &Path, id: &bindle::Id) -> anyhow::Result<()> {
+    async fn emplace_standalone_bindle(self, bindle_base_dir: &Path, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
         let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await
             .with_context(|| format!("Error constructing bindle reader for {} in {}", id, bindle_base_dir.display()))?;
 
         self.emplace_bindle(&reader, id).await
     }
 
-    async fn emplace_remote_bindle(&self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<()> {
+    async fn emplace_remote_bindle(self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
         let client = bindle::client::Client::new(bindle_base_url.as_str())?;
 
         self.emplace_bindle(&client, id).await
     }
 
-    async fn emplace_bindle(&self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<()> {
+    async fn emplace_bindle(self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
         let invoice_path = self.invoice_path(id);
         if !invoice_path.is_file() {
             let invoice_text = reader.get_invoice_bytes(id).await?;
@@ -86,10 +92,10 @@ impl Emplacer {
 
         let invoice_text = tokio::fs::read(&invoice_path).await
             .with_context(|| format!("Error reading cached invoice file {}", invoice_path.display()))?;
-        let invoice = toml::from_slice(&invoice_text)
+        let invoice_raw = toml::from_slice(&invoice_text)
             .with_context(|| format!("Error parsing cached invoice file {}", invoice_path.display()))?;
 
-        let invoice = InvoiceUnderstander::new(&invoice);
+        let invoice = InvoiceUnderstander::new(&invoice_raw);
 
         let module_parcels = invoice.parse_wagi_handlers();
 
@@ -98,7 +104,7 @@ impl Emplacer {
 
         match all_module_placements.into_iter().find_map(|e| e.err()) {
             Some(e) => Err(e),
-            None => Ok(())
+            None => Ok(PreHandlerConfiguration::Bindle(self, invoice_raw))
         }
     }
 
