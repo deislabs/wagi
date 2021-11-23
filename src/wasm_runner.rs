@@ -50,6 +50,11 @@ pub fn new_store_and_engine(
     ctx: WasiCtx,
 ) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
     let mut config = Config::default();
+
+    // Enable multi memory and module linking support.
+    config.wasm_multi_memory(true);
+    config.wasm_module_linking(true);
+
     if let Ok(p) = std::fs::canonicalize(cache_config_path) {
         config.cache_config_load(p)?;
     };
