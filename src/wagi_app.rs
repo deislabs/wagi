@@ -64,7 +64,7 @@ pub fn wagi_app_definition() -> App<'static, 'static> {
         Arg::with_name(ARG_BINDLE_ID)
             .short("b")
             .long("bindle")
-            .help("A bindle URL, such as bindle:foo/bar/1.2.3")  // TODO: is the bindle: prefix correct/needed?
+            .help("A bindle ID, such as foo/bar/1.2.3")
             .takes_value(true),
     )
     .arg(
