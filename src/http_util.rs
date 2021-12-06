@@ -4,11 +4,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use hyper::HeaderMap;
-use hyper::{
-    header::HOST,
-    http::request::Parts,
-    Body, Response, StatusCode,
-};
+use hyper::{header::HOST, http::request::Parts, Body, Response, StatusCode};
 
 use crate::dispatcher::RoutePattern;
 use crate::version::*;
@@ -58,7 +54,7 @@ pub fn build_headers(
 
     // Note that we put these first so that there is no chance that they overwrite
     // the built-in vars. IMPORTANT: This is also why some values have empty strings
-    // deliberately set (as opposed to omiting the pair altogether).
+    // deliberately set (as opposed to omitting the pair altogether).
     let mut headers = environment.clone();
 
     // CGI headers from RFC
@@ -132,7 +128,7 @@ pub fn build_headers(
     // PATH_INFO is any path information after SCRIPT_NAME
     //
     // I am intentionally ignoring the PATH_INFO rule that says that a PATH_INFO
-    // cannot have a path seperator in it. If it becomes important to distinguish
+    // cannot have a path separator in it. If it becomes important to distinguish
     // between what was decoded out of the path and what is encoded in the path,
     // the X_RAW_PATH_INFO can be used.
     //
@@ -299,7 +295,7 @@ mod test {
     #[test]
     fn test_headers() {
         let route = RoutePattern::parse("/path/...");
-            // "file:///no/such/path.wasm".to_owned(),
+        // "file:///no/such/path.wasm".to_owned(),
         let (req, _) = Request::builder()
             .uri("https://example.com:3000/path/test%3brun?foo=bar")
             .header("X-Test-Header", "hello")

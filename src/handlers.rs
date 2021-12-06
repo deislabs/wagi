@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use cap_std::fs::Dir;
@@ -7,7 +7,7 @@ use hyper::{
     http::request::Parts,
     Body, Response, StatusCode,
 };
-use tracing::{debug};
+use tracing::debug;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasmtime::*;
 use wasmtime_wasi::*;
@@ -17,7 +17,9 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance};
+use crate::wasm_runner::{
+    prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance,
+};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -70,7 +72,12 @@ impl WasmRouteHandler {
         compose_response(redirects.stdout_mutex)
     }
 
-    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
+    fn build_wasi_context_for_request(
+        &self,
+        req: &Parts,
+        headers: HashMap<String, String>,
+        redirects: crate::wasm_module::IOStreamRedirects,
+    ) -> Result<WasiCtx, Error> {
         let uri_path = req.uri.path();
         let mut args = vec![uri_path.to_string()];
         req.uri
@@ -103,7 +110,11 @@ impl WasmRouteHandler {
         Ok(ctx)
     }
 
-    fn prepare_wasm_instance(&self, global_context: &RequestGlobalContext, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
+    fn prepare_wasm_instance(
+        &self,
+        global_context: &RequestGlobalContext,
+        ctx: WasiCtx,
+    ) -> Result<(Store<WasiCtx>, Instance), Error> {
         let link_http = |mut linker: &mut Linker<WasiCtx>| -> anyhow::Result<()> {
             let http = wasi_experimental_http_wasmtime::HttpCtx::new(
                 self.allowed_hosts.clone(),

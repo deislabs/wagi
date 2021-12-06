@@ -2,17 +2,20 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Context;
 // TODO: move OCI-specific stuff out to a helper file
+use docker_credential::DockerCredential;
 use oci_distribution::client::{Client, ClientConfig};
 use oci_distribution::secrets::RegistryAuth;
 use oci_distribution::Reference;
-use docker_credential::DockerCredential;
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::wagi_config::ModuleMapConfigurationEntry;
 use crate::wagi_config::WagiConfiguration;
-use crate::{wagi_config::{ModuleMapConfigurationEntry}};
 
-pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
+pub async fn load_from_module_map_entry(
+    module_map_entry: &ModuleMapConfigurationEntry,
+    configuration: &WagiConfiguration,
+) -> anyhow::Result<Vec<u8>> {
     let module_ref = module_map_entry.module.clone();
     match url::Url::parse(&module_ref) {
         Err(e) => {
@@ -20,35 +23,50 @@ pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfiguratio
                 error = %e,
                 "Error parsing module URI. Assuming this is a local file"
             );
-            let bytes = tokio::fs::read(&module_ref).await
-                .with_context(|| format!("Error reading file '{}' referenced by module config", module_ref))?;
+            let bytes = tokio::fs::read(&module_ref).await.with_context(|| {
+                format!(
+                    "Error reading file '{}' referenced by module config",
+                    module_ref
+                )
+            })?;
             Ok(bytes)
-        },
+        }
         Ok(uri) => match uri.scheme() {
             "file" => match uri.to_file_path() {
-                Ok(p) => Ok(tokio::fs::read(&p).await
-                    .with_context(|| format!("Error reading file '{}' referenced by module file: URI", p.display()))?),
-                Err(e) => Err(anyhow::anyhow!("Cannot get path to file {}: {:#?}", module_ref, e)),
-            }
+                Ok(p) => Ok(tokio::fs::read(&p).await.with_context(|| {
+                    format!(
+                        "Error reading file '{}' referenced by module file: URI",
+                        p.display()
+                    )
+                })?),
+                Err(e) => Err(anyhow::anyhow!(
+                    "Cannot get path to file {}: {:#?}",
+                    module_ref,
+                    e
+                )),
+            },
             "bindle" => {
                 // TODO: should we allow --bindle-server so modules.toml can resolve?  This is deprecated so not keen
-                let bindle_server = module_map_entry.bindle_server.as_ref().ok_or_else(|| anyhow::anyhow!("No Bindle server specified for module {}", module_ref))?;
+                let bindle_server = module_map_entry.bindle_server.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("No Bindle server specified for module {}", module_ref)
+                })?;
                 load_bindle(bindle_server, &uri, &configuration.asset_cache_dir).await
-            },
+            }
             // "parcel" => self.load_parcel(&uri, store.engine(), cache).await,  // TODO: this is not mentioned in the spec...?
             "oci" => load_from_oci(&uri, &configuration.asset_cache_dir).await,
-            s => Err(anyhow::anyhow!("Unknown scheme {} in module reference {}", s, module_ref)),
-        }
+            s => Err(anyhow::anyhow!(
+                "Unknown scheme {} in module reference {}",
+                s,
+                module_ref
+            )),
+        },
     }
 }
 
 const WASM_LAYER_CONTENT_TYPE: &str = "application/vnd.wasm.content.layer.v1+wasm";
 
 #[tracing::instrument(level = "info", skip(cache))]
-async fn load_from_oci(
-    uri: &url::Url,
-    cache: impl AsRef<Path>,
-) -> anyhow::Result<Vec<u8>> {
+async fn load_from_oci(uri: &url::Url, cache: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {
     let cache_file_name = hash_name(uri);
     let cache_file_path = cache.as_ref().join(cache_file_name);
 
@@ -68,17 +86,20 @@ async fn load_from_oci(
 
     let mut auth = RegistryAuth::Anonymous;
 
-    if let Ok(DockerCredential::UsernamePassword(user_name, password)) = docker_credential::get_credential(uri.as_str()) {
+    if let Ok(DockerCredential::UsernamePassword(user_name, password)) =
+        docker_credential::get_credential(uri.as_str())
+    {
         auth = RegistryAuth::Basic(user_name, password);
     };
 
-    let img = url_to_oci(uri).map_err(|e| {
-        tracing::error!(
-            error = %e,
-            "Could not convert uri to OCI reference"
-        );
-        e
-    })
+    let img = url_to_oci(uri)
+        .map_err(|e| {
+            tracing::error!(
+                error = %e,
+                "Could not convert uri to OCI reference"
+            );
+            e
+        })
         .with_context(|| format!("Could not convert URI '{}' to OCI reference", uri))?;
     let data = oc
         .pull(&img, &auth, vec![WASM_LAYER_CONTENT_TYPE])
@@ -97,8 +118,7 @@ async fn load_from_oci(
 
     // If a cache write fails, log it but continue on.
     tracing::trace!("writing layer to module cache");
-    if let Err(e) = safely_write(&cache_file_path, &bytes).await
-    {
+    if let Err(e) = safely_write(&cache_file_path, &bytes).await {
         tracing::warn!(error = %e, "failed to write module to cache");
     }
 
@@ -233,9 +253,12 @@ fn hash_name(url: &Url) -> String {
 // brains can reconcile that if and when the moment comes.
 async fn safely_write(path: impl AsRef<Path>, content: &[u8]) -> std::io::Result<()> {
     let path = path.as_ref();
-    let dir = path.parent().ok_or_else(||
-        std::io::Error::new(std::io::ErrorKind::Other, format!("cache location {} has no parent directory", path.display()))
-    )?;
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("cache location {} has no parent directory", path.display()),
+        )
+    })?;
     tokio::fs::create_dir_all(dir).await?;
     tokio::fs::write(path, content).await
 }

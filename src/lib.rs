@@ -4,7 +4,7 @@ pub(crate) mod dynamic_route;
 pub mod emplacer;
 pub(crate) mod handlers;
 mod http_util;
-pub (crate) mod module_loader;
+pub(crate) mod module_loader;
 mod request;
 mod tls;
 pub mod version;
@@ -37,18 +37,26 @@ mod test {
     }
 
     fn mock_client_addr() -> SocketAddr {
-        "123.4.5.6:7890".parse().expect("Failed to parse mock client address")
+        "123.4.5.6:7890"
+            .parse()
+            .expect("Failed to parse mock client address")
     }
 
     // This ugliness is because file: URLs in modules.toml are meant to be absolute, but
     // we don't know where the project (and therefore the test WASM modules) will reside
     // on any given machine. So we need to sub in the path where the WASM file will
     // actually be found.
-    async fn replace_placeholders(original_map_file: &str, custom_subs: Option<HashMap<String, String>>) -> PathBuf {
-        let orig_content = tokio::fs::read(module_map_path(original_map_file)).await
+    async fn replace_placeholders(
+        original_map_file: &str,
+        custom_subs: Option<HashMap<String, String>>,
+    ) -> PathBuf {
+        let orig_content = tokio::fs::read(module_map_path(original_map_file))
+            .await
             .expect(&format!("Error reading test file {}", original_map_file));
-        let toml_text = std::str::from_utf8(&orig_content)
-            .expect(&format!("Error treating test file {} as text", original_map_file));
+        let toml_text = std::str::from_utf8(&orig_content).expect(&format!(
+            "Error treating test file {} as text",
+            original_map_file
+        ));
 
         let project_root = env!("CARGO_MANIFEST_DIR");
         let timestamp = chrono::Local::now()
@@ -57,23 +65,29 @@ mod test {
         let tempfile_dir = PathBuf::from(project_root)
             .join("tests_working_dir")
             .join(timestamp);
-        tokio::fs::create_dir_all(&tempfile_dir).await
+        tokio::fs::create_dir_all(&tempfile_dir)
+            .await
             .expect("Error creating temp directory");
         let tempfile_path = tempfile_dir.join(original_map_file);
 
-        let mut final_text = toml_text.replace("${PROJECT_ROOT}", &project_root.escape_default().to_string());
+        let mut final_text = toml_text.replace(
+            "${PROJECT_ROOT}",
+            &project_root.escape_default().to_string(),
+        );
         for (k, v) in custom_subs.unwrap_or_default() {
             let pattern = format!("${{{}}}", k);
             final_text = final_text.replace(&pattern, &v.escape_default().to_string());
         }
-        tokio::fs::write(&tempfile_path, final_text).await
+        tokio::fs::write(&tempfile_path, final_text)
+            .await
             .expect("Error saving modified modules file to test working dir");
         tempfile_path
     }
 
     const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
     const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
-    const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
+    const TOAST_ON_DEMAND_SA_ID: &str =
+        "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
     #[cfg(target_os = "windows")]
     const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
@@ -87,110 +101,169 @@ mod test {
 
         let matches = wagi_app::wagi_app_definition().get_matches_from(vec![
             "wagi",
-            "-b", bindle_id,
-            "--bindle-path", &test_standalone_bindle_data_dir().display().to_string(),
+            "-b",
+            bindle_id,
+            "--bindle-path",
+            &test_standalone_bindle_data_dir().display().to_string(),
         ]);
-        let configuration = wagi_app::parse_configuration_from(matches)
-            .expect("Fake command line was not valid");
+        let configuration =
+            wagi_app::parse_configuration_from(matches).expect("Fake command line was not valid");
 
-        let emplacer = crate::emplacer::Emplacer::new(&configuration).await
+        let emplacer = crate::emplacer::Emplacer::new(&configuration)
+            .await
             .expect("Failed to create emplacer");
-        let pre_handler_config = emplacer.emplace_all().await
+        let pre_handler_config = emplacer
+            .emplace_all()
+            .await
             .expect("Failed to emplace bindle data");
-        let handlers = configuration.load_handler_configuration(pre_handler_config).await
+        let handlers = configuration
+            .load_handler_configuration(pre_handler_config)
+            .await
             .expect("Failed to load handlers");
         crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
             .expect("Failed to build routing table")
     }
 
     // Accepting a Result<Request> here reduces noise in the actual tests
-    async fn send_request_to_standalone_bindle(bindle_id: &str, request: hyper::http::Result<hyper::Request<hyper::body::Body>>) -> hyper::Response<hyper::body::Body> {
+    async fn send_request_to_standalone_bindle(
+        bindle_id: &str,
+        request: hyper::http::Result<hyper::Request<hyper::body::Body>>,
+    ) -> hyper::Response<hyper::body::Body> {
         let routing_table = build_routing_table_for_standalone_bindle(bindle_id).await;
 
-        routing_table.handle_request(
-            request.expect("Failed to construct mock request"),
-            mock_client_addr()
-        ).await
-        .expect("Error producing HTTP response")
+        routing_table
+            .handle_request(
+                request.expect("Failed to construct mock request"),
+                mock_client_addr(),
+            )
+            .await
+            .expect("Error producing HTTP response")
     }
 
-    async fn build_routing_table_for_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>) -> RoutingTable {
+    async fn build_routing_table_for_module_map(
+        map_file: &str,
+        custom_subs: Option<HashMap<String, String>>,
+    ) -> RoutingTable {
         // Clear any env vars that would cause conflicts if set
         std::env::remove_var("BINDLE_URL");
 
         let modules_toml_path = replace_placeholders(&map_file, custom_subs).await;
         let matches = wagi_app::wagi_app_definition().get_matches_from(vec![
             "wagi",
-            "-c", &modules_toml_path.display().to_string(),
+            "-c",
+            &modules_toml_path.display().to_string(),
         ]);
-        let configuration = wagi_app::parse_configuration_from(matches)
-            .expect("Fake command line was not valid");
+        let configuration =
+            wagi_app::parse_configuration_from(matches).expect("Fake command line was not valid");
 
-        let emplacer = crate::emplacer::Emplacer::new(&configuration).await
+        let emplacer = crate::emplacer::Emplacer::new(&configuration)
+            .await
             .expect("Failed to create emplacer");
-        let pre_handler_config = emplacer.emplace_all().await
+        let pre_handler_config = emplacer
+            .emplace_all()
+            .await
             .expect("Failed to emplace bindle data");
-        let handlers = configuration.load_handler_configuration(pre_handler_config).await
+        let handlers = configuration
+            .load_handler_configuration(pre_handler_config)
+            .await
             .expect("Failed to load handlers");
         crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
             .expect("Failed to build routing table")
     }
 
-    async fn send_request_to_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, request: hyper::http::Result<hyper::Request<hyper::body::Body>>) -> hyper::Response<hyper::body::Body> {
+    async fn send_request_to_module_map(
+        map_file: &str,
+        custom_subs: Option<HashMap<String, String>>,
+        request: hyper::http::Result<hyper::Request<hyper::body::Body>>,
+    ) -> hyper::Response<hyper::body::Body> {
         let routing_table = build_routing_table_for_module_map(map_file, custom_subs).await;
 
-        routing_table.handle_request(
-            request.expect("Failed to construct mock request"),
-            mock_client_addr()
-        ).await
-        .expect("Error producing HTTP response")
+        routing_table
+            .handle_request(
+                request.expect("Failed to construct mock request"),
+                mock_client_addr(),
+            )
+            .await
+            .expect("Error producing HTTP response")
     }
 
-    async fn get_plain_text_response_from_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, route: &str) -> String {
+    async fn get_plain_text_response_from_module_map(
+        map_file: &str,
+        custom_subs: Option<HashMap<String, String>>,
+        route: &str,
+    ) -> String {
         let empty_body = hyper::body::Body::empty();
         let uri = format!("http://127.0.0.1:3000{}", route);
         let request = hyper::Request::get(&uri).body(empty_body);
 
         let response = send_request_to_module_map(map_file, custom_subs, request).await;
 
-        assert_eq!(hyper::StatusCode::OK, response.status(), "Non-OK status getting route {}", route);
+        assert_eq!(
+            hyper::StatusCode::OK,
+            response.status(),
+            "Non-OK status getting route {}",
+            route
+        );
 
         // Content-Type could include a charset
-        let content_type = response.headers().get("Content-Type").expect("Expected Content-Type header").to_str().unwrap();
+        let content_type = response
+            .headers()
+            .get("Content-Type")
+            .expect("Expected Content-Type header")
+            .to_str()
+            .unwrap();
         assert!(content_type.starts_with("text/plain"));
 
-        let response_body = hyper::body::to_bytes(response.into_body()).await
+        let response_body = hyper::body::to_bytes(response.into_body())
+            .await
             .expect("Could bot get bytes from response body");
-        let response_text = std::str::from_utf8(&response_body)
-            .expect("Could not read body as string");
+        let response_text =
+            std::str::from_utf8(&response_body).expect("Could not read body as string");
         response_text.to_owned()
     }
 
-    async fn get_plain_text_response_from_standalone_bindle(bindle_id: &str, route: &str) -> String {
+    async fn get_plain_text_response_from_standalone_bindle(
+        bindle_id: &str,
+        route: &str,
+    ) -> String {
         let empty_body = hyper::body::Body::empty();
         let uri = format!("http://127.0.0.1:3000{}", route);
         let request = hyper::Request::get(&uri).body(empty_body);
 
         let response = send_request_to_standalone_bindle(bindle_id, request).await;
 
-        assert_eq!(hyper::StatusCode::OK, response.status(), "Non-OK status getting route {}", route);
+        assert_eq!(
+            hyper::StatusCode::OK,
+            response.status(),
+            "Non-OK status getting route {}",
+            route
+        );
 
         // Content-Type could include a charset
-        let content_type = response.headers().get("Content-Type").expect("Expected Content-Type header").to_str().unwrap();
+        let content_type = response
+            .headers()
+            .get("Content-Type")
+            .expect("Expected Content-Type header")
+            .to_str()
+            .unwrap();
         assert!(content_type.starts_with("text/plain"));
 
-        let response_body = hyper::body::to_bytes(response.into_body()).await
+        let response_body = hyper::body::to_bytes(response.into_body())
+            .await
             .expect("Could bot get bytes from response body");
-        let response_text = std::str::from_utf8(&response_body)
-            .expect("Could not read body as string");
+        let response_text =
+            std::str::from_utf8(&response_body).expect("Could not read body as string");
         response_text.to_owned()
     }
 
-    async fn get_decription_and_evs_from_standalone_bindle(bindle_id: &str, route: &str) -> (String, HashMap<String, String>) {
+    async fn get_decription_and_evs_from_standalone_bindle(
+        bindle_id: &str,
+        route: &str,
+    ) -> (String, HashMap<String, String>) {
         let response_text = get_plain_text_response_from_standalone_bindle(bindle_id, route).await;
 
         let description = response_text.lines().nth(0).unwrap().to_owned();
-        
+
         let env_vars = response_text
             .lines()
             .skip(1)
@@ -200,11 +273,16 @@ mod test {
         (description, env_vars)
     }
 
-    async fn get_decription_and_evs_from_module_map(map_file: &str, custom_subs: Option<HashMap<String, String>>, route: &str) -> (String, HashMap<String, String>) {
-        let response_text = get_plain_text_response_from_module_map(map_file, custom_subs, route).await;
+    async fn get_decription_and_evs_from_module_map(
+        map_file: &str,
+        custom_subs: Option<HashMap<String, String>>,
+        route: &str,
+    ) -> (String, HashMap<String, String>) {
+        let response_text =
+            get_plain_text_response_from_module_map(map_file, custom_subs, route).await;
 
         let description = response_text.lines().nth(0).unwrap().to_owned();
-        
+
         let env_vars = response_text
             .lines()
             .skip(1)
@@ -225,7 +303,13 @@ mod test {
         let response = send_request_to_standalone_bindle(TOAST_ON_DEMAND_SA_ID, request).await;
 
         assert_eq!(hyper::StatusCode::OK, response.status());
-        assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+        assert_eq!(
+            "text/html",
+            response
+                .headers()
+                .get("Content-Type")
+                .expect("Expected Content-Type header")
+        );
     }
 
     #[tokio::test]
@@ -256,7 +340,13 @@ mod test {
         let response = send_request_to_module_map(TEST1_MODULE_MAP_FILE, None, request).await;
 
         assert_eq!(hyper::StatusCode::OK, response.status());
-        assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+        assert_eq!(
+            "text/html",
+            response
+                .headers()
+                .get("Content-Type")
+                .expect("Expected Content-Type header")
+        );
     }
 
     #[tokio::test]
@@ -274,20 +364,27 @@ mod test {
     pub async fn can_serve_from_modules_toml_even_if_file_ref_has_all_sorts_of_windows_slashes() {
         use std::iter::FromIterator;
 
-        let wasm_module_path = module_map_path("toast-on-demand.wasm").display().to_string();
+        let wasm_module_path = module_map_path("toast-on-demand.wasm")
+            .display()
+            .to_string();
 
         for testcase in possible_slashes_for_paths(wasm_module_path) {
-            let subs = HashMap::from_iter(vec![
-                ("SLASHY_URL".to_owned(), testcase)
-            ]);
+            let subs = HashMap::from_iter(vec![("SLASHY_URL".to_owned(), testcase)]);
 
             let empty_body = hyper::body::Body::empty();
             let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
 
-            let response = send_request_to_module_map(TEST2_MODULE_MAP_FILE, Some(subs), request).await;
+            let response =
+                send_request_to_module_map(TEST2_MODULE_MAP_FILE, Some(subs), request).await;
 
             assert_eq!(hyper::StatusCode::OK, response.status());
-            assert_eq!("text/html", response.headers().get("Content-Type").expect("Expected Content-Type header"));
+            assert_eq!(
+                "text/html",
+                response
+                    .headers()
+                    .get("Content-Type")
+                    .expect("Expected Content-Type header")
+            );
         }
     }
 
@@ -330,21 +427,24 @@ mod test {
         {
             let route = "/defaultep";
 
-            let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
+            let response =
+                get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
             assert_eq!("Default entrypoint\n", response);
         }
 
         {
             let route = "/ep1";
 
-            let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
+            let response =
+                get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
             assert_eq!("Entrypoint 1\n", response);
         }
 
         {
             let route = "/ep2";
 
-            let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
+            let response =
+                get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
             assert_eq!("Entrypoint 2\n", response);
         }
     }
@@ -359,7 +459,8 @@ mod test {
 
     #[tokio::test]
     pub async fn http_settings_are_mapped_to_env_vars() {
-        let response_text = get_plain_text_response_from_standalone_bindle(PRINT_ENV_SA_ID, "/").await;
+        let response_text =
+            get_plain_text_response_from_standalone_bindle(PRINT_ENV_SA_ID, "/").await;
         let parsed_response = response_text
             .lines()
             .filter_map(|line| parse_ev_line(line))
@@ -376,7 +477,9 @@ mod test {
 
     #[tokio::test]
     pub async fn http_settings_are_mapped_to_env_vars_wildcard_route() {
-        let response_text = get_plain_text_response_from_standalone_bindle(PRINT_ENV_SA_ID, "/test/fizz/buzz").await;
+        let response_text =
+            get_plain_text_response_from_standalone_bindle(PRINT_ENV_SA_ID, "/test/fizz/buzz")
+                .await;
         let parsed_response = response_text
             .lines()
             .filter_map(|line| parse_ev_line(line))
@@ -398,9 +501,10 @@ mod test {
         {
             let route = "/";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/", parsed_response["X_MATCHED_ROUTE"]);
@@ -411,9 +515,10 @@ mod test {
         {
             let route = "/exactparent";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/exactparent", parsed_response["X_MATCHED_ROUTE"]);
@@ -429,9 +534,10 @@ mod test {
             // implementations of Rust WAGI handled it differently!
             let route = "/exactparent/exact";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the .../exact handler", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/exactparent/exact", parsed_response["X_MATCHED_ROUTE"]);
@@ -442,12 +548,16 @@ mod test {
         {
             let route = "/exactparent/wildcard/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the .../wildcard/... handler", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
-            assert_eq!("/exactparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!(
+                "/exactparent/wildcard/...",
+                parsed_response["X_MATCHED_ROUTE"]
+            );
             assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/exactparent/wildcard", parsed_response["SCRIPT_NAME"]);
         }
@@ -455,9 +565,10 @@ mod test {
         {
             let route = "/wildcardparent";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
@@ -468,9 +579,10 @@ mod test {
         {
             let route = "/wildcardparent/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
@@ -481,9 +593,10 @@ mod test {
         {
             let route = "/wildcardparent/exact";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the .../exact handler", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/wildcardparent/exact", parsed_response["X_MATCHED_ROUTE"]);
@@ -494,12 +607,16 @@ mod test {
         {
             let route = "/wildcardparent/wildcard/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_standalone_bindle(bindle_id, route).await;
             assert_eq!("This is the .../wildcard/... handler", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
-            assert_eq!("/wildcardparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!(
+                "/wildcardparent/wildcard/...",
+                parsed_response["X_MATCHED_ROUTE"]
+            );
             assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/wildcardparent/wildcard", parsed_response["SCRIPT_NAME"]);
         }
@@ -512,9 +629,10 @@ mod test {
         {
             let route = "/";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/", parsed_response["X_MATCHED_ROUTE"]);
@@ -525,9 +643,10 @@ mod test {
         {
             let route = "/exact";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../exact handler", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/exact", parsed_response["X_MATCHED_ROUTE"]);
@@ -538,9 +657,10 @@ mod test {
         {
             let route = "/exactparent";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/exactparent", parsed_response["X_MATCHED_ROUTE"]);
@@ -556,9 +676,10 @@ mod test {
             // implementations of Rust WAGI handled it differently!
             let route = "/exactparent/exact";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../exact handler", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/exactparent/exact", parsed_response["X_MATCHED_ROUTE"]);
@@ -569,12 +690,16 @@ mod test {
         {
             let route = "/exactparent/wildcard/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../wildcard/... handler", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
-            assert_eq!("/exactparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!(
+                "/exactparent/wildcard/...",
+                parsed_response["X_MATCHED_ROUTE"]
+            );
             assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/exactparent/wildcard", parsed_response["SCRIPT_NAME"]);
         }
@@ -587,12 +712,16 @@ mod test {
             // implementations of Rust WAGI handled it differently!
             let route = "/exactparentslash/exact";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../exact handler", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
-            assert_eq!("/exactparentslash/exact", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!(
+                "/exactparentslash/exact",
+                parsed_response["X_MATCHED_ROUTE"]
+            );
             assert_eq!("", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/exactparentslash/exact", parsed_response["SCRIPT_NAME"]);
         }
@@ -600,12 +729,16 @@ mod test {
         {
             let route = "/exactparentslash/wildcard/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../wildcard/... handler", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
-            assert_eq!("/exactparentslash/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!(
+                "/exactparentslash/wildcard/...",
+                parsed_response["X_MATCHED_ROUTE"]
+            );
             assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/exactparentslash/wildcard", parsed_response["SCRIPT_NAME"]);
         }
@@ -613,9 +746,10 @@ mod test {
         {
             let route = "/wildcardparent";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
@@ -626,9 +760,10 @@ mod test {
         {
             let route = "/wildcardparent/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the main entry point", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/wildcardparent/...", parsed_response["X_MATCHED_ROUTE"]);
@@ -639,9 +774,10 @@ mod test {
         {
             let route = "/wildcardparent/exact";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../exact handler", description);
-            
+
             assert_eq!("", parsed_response["PATH_INFO"]);
             assert_eq!("", parsed_response["PATH_TRANSLATED"]);
             assert_eq!("/wildcardparent/exact", parsed_response["X_MATCHED_ROUTE"]);
@@ -652,12 +788,16 @@ mod test {
         {
             let route = "/wildcardparent/wildcard/fizz/buzz";
 
-            let (description, parsed_response) = get_decription_and_evs_from_module_map(map_file, None, route).await;
+            let (description, parsed_response) =
+                get_decription_and_evs_from_module_map(map_file, None, route).await;
             assert_eq!("This is the .../wildcard/... handler", description);
-            
+
             assert_eq!("/fizz/buzz", parsed_response["PATH_INFO"]);
             assert_eq!("/fizz/buzz", parsed_response["PATH_TRANSLATED"]);
-            assert_eq!("/wildcardparent/wildcard/...", parsed_response["X_MATCHED_ROUTE"]);
+            assert_eq!(
+                "/wildcardparent/wildcard/...",
+                parsed_response["X_MATCHED_ROUTE"]
+            );
             assert_eq!("/fizz/buzz", parsed_response["X_RAW_PATH_INFO"]);
             assert_eq!("/wildcardparent/wildcard", parsed_response["SCRIPT_NAME"]);
         }
@@ -668,13 +808,15 @@ mod test {
         let empty_body = hyper::body::Body::empty();
         let request = hyper::Request::get("http://127.0.0.1:3000/healthz").body(empty_body);
 
-        let response = send_request_to_module_map(TEST_HEALTHZ_MODULE_MAP_FILE, None, request).await;
+        let response =
+            send_request_to_module_map(TEST_HEALTHZ_MODULE_MAP_FILE, None, request).await;
 
         assert_eq!(hyper::StatusCode::OK, response.status());
-        let response_body = hyper::body::to_bytes(response.into_body()).await
+        let response_body = hyper::body::to_bytes(response.into_body())
+            .await
             .expect("Could bot get bytes from response body");
-        let response_text = std::str::from_utf8(&response_body)
-            .expect("Could not read body as string");
+        let response_text =
+            std::str::from_utf8(&response_body).expect("Could not read body as string");
         assert_eq!("OK", response_text);
     }
 }

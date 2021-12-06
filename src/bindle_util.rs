@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, HashSet}, iter::FromIterator};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::FromIterator,
+};
 
 use bindle::{Invoice, Parcel};
 
@@ -45,8 +48,9 @@ impl InvoiceUnderstander {
     pub fn classify_parcel(&self, parcel: &Parcel) -> Option<InterestingParcel> {
         // Currently only handlers but we have talked of scheduled tasks etc.
         parcel.label.feature.as_ref().and_then(|features| {
-            features.get("wagi").and_then(|wagi_features| {
-                match wagi_features.get("route") {
+            features
+                .get("wagi")
+                .and_then(|wagi_features| match wagi_features.get("route") {
                     Some(route) => {
                         let handler_info = WagiHandlerInfo {
                             invoice_id: self.id(),
@@ -54,21 +58,25 @@ impl InvoiceUnderstander {
                             route: route.to_owned(),
                             entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
                             allowed_hosts: wagi_features.get("allowed_hosts").map(|h| parse_csv(h)),
-                            required_parcels: parcels_required_for(parcel, &self.group_dependency_map),
+                            required_parcels: parcels_required_for(
+                                parcel,
+                                &self.group_dependency_map,
+                            ),
                         };
                         Some(InterestingParcel::WagiHandler(handler_info))
-                    },
+                    }
                     None => None,
-                }
-            })
+                })
         })
     }
 
     pub fn parse_wagi_handlers(&self) -> Vec<WagiHandlerInfo> {
-        self
-            .top_modules().iter()
+        self.top_modules()
+            .iter()
             .filter_map(|parcel| self.classify_parcel(parcel))
-            .map(|parcel| match parcel {    // If there are other cases of InterestingParcel this may need to become a filter_map, but right now that makes Clippy mad
+            .map(|parcel| match parcel {
+                // If there are other cases of InterestingParcel this may need to become
+                // a filter_map, but right now that makes Clippy mad
                 InterestingParcel::WagiHandler(h) => h,
             })
             .collect()
@@ -91,27 +99,45 @@ pub struct WagiHandlerInfo {
 
 impl WagiHandlerInfo {
     pub fn asset_parcels(&self) -> Vec<Parcel> {
-        self.required_parcels.iter().filter(|p| is_file(p)).cloned().collect()
+        self.required_parcels
+            .iter()
+            .filter(|p| is_file(p))
+            .cloned()
+            .collect()
     }
 }
 
 const NO_PARCELS: Vec<Parcel> = vec![];
 
 pub fn is_file(parcel: &Parcel) -> bool {
-    parcel.label.feature.as_ref().and_then(|features| {
-        features.get("wagi").map(|wagi_features| {
-            match wagi_features.get("file") {
-                Some(s) => s == "true",
-                _ => false,
-            }
+    parcel
+        .label
+        .feature
+        .as_ref()
+        .and_then(|features| {
+            features
+                .get("wagi")
+                .map(|wagi_features| match wagi_features.get("file") {
+                    Some(s) => s == "true",
+                    _ => false,
+                })
         })
-    }).unwrap_or(false)
+        .unwrap_or(false)
 }
 
-pub fn parcels_required_for(parcel: &Parcel, full_dep_map: &HashMap<String, Vec<Parcel>>) -> Vec<Parcel> {
+pub fn parcels_required_for(
+    parcel: &Parcel,
+    full_dep_map: &HashMap<String, Vec<Parcel>>,
+) -> Vec<Parcel> {
     let mut required = HashSet::new();
     for group in parcel.directly_requires() {
-        required.extend(full_dep_map.get(&group).unwrap_or(&NO_PARCELS).iter().cloned());
+        required.extend(
+            full_dep_map
+                .get(&group)
+                .unwrap_or(&NO_PARCELS)
+                .iter()
+                .cloned(),
+        );
     }
     Vec::from_iter(required)
 }
@@ -142,7 +168,13 @@ pub fn build_full_memberships(invoice: &Invoice) -> HashMap<String, Vec<Parcel>>
     for group in direct_memberships.keys() {
         let mut all_members = HashSet::new();
         for dep_group in gg_deps.get(group).unwrap() {
-            all_members.extend(direct_memberships.get(dep_group).unwrap_or(&NO_PARCELS).iter().cloned());
+            all_members.extend(
+                direct_memberships
+                    .get(dep_group)
+                    .unwrap_or(&NO_PARCELS)
+                    .iter()
+                    .cloned(),
+            );
         }
         full_memberships.insert(group.to_owned(), Vec::from_iter(all_members));
     }
@@ -150,17 +182,25 @@ pub fn build_full_memberships(invoice: &Invoice) -> HashMap<String, Vec<Parcel>>
     full_memberships
 }
 
-fn group_to_group_direct_dependencies(direct_memberships: &HashMap<String, Vec<Parcel>>) -> HashMap<String, Vec<String>> {
+fn group_to_group_direct_dependencies(
+    direct_memberships: &HashMap<String, Vec<Parcel>>,
+) -> HashMap<String, Vec<String>> {
     let mut ggd = HashMap::new();
     for (group, members) in direct_memberships {
-        let mut directs: Vec<_> = members.iter().flat_map(|parcel| parcel.directly_requires()).collect();
+        let mut directs: Vec<_> = members
+            .iter()
+            .flat_map(|parcel| parcel.directly_requires())
+            .collect();
         directs.push(group.to_owned());
         ggd.insert(group.to_owned(), directs);
     }
     ggd
 }
 
-fn direct_deps_not_already_in_list(list: &[String], direct_dep_map: &HashMap<String, Vec<String>>) -> Vec<String> {
+fn direct_deps_not_already_in_list(
+    list: &[String],
+    direct_dep_map: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
     let mut new_dds = vec![];
     for group in list {
         if let Some(child_groups) = direct_dep_map.get(group) {
@@ -172,7 +212,9 @@ fn direct_deps_not_already_in_list(list: &[String], direct_dep_map: &HashMap<Str
     HashSet::<String>::from_iter(new_dds).into_iter().collect()
 }
 
-fn group_to_group_full_dependencies(direct_memberships: &HashMap<String, Vec<Parcel>>) -> HashMap<String, Vec<String>> {
+fn group_to_group_full_dependencies(
+    direct_memberships: &HashMap<String, Vec<Parcel>>,
+) -> HashMap<String, Vec<String>> {
     let mut ggd = HashMap::new();
     let direct_deps = group_to_group_direct_dependencies(direct_memberships);
     for (group, directs) in &direct_deps {
@@ -208,7 +250,7 @@ impl ParcelUtils for Parcel {
 }
 
 fn parse_csv(text: &str) -> Vec<String> {
-    text.split(',').map(|v| v.to_owned()).collect()  // TODO: trim etc.?
+    text.split(',').map(|v| v.to_owned()).collect() // TODO: trim etc.?
 }
 
 #[cfg(test)]
@@ -385,7 +427,9 @@ mod test {
         };
 
         let membership_map = build_full_memberships(&inv);
-        let members = membership_map.get("coffee").expect("there should have been a group called 'coffee'");
+        let members = membership_map
+            .get("coffee")
+            .expect("there should have been a group called 'coffee'");
         assert_eq!(2, members.len());
     }
 }

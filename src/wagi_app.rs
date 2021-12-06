@@ -1,10 +1,10 @@
+use crate::wagi_config::{
+    HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration,
+};
 use clap::{App, Arg, ArgMatches};
 use core::convert::TryFrom;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use crate::wagi_config::{
-    HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration,
-};
 
 const ABOUT: &str = r#"
 Run an HTTP WAGI server
@@ -254,7 +254,9 @@ fn parse_handler_configuration_source(
     // at sources rather than by allowing confusing combinations though!
     match (
         matches.value_of(ARG_BINDLE_ID).ignore_if_empty(),
-        matches.value_of(ARG_BINDLE_STANDALONE_DIR).ignore_if_empty(),
+        matches
+            .value_of(ARG_BINDLE_STANDALONE_DIR)
+            .ignore_if_empty(),
         matches.value_of(ARG_BINDLE_URL).ignore_if_empty(),
         matches.value_of(ARG_MODULES_CONFIG).ignore_if_empty(),
     ) {
