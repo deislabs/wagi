@@ -13,9 +13,42 @@ jobs:
     strategy:
       matrix:
         config:
-          - { os: "ubuntu-latest", arch: "amd64", extension: "", env: {} }
-          - { os: "macos-latest", arch: "amd64", extension: "", env: {} }
-          - { os: "windows-latest", arch: "amd64", extension: ".exe", env: {} }
+          - {
+              os: "ubuntu-latest",
+              arch: "amd64",
+              extension: "",
+              args: "--all-features --release",
+              target: "",
+              targetDir: "target/release",
+              env: {},
+            }
+          - {
+              os: "ubuntu-latest",
+              arch: "aarch64",
+              extension: "",
+              args: "--all-features --release --target aarch64-unknown-linux-gnu",
+              target: "aarch64-unknown-linux-gnu",
+              targetDir: "target/aarch64-unknown-linux-gnu/release",
+              env: { OPENSSL_DIR: "/usr/local/openssl-aarch64" },
+            }
+          - {
+              os: "macos-latest",
+              arch: "amd64",
+              extension: "",
+              args: "--all-features --release",
+              target: "",
+              targetDir: "target/release",
+              env: {},
+            }
+          - {
+              os: "windows-latest",
+              arch: "amd64",
+              extension: ".exe",
+              args: "--all-features --release",
+              target: "",
+              targetDir: "target/release",
+              env: {},
+            }
     steps:
       - uses: actions/checkout@v2
 
@@ -35,6 +68,23 @@ jobs:
           OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
           echo "RUNNER_OS=$OS" >> $GITHUB_ENV
 
+      - name: setup for cross-compiled aarch64 build
+        if: matrix.config.arch == 'aarch64'
+        run: |
+          sudo apt update
+          sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          cd /tmp
+          git clone https://github.com/openssl/openssl
+          cd openssl
+          git checkout OpenSSL_1_1_1l
+          sudo mkdir -p $OPENSSL_DIR
+          ./Configure linux-aarch64 --prefix=$OPENSSL_DIR --openssldir=$OPENSSL_DIR shared
+          make CC=aarch64-linux-gnu-gcc
+          sudo make install
+          rustup target add aarch64-unknown-linux-gnu
+          echo '[target.aarch64-unknown-linux-gnu]' >> ${HOME}/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> ${HOME}/.cargo/config.toml
+
       # hack: install rustfmt to work around darwin toolchain issues
       - name: "(macOS) install dev tools"
         if: runner.os == 'macOS'
@@ -47,13 +97,13 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: "--all-features --release"
+          args: ${{ matrix.config.args }}
 
       - name: package release assets
         shell: bash
         run: |
           mkdir _dist
-          cp README.md LICENSE.txt target/release/wagi${{ matrix.config.extension }} _dist/
+          cp README.md LICENSE.txt ${{ matrix.config.targetDir }}/wagi${{ matrix.config.extension }} _dist/
           cd _dist
           tar czf wagi-${{ env.RELEASE_VERSION }}-${{ env.RUNNER_OS }}-${{ matrix.config.arch }}.tar.gz README.md LICENSE.txt wagi${{ matrix.config.extension }}
 
