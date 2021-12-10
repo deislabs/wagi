@@ -6,6 +6,8 @@ use hyper::{
 };
 use sha2::{Digest, Sha256};
 use tracing::{instrument};
+use wasi_common::WasiCtx;
+use wasmtime::Linker;
 
 use crate::dynamic_route::{DynamicRoutes, interpret_routes};
 use crate::emplacer::Bits;
@@ -317,8 +319,16 @@ fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry,
     let redirects = prepare_stdio_streams(vec![] /* TODO: eww */, global_context, routing_table_entry.unique_key())?;
 
     let ctx = build_wasi_context_for_dynamic_route_query(redirects.streams);
-
-    let (store, instance) = prepare_wasm_instance(global_context, ctx, &wasm_route_handler.wasm_module_source, |_| Ok(()))?;
+    let link_http = |mut linker: &mut Linker<WasiCtx>| -> anyhow::Result<()> {
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(
+            None,
+            None,
+            
+        )?;
+        http.add_to_linker(&mut linker)?;
+        Ok(())
+    };
+    let (store, instance) = prepare_wasm_instance(global_context, ctx, &wasm_route_handler.wasm_module_source, link_http)?;
 
     match run_prepared_wasm_instance_if_present(instance, store, "_routes") {
         RunWasmResult::WasmError(e) => Err(e),
