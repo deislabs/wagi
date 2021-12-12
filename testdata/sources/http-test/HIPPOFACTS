@@ -1,0 +1,11 @@
+[bindle]
+name = "http-test"
+version = "0.1.0"
+authors = ["itowlson"]
+
+[[handler]]
+route = "/"
+name = "target/wasm32-wasi/release/http-test.wasm"
+# TODO: Hippo CLI doesn't support this yet and I'm not 100% sure it should
+# Currently need to hack into invoice.toml by hand
+# allowed_hosts = "api.brigade.sh"

@@ -1,0 +1,23 @@
+bindleVersion = '1.0.0'
+
+[bindle]
+name = 'http-test'
+version = '0.1.0'
+authors = ['itowlson']
+
+[[parcel]]
+[parcel.label]
+sha256 = 'a1a1af2309945307c713e8fb80cc7287fca4c89f02c2917ae92cd15c5a3865bf'
+mediaType = 'application/wasm'
+name = 'target/wasm32-wasi/release/http-test.wasm'
+size = 1989836
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/'
+allowed_hosts = "https://api.brigade.sh"
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/http-test.wasm-files']
+
+[[group]]
+name = 'target/wasm32-wasi/release/http-test.wasm-files'

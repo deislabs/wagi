@@ -72,6 +72,7 @@ mod test {
     }
 
     const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
+    const HTTP_TEST_ID: &str = "http-test/0.1.0";
     const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
     const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
@@ -672,9 +673,25 @@ mod test {
 
         assert_eq!(hyper::StatusCode::OK, response.status());
         let response_body = hyper::body::to_bytes(response.into_body()).await
-            .expect("Could bot get bytes from response body");
+            .expect("Could not get bytes from response body");
         let response_text = std::str::from_utf8(&response_body)
             .expect("Could not read body as string");
         assert_eq!("OK", response_text);
+    }
+
+    #[tokio::test]
+    pub async fn can_perform_http_requests() {
+        let empty_body = hyper::body::Body::empty();
+        let request = hyper::Request::get("http://127.0.0.1:3000/").body(empty_body);
+
+        let response = send_request_to_standalone_bindle(HTTP_TEST_ID, request).await;
+
+        assert_eq!(hyper::StatusCode::OK, response.status());
+        let response_body = hyper::body::to_bytes(response.into_body()).await
+            .expect("Could not get bytes from response body");
+        let response_text = std::str::from_utf8(&response_body)
+            .expect("Could not read body as string");
+        assert!(response_text.contains("api.brigade.sh is HEALTHY") ||
+            response_text.contains("api.brigade.sh is UNHEALTHY"));
     }
 }

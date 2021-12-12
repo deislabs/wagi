@@ -10,6 +10,39 @@ use crate::wasm_module::WasmModuleSource;
 
 const STDERR_FILE: &str = "module.stderr";
 
+#[derive(Clone, Default)]
+pub struct WasmLinkOptions {
+    pub http_allowed_hosts: Option<Vec<String>>,
+    pub http_max_concurrency: Option<u32>,
+}
+
+impl WasmLinkOptions {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn with_http(
+        self,
+        allowed_hosts: Option<Vec<String>>,
+        max_concurrency: Option<u32>)
+    -> Self {
+        let mut result = self.clone();
+        result.http_allowed_hosts = allowed_hosts;
+        result.http_max_concurrency = max_concurrency;
+        result
+    }
+
+    pub fn apply_to(&self, linker: &mut Linker<WasiCtx>) -> anyhow::Result<()> {
+        let http = wasi_experimental_http_wasmtime::HttpCtx::new(
+            self.http_allowed_hosts.clone(),
+            self.http_max_concurrency,
+        )?;
+        http.add_to_linker(linker)?;
+
+        Ok(())
+    }
+}
+
 pub fn prepare_stdio_streams(
     body: Vec<u8>,
     global_context: &RequestGlobalContext,
@@ -67,13 +100,13 @@ pub fn prepare_wasm_instance(
     global_context: &RequestGlobalContext,
     ctx: WasiCtx,
     wasm_module_source: &WasmModuleSource,
-    customise_linker: impl Fn(&mut Linker<WasiCtx>) -> anyhow::Result<()>,
+    link_options: WasmLinkOptions,
 ) -> Result<(Store<WasiCtx>, Instance), Error> {
     let (mut store, engine) = new_store_and_engine(&global_context.cache_config_path, ctx)?;
     let mut linker = Linker::new(&engine);
     wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
-    customise_linker(&mut linker)?;
+    link_options.apply_to(&mut linker)?;
 
     let module = wasm_module_source.load_module(&store)?;
     let instance = linker.instantiate(&mut store, &module)?;
