@@ -1,0 +1,10 @@
+[package]
+name = "http-test"
+version = "0.1.0"
+authors = ["itowlson"]
+edition = "2018"
+
+[dependencies]
+anyhow = "1.0.51"
+http = "0.2"
+wasi-experimental-http = "0.7.0"

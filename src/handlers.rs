@@ -17,7 +17,7 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance};
+use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -104,15 +104,9 @@ impl WasmRouteHandler {
     }
 
     fn prepare_wasm_instance(&self, global_context: &RequestGlobalContext, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
-        let link_http = |mut linker: &mut Linker<WasiCtx>| -> anyhow::Result<()> {
-            let http = wasi_experimental_http_wasmtime::HttpCtx::new(
-                self.allowed_hosts.clone(),
-                self.http_max_concurrency,
-            )?;
-            http.add_to_linker(&mut linker)?;
-            Ok(())
-        };
-        prepare_wasm_instance(global_context, ctx, &self.wasm_module_source, link_http)
+        let link_options = WasmLinkOptions::default()
+            .with_http(self.allowed_hosts.clone(), self.http_max_concurrency);
+        prepare_wasm_instance(global_context, ctx, &self.wasm_module_source, link_options)
     }
 }
 
