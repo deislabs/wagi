@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgMatches};
+use clap::{App, Arg, ArgMatches, ArgGroup};
 use core::convert::TryFrom;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -47,6 +47,10 @@ const ARG_WASM_CACHE_CONFIG_FILE: &str = "cache";
 const ARG_REMOTE_MODULE_CACHE_DIR: &str = "module_cache";
 const ARG_LOG_DIR: &str = "log_dir";
 
+// Groups
+const GROUP_MODULE_SOURCE: &str = "module_source";
+const GROUP_BINDLE_SOURCE: &str = "bindle_source";
+
 pub fn wagi_app_definition() -> App<'static, 'static> {
     App::new("WAGI Server")
     .version(clap::crate_version!())
@@ -64,15 +68,22 @@ pub fn wagi_app_definition() -> App<'static, 'static> {
         Arg::with_name(ARG_BINDLE_ID)
             .short("b")
             .long("bindle")
+            .value_name("BINDLE_ID")
             .help("A bindle ID, such as foo/bar/1.2.3")
-            .takes_value(true),
+            .takes_value(true)
+            .requires(GROUP_BINDLE_SOURCE),
+    )
+    .group(
+        ArgGroup::with_name(GROUP_MODULE_SOURCE)
+            .args(&[ARG_MODULES_CONFIG, ARG_BINDLE_ID])
+            .required(true)
     )
     .arg(
         Arg::with_name(ARG_BINDLE_STANDALONE_DIR)
             .long("bindle-path")
             .help("A base path for standalone bindles")
             .takes_value(true)
-            .requires(ARG_BINDLE_ID),
+            .requires(ARG_BINDLE_ID)
     )
     .arg(
         Arg::with_name(ARG_BINDLE_URL)
@@ -80,7 +91,11 @@ pub fn wagi_app_definition() -> App<'static, 'static> {
             .value_name(BINDLE_URL)
             .env(BINDLE_URL)
             .help("The Bindle server URL, e.g. https://example.com:8080/v1. Note that the version path (v1) is required.")
-            .takes_value(true),
+            .takes_value(true)
+    )
+    .group(
+        ArgGroup::with_name(GROUP_BINDLE_SOURCE)
+            .args(&[ARG_BINDLE_STANDALONE_DIR, ARG_BINDLE_URL])
     )
     .arg(
         Arg::with_name(ARG_WASM_CACHE_CONFIG_FILE)
@@ -234,32 +249,19 @@ pub fn parse_configuration_from(matches: ArgMatches) -> anyhow::Result<WagiConfi
 fn parse_handler_configuration_source(
     matches: &ArgMatches,
 ) -> anyhow::Result<HandlerConfigurationSource> {
-    // This is slightly stricter than the previous rule. Previously:
-    // * If you had a bindle ID:
-    //   * If you had a standalone path, we used that.
-    //   * Otherwise, use URL or default.
-    // * Otherwise, use modules file.
-    // This could lead to ambiguous combinations (e.g. ID + path + URL).
+    // The following rules are enforced at the clap app/arg level:
     //
-    // The new logic is therefore:
-    // * If you have a bindle ID:
-    //   * If you have a standalone path and NO URL, use the standalone path.
-    //   * If you have a standalone path AND a URL, error.
-    //   * Otherwise, use the URL or default.
-    // * Otherwise:
-    //   * If you have a standalone bindle path or URL, error.
-    //   * Otherwise, use the modules.toml path or default.
-    // NOTE: the new rule potentially makes it harder if e.g. you have a BINDLE_URL env var
-    // and you want to ignore it in favour of a standalone file. This should be resolved by looking
-    // at sources rather than by allowing confusing combinations though!
+    // * You MUST have a modules file OR a bindle ID, but not both
+    // * If you have a bindle ID (i.e. do NOT have a modules file), you MUST
+    //   have a Bindle server URL OR standalone directory, but not both
     match (
         matches.value_of(ARG_BINDLE_ID).ignore_if_empty(),
         matches.value_of(ARG_BINDLE_STANDALONE_DIR).ignore_if_empty(),
         matches.value_of(ARG_BINDLE_URL).ignore_if_empty(),
         matches.value_of(ARG_MODULES_CONFIG).ignore_if_empty(),
     ) {
-        (None, None, None, modules_config_opt) => {
-            let modules_config = modules_config_opt.unwrap_or("modules.toml");
+        // Case: got a module file. Can't have bindle id; ignore bindle location.
+        (None, _, _, Some(modules_config)) => {
             let modules_config_path = std::path::PathBuf::from(modules_config);
             if modules_config_path.is_file() {
                 Ok(HandlerConfigurationSource::ModuleConfigFile(
@@ -272,6 +274,7 @@ fn parse_handler_configuration_source(
                 ))
             }
         }
+        // Case: got a bindle id and directory. Can't have a server URL or module file.
         (Some(bindle_id), Some(bindle_dir), None, None) => {
             let bindle_dir_path = std::path::PathBuf::from(bindle_dir);
             if bindle_dir_path.is_dir() {
@@ -286,8 +289,8 @@ fn parse_handler_configuration_source(
                 ))
             }
         }
-        (Some(bindle_id), None, bindle_url_opt, None) => {
-            let bindle_url = bindle_url_opt.unwrap_or("http://localhost:8080/v1");
+        // Case: got a bindle id and server URL. Can't have a bindir dir or module file.
+        (Some(bindle_id), None, Some(bindle_url), None) => {
             match url::Url::parse(bindle_url) {
                 Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
                     url,
@@ -296,8 +299,24 @@ fn parse_handler_configuration_source(
                 Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
             }
         }
-        _ => Err(anyhow::anyhow!(
-            "Specify only module config file OR bindle ID + dir OR bindle ID + optional URL"
+        // These cases shouldn't be able to happen. We could be optimistic and
+        // confident, and assume that means they won't. But we have been
+        // programming faaaaaaaaaar too long for that.
+        // Case SHOULDN'T HAPPEN: got NEITHER module config file NOR bindle id
+        (None, _, _, None) => Err(anyhow::anyhow!(
+            "You must specify module config file or bindle ID"
+        )),
+        // Case SHOULDN'T HAPPEN: got a module config file AND bindle id
+        (Some(_), _, _, Some(_)) => Err(anyhow::anyhow!(
+            "You cannot specify both module config file and bindle ID"
+        )),
+        // Case SHOULDN'T HAPPEN: got a bindle id and NEITHER directory NOR URL
+        (Some(_), None, None, _) => Err(anyhow::anyhow!(
+            "A bindle ID requires either a server URL or standalone directory"
+        )),
+        // Case SHOULDN'T HAPPEN: got a bindle id and BOTH directory AND URL
+        (Some(_), Some(_), Some(_), _) => Err(anyhow::anyhow!(
+            "You cannot specify both a bindle server URL and a standalone directory"
         )),
     }
 }
