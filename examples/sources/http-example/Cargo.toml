@@ -1,0 +1,9 @@
+[package]
+name = "http-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+http                   = "0.2"
+wasi-experimental-http = "0.7.0"
+
