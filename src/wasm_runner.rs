@@ -64,9 +64,9 @@ pub fn prepare_stdio_streams(
             .append(true)
             .create(true)
             .open(log_dir.join(STDERR_FILE))?,
-        ambient_authority(),
     );
     let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
+
 
     Ok(crate::wasm_module::IORedirectionInfo {
         streams: crate::wasm_module::IOStreamRedirects {

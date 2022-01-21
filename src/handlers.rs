@@ -1,7 +1,7 @@
 use std::{collections::HashMap};
 use std::sync::{Arc, RwLock};
 
-use cap_std::fs::Dir;
+use wasi_cap_std_sync::Dir;
 use hyper::{
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
