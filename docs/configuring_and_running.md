@@ -12,9 +12,11 @@ The `wagi` server is run from the command line. It has a few flags:
 - `-c`|`--config`: The path to a `modules.toml` configuration
 - `-b`|`--bindle`: The name of a bindle to use for configuration, e.g. `-b example.com/hello/1.0.0`.
   - You *must* specify _one of_ `--config` or `--bindle`.
-  - If you specify both, it will use the `--bindle`
+  - It's an error to specify both.
 - `--bindle-path`: A base path for standalone bindles
-- `--bindle-url`: The full URL to a Bindle server. Default is `http://localhost:8080/v1`
+- `--bindle-url`: The full URL to a Bindle server.
+  - If you specified `--bindle` you *must* specify _one of_ `--bindle-path` or `--bindle-url`.
+  - It's an error to specify both.
 - `--cache`: The path to an optional `cache.toml` configuration file (see the caching section below)
 - `--default-host`: The hostname (with port) to use when no HOST header is provided. Default is `localhost:3000`
 - `-l`|`--listen`: The IP address and port to listen on. Default is `127.0.0.1:3000`
