@@ -58,7 +58,7 @@ impl RoutingTable {
                 let request_context = RequestContext {
                     client_addr,
                 };
-                let response = rte.handle_request(&parts, data, &request_context, &self.global_context);
+                let response = rte.handle_request(&parts, data, &request_context, &self.global_context).await;
                 Ok(response)
             },
             Err(_) => Ok(not_found()),
@@ -149,7 +149,7 @@ impl RoutingTableEntry {
     // TODO: I don't think this rightly belongs here. But
     // reasonable place to at least understand the decomposition and
     // dependencies.
-    pub fn handle_request(
+    pub async fn handle_request(
         &self,
         req: &Parts,
         body: Vec<u8>,
@@ -159,7 +159,7 @@ impl RoutingTableEntry {
         match &self.handler_info {
             RouteHandler::HealthCheck => Response::new(Body::from("OK")),
             RouteHandler::Wasm(w) => {
-                let response = w.handle_request(&self.route_pattern, req, body, request_context, global_context, self.unique_key());
+                let response = w.handle_request(&self.route_pattern, req, body, request_context, global_context, self.unique_key()).await;
                 match response {
                     Ok(res) => res,
                     Err(e) => {
@@ -352,7 +352,7 @@ fn append_one_dynamic_route(routing_table_entry: &RoutingTableEntry, wasm_route_
     }
 }
 
-fn build_wasi_context_for_dynamic_route_query(redirects: crate::wasm_module::IOStreamRedirects) -> wasi_common::WasiCtx {
+fn build_wasi_context_for_dynamic_route_query(redirects: crate::wasm_module::IOStreamRedirects<Vec<u8>>) -> wasi_common::WasiCtx {
     let builder = wasi_cap_std_sync::WasiCtxBuilder::new()
         .stderr(Box::new(redirects.stderr))
         .stdout(Box::new(redirects.stdout));

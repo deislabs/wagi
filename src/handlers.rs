@@ -1,5 +1,4 @@
 use std::{collections::HashMap};
-use std::sync::{Arc, RwLock};
 
 use wasi_cap_std_sync::Dir;
 use hyper::{
@@ -16,8 +15,9 @@ use crate::dispatcher::RoutePattern;
 use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
+use crate::stream_writer::StreamWriter;
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
+use crate::wasm_runner::{prepare_stdio_streams_for_http, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -36,41 +36,79 @@ pub struct WasmRouteHandler {
 }
 
 impl WasmRouteHandler {
-    pub fn handle_request(
+    pub async fn handle_request(
         &self,
         matched_route: &RoutePattern,
         req: &Parts,
-        body: Vec<u8>,
+        request_body: Vec<u8>,
         request_context: &RequestContext,
         global_context: &RequestGlobalContext,
         logging_key: String,
     ) -> Result<Response<Body>, anyhow::Error> {
+
+        // These broken-out functions are slightly artificial but help solve some lifetime
+        // issues (where otherwise you get errors about things not being Send across an
+        // await).
+        let (stream_writer, instance, store) =
+            self.set_up_runtime_environment(matched_route, req, request_body, request_context, global_context, logging_key)?;
+        self.spawn_wasm_instance(instance, store, stream_writer.clone());
+
+        let response = match compose_response(stream_writer).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Error parsing guest output into HTTP response: {}", e);
+                internal_error("internal error calling application")
+            }
+        };
+
+        tokio::task::yield_now().await;
+
+        Ok(response)
+    }
+
+    fn set_up_runtime_environment(&self, matched_route: &RoutePattern, req: &Parts, request_body: Vec<u8>, request_context: &RequestContext, global_context: &RequestGlobalContext, logging_key: String) -> anyhow::Result<(crate::stream_writer::StreamWriter, Instance, Store<WasiCtx>)> {
         let startup_span = tracing::info_span!("module instantiation").entered();
+
         let headers = crate::http_util::build_headers(
             matched_route,
             req,
-            body.len(),
+            request_body.len(),
             request_context.client_addr,
             global_context.default_host.as_str(),
             global_context.use_tls,
             &global_context.global_env_vars,
         );
 
-        let redirects = prepare_stdio_streams(body, global_context, logging_key)?;
-
+        let stream_writer = crate::stream_writer::StreamWriter::new();
+        let redirects = prepare_stdio_streams_for_http(request_body, stream_writer.clone(), global_context, logging_key)?;
         let ctx = self.build_wasi_context_for_request(req, headers, redirects.streams)?;
-
         let (store, instance) = self.prepare_wasm_instance(global_context, ctx)?;
-
-        // Drop manually to get instantiation time
+        
         drop(startup_span);
-
-        run_prepared_wasm_instance(instance, store, &self.entrypoint, &self.wasm_module_name)?;
-
-        compose_response(redirects.stdout_mutex)
+        
+        Ok((stream_writer, instance, store))
     }
 
-    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
+    fn spawn_wasm_instance(&self, instance: Instance, store: Store<WasiCtx>, mut stream_writer: StreamWriter) {
+        let entrypoint = self.entrypoint.clone();
+        let wasm_module_name = self.wasm_module_name.clone();
+        
+        // This is fire and forget, so there's a limited amount of error handling we
+        // can do.
+        tokio::spawn(async move {
+            match run_prepared_wasm_instance(instance, store, &entrypoint, &wasm_module_name) {
+                Ok(()) => (),
+                Err(e) => tracing::error!("Error running Wasm module: {}", e),
+            };
+            // TODO: should we attempt to write an error response to the StreamWriter here?
+            match stream_writer.done() {
+                Ok(()) => (),
+                Err(e) => tracing::error!("Error marking Wasm output as done: {}", e),
+            }
+        });
+    }
+
+    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects<crate::stream_writer::StreamWriter>) -> Result<WasiCtx, Error> {
         let uri_path = req.uri.path();
         let mut args = vec![uri_path.to_string()];
         req.uri
@@ -110,34 +148,12 @@ impl WasmRouteHandler {
     }
 }
 
-pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<Body>, Error> {
-    // Okay, once we get here, all the information we need to send back in the response
-    // should be written to the STDOUT buffer. We fetch that, format it, and send
-    // it back. In the process, we might need to alter the status code of the result.
-    //
-    // This is a little janky, but basically we are looping through the output once,
-    // looking for the double-newline that distinguishes the headers from the body.
-    // The headers can then be parsed separately, while the body can be sent back
-    // to the client.
+pub async fn compose_response(mut stream_writer: StreamWriter) -> anyhow::Result<Response<Body>> {
+    let header_block = stream_writer.header_block().await?;
+    let mut res = Response::new(Body::wrap_stream(stream_writer.as_stream()));
 
-    let out = stdout_mutex.read().unwrap();
-    let mut last = 0;
-    let mut scan_headers = true;
-    let mut buffer: Vec<u8> = Vec::new();
-    let mut out_headers: Vec<u8> = Vec::new();
-    out.iter().for_each(|i| {
-        if scan_headers && *i == 10 && last == 10 {
-            out_headers.append(&mut buffer);
-            buffer = Vec::new();
-            scan_headers = false;
-            return; // Consume the linefeed
-        }
-        last = *i;
-        buffer.push(*i)
-    });
-    let mut res = Response::new(Body::from(buffer));
     let mut sufficient_response = false;
-    parse_cgi_headers(String::from_utf8(out_headers)?)
+    parse_cgi_headers(String::from_utf8(header_block)?)
         .iter()
         .for_each(|h| {
             use hyper::header::{CONTENT_TYPE, LOCATION};

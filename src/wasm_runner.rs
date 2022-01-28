@@ -47,7 +47,7 @@ pub fn prepare_stdio_streams(
     body: Vec<u8>,
     global_context: &RequestGlobalContext,
     handler_id: String,
-) -> Result<crate::wasm_module::IORedirectionInfo, Error> {
+) -> Result<crate::wasm_module::IORedirectionInfo<Vec<u8>>, Error> {
     let stdin = ReadPipe::from(body);
     let stdout_buf: Vec<u8> = vec![];
     let stdout_mutex = Arc::new(RwLock::new(stdout_buf));
@@ -67,6 +67,40 @@ pub fn prepare_stdio_streams(
     );
     let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
+
+    Ok(crate::wasm_module::IORedirectionInfo {
+        streams: crate::wasm_module::IOStreamRedirects {
+            stdin,
+            stdout,
+            stderr,
+        },
+        stdout_mutex,
+    })
+}
+
+pub fn prepare_stdio_streams_for_http(
+    body: Vec<u8>,
+    stream_writer: crate::stream_writer::StreamWriter,
+    global_context: &RequestGlobalContext,
+    handler_id: String,
+) -> Result<crate::wasm_module::IORedirectionInfo<crate::stream_writer::StreamWriter>, Error> {
+    let stdin = ReadPipe::from(body);
+    let stdout_mutex = Arc::new(RwLock::new(stream_writer));
+    let stdout = WritePipe::from_shared(stdout_mutex.clone());
+    let log_dir = global_context.base_log_dir.join(handler_id);
+
+    // The spec does not say what to do with STDERR.
+    // See specifically sections 4.2 and 6.1 of RFC 3875.
+    // Currently, we will attach to wherever logs go.
+    tracing::info!(log_dir = %log_dir.display(), "Using log dir");
+    std::fs::create_dir_all(&log_dir)?;
+    let stderr = cap_std::fs::File::from_std(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(log_dir.join(STDERR_FILE))?,
+    );
+    let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
     Ok(crate::wasm_module::IORedirectionInfo {
         streams: crate::wasm_module::IOStreamRedirects {

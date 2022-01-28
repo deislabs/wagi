@@ -6,6 +6,7 @@ pub(crate) mod handlers;
 mod http_util;
 pub (crate) mod module_loader;
 mod request;
+pub (crate) mod stream_writer;
 mod tls;
 pub mod version;
 pub mod wagi_app;
