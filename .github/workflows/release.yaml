@@ -53,8 +53,8 @@ jobs:
         shell: bash
         run: echo "RELEASE_VERSION=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
 
-      - name: set the release version (master)
-        if: github.ref == 'refs/heads/master'
+      - name: set the release version (main)
+        if: github.ref == 'refs/heads/main'
         shell: bash
         run: echo "RELEASE_VERSION=canary" >> $GITHUB_ENV
 
