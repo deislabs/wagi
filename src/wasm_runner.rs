@@ -5,6 +5,8 @@ use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
 use wasmtime_wasi::*;
 
+use tracing::debug;
+
 use crate::request::RequestGlobalContext;
 use crate::wasm_module::WasmModuleSource;
 
@@ -102,13 +104,16 @@ pub fn prepare_wasm_instance(
     wasm_module_source: &WasmModuleSource,
     link_options: WasmLinkOptions,
 ) -> Result<(Store<WasiCtx>, Instance), Error> {
+    debug!("Creating store, engine, and linker.");
     let (mut store, engine) = new_store_and_engine(&global_context.cache_config_path, ctx)?;
     let mut linker = Linker::new(&engine);
     wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
 
     link_options.apply_to(&mut linker)?;
 
+    debug!("loading module from store");
     let module = wasm_module_source.load_module(&store)?;
+    debug!("instantiating module in linker");
     let instance = linker.instantiate(&mut store, &module)?;
     Ok((store, instance))
 }
@@ -124,6 +129,7 @@ pub fn run_prepared_wasm_instance(
     })?;
     tracing::trace!("Calling Wasm entry point");
     start.call(&mut store, &[], &mut vec![])?;
+    tracing::trace!("Module execution complete");
     Ok(())
 }
 

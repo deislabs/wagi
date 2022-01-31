@@ -104,6 +104,7 @@ impl WasmRouteHandler {
     }
 
     fn prepare_wasm_instance(&self, global_context: &RequestGlobalContext, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
+        debug!("Preparing Wasm instance.");
         let link_options = WasmLinkOptions::default()
             .with_http(self.allowed_hosts.clone(), self.http_max_concurrency);
         prepare_wasm_instance(global_context, ctx, &self.wasm_module_source, link_options)
@@ -119,7 +120,7 @@ pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<B
     // looking for the double-newline that distinguishes the headers from the body.
     // The headers can then be parsed separately, while the body can be sent back
     // to the client.
-
+    debug!("composing response");
     let out = stdout_mutex.read().unwrap();
     let mut last = 0;
     let mut scan_headers = true;
@@ -192,5 +193,6 @@ pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<B
             "Exactly one of 'location' or 'content-type' must be specified",
         ));
     }
+    debug!("Response successfully sent");
     Ok(res)
 }
