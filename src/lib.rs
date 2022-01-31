@@ -74,7 +74,7 @@ mod test {
     const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
     const HTTP_TEST_ID: &str = "http-test/0.1.0";
     const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
-    const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069";
+    const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-20210924170616069";
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
     #[cfg(target_os = "windows")]
     const TEST2_MODULE_MAP_FILE: &str = "test2.toml";

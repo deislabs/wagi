@@ -77,7 +77,8 @@ impl Emplacer {
     }
 
     async fn emplace_remote_bindle(self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
-        let client = bindle::client::Client::new(bindle_base_url.as_str())?;
+        let token = bindle::client::tokens::NoToken::default();
+        let client = bindle::client::Client::new(bindle_base_url.as_str(), token)?;
 
         self.emplace_bindle(&client, id).await
     }
@@ -207,7 +208,7 @@ trait BindleReader {
 }
 
 #[async_trait::async_trait]
-impl BindleReader for bindle::client::Client {
+impl<T: bindle::client::tokens::TokenManager + Send + Sync> BindleReader for bindle::client::Client<T> {
     async fn get_invoice_bytes(&self, id: &bindle::Id) -> anyhow::Result<Vec<u8>> {
         let invoice = self.get_invoice(id).await
             .with_context(|| format!("Error fetching remote invoice {}", &id))?;
@@ -257,7 +258,7 @@ mod test {
 
     #[tokio::test]
     async fn can_emplace_standalone_bindle() {
-        let test_id = bindle::Id::from_str("itowlson/toast-on-demand/0.1.0-ivan-2021.09.24.17.06.16.069")
+        let test_id = bindle::Id::from_str("itowlson/toast-on-demand/0.1.0-ivan-20210924170616069")
             .expect("Test bindle ID should have been valid");
         let asset_cache_dir = pick_test_dir();
         let handlers = HandlerConfigurationSource::StandaloneBindle(test_data_dir(), test_id);
@@ -273,13 +274,13 @@ mod test {
             "Expected module parcel in asset directory but not found");
 
         // There should be an asset directory with the SHA of the invoice ID
-        assert!(asset_cache_dir.join("_ASSETS/5c168e0e969ec344be4044dccd4f68e26f20976a5edac0d49e0c28c57ba465b5").is_dir(),
+        assert!(asset_cache_dir.join("_ASSETS/28e62d239a12d50b11db734eb4a37bf9e746fd487f2a375d17db3a82d6869d54").is_dir(),
             "Expected invoice asset dir in asset directory but not found");
 
         // There should be assets in the asset directory
-        assert!(asset_cache_dir.join("_ASSETS/5c168e0e969ec344be4044dccd4f68e26f20976a5edac0d49e0c28c57ba465b5/images/raw-toast.jpeg").is_file(),
+        assert!(asset_cache_dir.join("_ASSETS/28e62d239a12d50b11db734eb4a37bf9e746fd487f2a375d17db3a82d6869d54/images/raw-toast.jpeg").is_file(),
             "Expected image file in invoice asset directory but not found");
-        assert!(asset_cache_dir.join("_ASSETS/5c168e0e969ec344be4044dccd4f68e26f20976a5edac0d49e0c28c57ba465b5/images/derrida.png").is_file(),
+        assert!(asset_cache_dir.join("_ASSETS/28e62d239a12d50b11db734eb4a37bf9e746fd487f2a375d17db3a82d6869d54/images/derrida.png").is_file(),
             "Where in the world in Jacques Derrida?");
 
         tokio::fs::remove_dir_all(&asset_cache_dir).await

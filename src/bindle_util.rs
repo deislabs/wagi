@@ -223,6 +223,7 @@ mod test {
         let inv = InvoiceUnderstander::new(&Invoice {
             bindle_version: "v1".to_owned(),
             yanked: None,
+            yanked_signature: None,
             signature: None,
             annotations: None,
             bindle: BindleSpec {
@@ -247,6 +248,7 @@ mod test {
                         size: 1234,
                         annotations: None,
                         feature: None,
+                        origin: None,
                     },
                     conditions: Some(Condition {
                         member_of: Some(vec!["coffee".to_owned()]),
@@ -261,6 +263,7 @@ mod test {
                         size: 1234,
                         annotations: None,
                         feature: None,
+                        origin: None,
                     },
                     conditions: Some(Condition {
                         member_of: Some(vec!["coffee".to_owned()]),
@@ -275,6 +278,7 @@ mod test {
                         size: 1234,
                         annotations: None,
                         feature: None,
+                        origin: None,
                     },
                     conditions: Some(Condition {
                         member_of: None,
@@ -302,6 +306,7 @@ mod test {
                 size: 1234,
                 annotations: None,
                 feature: None,
+                origin: None,
             },
             conditions: Some(Condition {
                 member_of: None,
@@ -323,6 +328,7 @@ mod test {
         let inv = Invoice {
             bindle_version: "v1".to_owned(),
             yanked: None,
+            yanked_signature: None,
             signature: None,
             annotations: None,
             bindle: BindleSpec {
@@ -347,6 +353,7 @@ mod test {
                         size: 1234,
                         annotations: None,
                         feature: None,
+                        origin: None,
                     },
                     conditions: Some(Condition {
                         member_of: Some(vec!["coffee".to_owned()]),
@@ -361,6 +368,7 @@ mod test {
                         size: 1234,
                         annotations: None,
                         feature: None,
+                        origin: None,
                     },
                     conditions: Some(Condition {
                         member_of: Some(vec!["coffee".to_owned()]),
@@ -375,6 +383,7 @@ mod test {
                         size: 1234,
                         annotations: None,
                         feature: None,
+                        origin: None,
                     },
                     conditions: Some(Condition {
                         member_of: None,

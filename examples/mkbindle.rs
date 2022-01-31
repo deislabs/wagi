@@ -15,7 +15,8 @@ async fn main() -> Result<(), anyhow::Error> {
         std::env::var("BINDLE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/v1".to_owned());
 
     // Connect to our Bindle server
-    let bindler = bindle::client::Client::new(bindle_server.as_str())?;
+    let token = bindle::client::tokens::NoToken::default();
+    let bindler = bindle::client::Client::new(bindle_server.as_str(), token)?;
 
     // Create the invoice
     let iid = inv.bindle.id.clone();

@@ -143,8 +143,8 @@ async fn load_bindle(
         %bindle_name,
         "Loading bindle",
     );
-
-    let bindler = bindle::client::Client::new(server)?;
+    let token = bindle::client::tokens::NoToken::default();
+    let bindler = bindle::client::Client::new(server, token)?;
     let invoice = bindler.get_invoice(bindle_name).await?;
 
     // TODO: We need to load a keyring and then get it all the way here.
