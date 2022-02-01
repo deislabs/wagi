@@ -80,22 +80,30 @@ pub fn prepare_stdio_streams(
     })
 }
 
-pub fn new_store_and_engine(
-    cache_config_path: &Path,
-    ctx: WasiCtx,
-) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
+
+lazy_static::lazy_static!{
+    /// The globally scoped engine.
+    /// 
+    /// A module cannot be executed using different "engines". So we need
+    /// just one engine so that we can cache the modules.
+    pub static ref ENGINE: Engine = Engine::new(&create_config()).unwrap();
+}
+
+/// Create a default config
+fn create_config() -> Config {
     let mut config = Config::default();
 
     // Enable multi memory and module linking support.
     config.wasm_multi_memory(true);
     config.wasm_module_linking(true);
+    config
+}
 
-    if let Ok(p) = std::fs::canonicalize(cache_config_path) {
-        config.cache_config_load(p)?;
-    };
-
-    let engine = Engine::new(&config)?;
-    Ok((Store::new(&engine, ctx), engine))
+pub fn new_store_and_engine(
+    _cache_config_path: &Path,
+    ctx: WasiCtx,
+) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
+    Ok((Store::new(&ENGINE, ctx), ENGINE.clone()))
 }
 
 pub fn prepare_wasm_instance(
@@ -112,7 +120,7 @@ pub fn prepare_wasm_instance(
     link_options.apply_to(&mut linker)?;
 
     debug!("loading module from store");
-    let module = wasm_module_source.load_module(&store)?;
+    let module = wasm_module_source.load_module(&engine)?;
     debug!("instantiating module in linker");
     let instance = linker.instantiate(&mut store, &module)?;
     Ok((store, instance))

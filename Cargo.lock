@@ -2723,6 +2723,7 @@ dependencies = [
  "futures",
  "hyper",
  "indexmap",
+ "lazy_static",
  "oci-distribution",
  "serde",
  "sha2",
