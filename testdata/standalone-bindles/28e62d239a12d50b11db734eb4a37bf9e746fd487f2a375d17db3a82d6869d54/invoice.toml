@@ -2,7 +2,7 @@ bindleVersion = '1.0.0'
 
 [bindle]
 name = 'itowlson/toast-on-demand'
-version = '0.1.0-ivan-2021.09.24.17.06.16.069'
+version = '0.1.0-ivan-20210924170616069'
 authors = ['itowlson']
 
 [[parcel]]

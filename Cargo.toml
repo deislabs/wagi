@@ -8,7 +8,7 @@
     anyhow                          = "1.0"
     async-stream                    = "0.3"
     async-trait                     = "0.1"
-    bindle                          = { version = "0.3", default-features = false, features = ["client", "server", "caching"] }
+    bindle                          = { version = "0.8.0", default-features = false, features = ["client", "server", "caching"] }
     cap-std                         = "^0.22"
     clap                            = "2.33.3"
     docker_credential               = "1.0.1"
