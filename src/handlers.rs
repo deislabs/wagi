@@ -16,7 +16,7 @@ use crate::dispatcher::RoutePattern;
 use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::wasm_module::WasmModuleSource;
+use crate::wasm_module::CompiledWasmModule;
 use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
@@ -27,7 +27,7 @@ pub enum RouteHandler {
 
 #[derive(Clone, Debug)]
 pub struct WasmRouteHandler {
-    pub wasm_module_source: WasmModuleSource,
+    pub wasm_module_source: CompiledWasmModule,
     pub wasm_module_name: String,
     pub entrypoint: String,
     pub volumes: HashMap<String, String>,
@@ -60,7 +60,7 @@ impl WasmRouteHandler {
 
         let ctx = self.build_wasi_context_for_request(req, headers, redirects.streams)?;
 
-        let (store, instance) = self.prepare_wasm_instance(global_context, ctx)?;
+        let (store, instance) = self.prepare_wasm_instance(ctx)?;
 
         // Drop manually to get instantiation time
         drop(startup_span);
@@ -103,11 +103,11 @@ impl WasmRouteHandler {
         Ok(ctx)
     }
 
-    fn prepare_wasm_instance(&self, global_context: &RequestGlobalContext, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
+    fn prepare_wasm_instance(&self,  ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
         debug!("Preparing Wasm instance.");
         let link_options = WasmLinkOptions::default()
             .with_http(self.allowed_hosts.clone(), self.http_max_concurrency);
-        prepare_wasm_instance(global_context, ctx, &self.wasm_module_source, link_options)
+        prepare_wasm_instance(ctx, &self.wasm_module_source, link_options)
     }
 }
 

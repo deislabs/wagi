@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use wasi_common::pipe::{ReadPipe, WritePipe};
@@ -8,7 +7,7 @@ use wasmtime_wasi::*;
 use tracing::debug;
 
 use crate::request::RequestGlobalContext;
-use crate::wasm_module::WasmModuleSource;
+use crate::wasm_module::CompiledWasmModule;
 
 const STDERR_FILE: &str = "module.stderr";
 
@@ -80,39 +79,28 @@ pub fn prepare_stdio_streams(
     })
 }
 
-pub fn new_store_and_engine(
-    cache_config_path: &Path,
+
+pub fn new_store(
     ctx: WasiCtx,
-) -> Result<(Store<WasiCtx>, Engine), anyhow::Error> {
-    let mut config = Config::default();
-
-    // Enable multi memory and module linking support.
-    config.wasm_multi_memory(true);
-    config.wasm_module_linking(true);
-
-    if let Ok(p) = std::fs::canonicalize(cache_config_path) {
-        config.cache_config_load(p)?;
-    };
-
-    let engine = Engine::new(&config)?;
-    Ok((Store::new(&engine, ctx), engine))
+    engine: &Engine
+) -> Result<Store<WasiCtx>, anyhow::Error> {
+    Ok(Store::new(engine, ctx))
 }
 
 pub fn prepare_wasm_instance(
-    global_context: &RequestGlobalContext,
     ctx: WasiCtx,
-    wasm_module_source: &WasmModuleSource,
+    wasm_module: &CompiledWasmModule,
     link_options: WasmLinkOptions,
 ) -> Result<(Store<WasiCtx>, Instance), Error> {
-    debug!("Creating store, engine, and linker.");
-    let (mut store, engine) = new_store_and_engine(&global_context.cache_config_path, ctx)?;
+    debug!("Cloning module object");
+    let (module, engine) = match wasm_module { CompiledWasmModule::Object(m, e) => (m.clone(), e.clone()) };
+    let mut store = new_store(ctx, &engine)?;
+
+    debug!("Configuring linker");
     let mut linker = Linker::new(&engine);
     wasmtime_wasi::add_to_linker(&mut linker, |cx| cx)?;
-
     link_options.apply_to(&mut linker)?;
 
-    debug!("loading module from store");
-    let module = wasm_module_source.load_module(&store)?;
     debug!("instantiating module in linker");
     let instance = linker.instantiate(&mut store, &module)?;
     Ok((store, instance))

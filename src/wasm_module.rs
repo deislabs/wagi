@@ -2,27 +2,18 @@ use std::{fmt::Debug, sync::{Arc, RwLock}};
 
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
-use wasmtime_wasi::*;
 
 // In future this might be pre-instantiated or something like that, so we will
 // just abstract it to be safe.
 #[derive(Clone)]
-pub enum WasmModuleSource {
-    Blob(Arc<Vec<u8>>),
+pub enum CompiledWasmModule {
+    Object(Module, Engine)
 }
 
-impl WasmModuleSource {
-    pub fn load_module(&self, store: &Store<WasiCtx>) -> anyhow::Result<wasmtime::Module> {
-        match self {
-            Self::Blob(bytes) => wasmtime::Module::new(store.engine(), &**bytes),
-        }
-    }
-}
-
-impl Debug for WasmModuleSource {
+impl Debug for CompiledWasmModule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Blob(v) => f.write_fmt(format_args!("Blob(length={})", v.len())),
+            Self::Object(m, _) => f.write_fmt(format_args!("Object(Module={:?})", m.name())),
         }
     }
 }
