@@ -86,14 +86,14 @@ impl RoutingTableEntry {
     }
 
     fn build_from_handler_config_entry(source: &WasmHandlerConfigurationEntry) -> Option<anyhow::Result<RoutingTableEntry>> {
-        let route_pattern = RoutePattern::parse(&source.route);
+        let route_pattern = RoutePattern::parse(&source.info.route);
         let wasm_route_handler = WasmRouteHandler {
             wasm_module_source: source.module.clone(),
-            wasm_module_name: source.name.clone(),
-            entrypoint: source.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-            volumes: source.volume_mounts.clone(),
-            allowed_hosts: source.allowed_hosts.clone(),
-            http_max_concurrency: source.http_max_concurrency,
+            wasm_module_name: source.info.name.clone(),
+            entrypoint: source.info.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
+            volumes: source.info.volume_mounts.clone(),
+            allowed_hosts: source.info.allowed_hosts.clone(),
+            http_max_concurrency: source.info.http_max_concurrency,
         };
         let handler_info = RouteHandler::Wasm(wasm_route_handler);
 

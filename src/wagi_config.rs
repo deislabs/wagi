@@ -69,29 +69,36 @@ pub type WasmHandlerConfiguration = LoadedHandlerConfigurationImpl<crate::wasm_m
 pub type LoadedHandlerConfigurationEntry = LoadedHandlerConfigurationEntryImpl<std::sync::Arc<Vec<u8>>>;
 pub type WasmHandlerConfigurationEntry = LoadedHandlerConfigurationEntryImpl<crate::wasm_module::WasmModuleSource>;
 
+// TODO: consider replacing these functions with Into implementations
 impl LoadedHandlerConfigurationEntry {
     fn from_loaded_module_map_entry(lmmce: Loaded<ModuleMapConfigurationEntry>) -> Self {
-        Self {
+        let info = HandlerInfo {
             name: lmmce.metadata.module,
             route: lmmce.metadata.route,
-            module: lmmce.content,
             entrypoint: lmmce.metadata.entrypoint,
             allowed_hosts: lmmce.metadata.allowed_hosts,
             http_max_concurrency: lmmce.metadata.http_max_concurrency,
             volume_mounts: lmmce.metadata.volumes.unwrap_or_default(),
+        };
+        Self {
+            info,
+            module: lmmce.content,
         }
     }
 
     fn from_loaded_bindle_handler(whib: (WagiHandlerInfo, crate::emplacer::Bits)) -> Self {
         let (whi, bits) = whib;
-        Self {
+        let info = HandlerInfo {
             name: whi.parcel.label.name,
             route: whi.route,
-            module: bits.wasm_module,
             entrypoint: whi.entrypoint,
             allowed_hosts: whi.allowed_hosts,
             http_max_concurrency: None,
             volume_mounts: bits.volume_mounts,
+        };
+        Self {
+            info,
+            module: bits.wasm_module,
         }
     }
 }
@@ -104,7 +111,7 @@ pub enum PreHandlerConfiguration {
 impl WagiConfiguration {
     // TODO: we might need to do some renaming here to reflect that the source
     // may include non-handler roles in future
-    pub async fn read_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<HandlerConfiguration> {
+    async fn read_handler_configuration(pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<HandlerConfiguration> {
         match pre_handler_config {
             PreHandlerConfiguration::ModuleMapFile(path) =>
                 read_module_map_configuration(&path).await.map(HandlerConfiguration::ModuleMapFile),
@@ -114,7 +121,7 @@ impl WagiConfiguration {
     }
 
     pub async fn load_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
-        let handler_configuration_metadata = self.read_handler_configuration(pre_handler_config).await?;
+        let handler_configuration_metadata = Self::read_handler_configuration(pre_handler_config).await?;
 
         match handler_configuration_metadata {
             HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
