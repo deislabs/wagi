@@ -11,14 +11,11 @@ use tracing::{instrument};
 use wasmtime::{Engine, Config};
 
 use crate::dynamic_route::{DynamicRoutes, interpret_routes};
-use crate::emplacer::Bits;
 use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
-use crate::module_loader::Loaded;
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::bindle_util::{WagiHandlerInfo};
-use crate::wagi_config::{LoadedHandlerConfiguration, ModuleMapConfigurationEntry};
+use crate::wagi_config::{LoadedHandlerConfiguration2, LoadedHandlerConfigurationEntry};
 use crate::wasm_module::CompiledWasmModule;
 use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present, WasmLinkOptions};
 
@@ -113,40 +110,18 @@ impl RoutingTableEntry {
         Ok(CompiledWasmModule::Object(module, engine))
     }
 
-    fn build_from_modules_toml(source: &Loaded<ModuleMapConfigurationEntry>, global_context: &RequestGlobalContext,) -> anyhow::Result<RoutingTableEntry> {
-        let route_pattern = RoutePattern::parse(&source.metadata.route);
-        
-        let wasm_module = RoutingTableEntry::compile_module(source.content.clone(), &global_context.cache_config_path)?;
-        let wasm_route_handler = WasmRouteHandler {
-            wasm_module_source: wasm_module,
-            wasm_module_name: source.metadata.module.clone(),
-            entrypoint: source.metadata.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-            volumes: source.metadata.volumes.clone().unwrap_or_default(),
-            allowed_hosts: source.metadata.allowed_hosts.clone(),
-            http_max_concurrency: source.metadata.http_max_concurrency,
-        };
-        let handler_info = RouteHandler::Wasm(wasm_route_handler);
-
-        Ok(Self {
-            route_pattern,
-            handler_info,
-        })
-    }
-
-    fn build_from_bindle_entry(source: &(WagiHandlerInfo, Bits), global_context: &RequestGlobalContext,) -> Option<anyhow::Result<RoutingTableEntry>> {
-        let (wagi_handler, bits) = source;
-
-        let route_pattern = RoutePattern::parse(&wagi_handler.route);
-        match RoutingTableEntry::compile_module(bits.wasm_module.clone(), &global_context.cache_config_path) {
+    fn build_from_handler_config_entry(source: &LoadedHandlerConfigurationEntry, global_context: &RequestGlobalContext,) -> Option<anyhow::Result<RoutingTableEntry>> {
+        let route_pattern = RoutePattern::parse(&source.route);
+        match RoutingTableEntry::compile_module(source.module_bytes.clone(), &global_context.cache_config_path) {
             Err(e) => Some(Err(e)), // Not clear what we are supposed to return here.
             Ok(wasm_module) => {
                 let wasm_route_handler = WasmRouteHandler {
                     wasm_module_source: wasm_module,
-                    wasm_module_name: wagi_handler.parcel.label.name.clone(),
-                    entrypoint: wagi_handler.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-                    volumes: bits.volume_mounts.clone(),
-                    allowed_hosts: wagi_handler.allowed_hosts.clone(),
-                    http_max_concurrency: None,
+                    wasm_module_name: source.name.clone(),
+                    entrypoint: source.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
+                    volumes: source.volume_mounts.clone(),
+                    allowed_hosts: source.allowed_hosts.clone(),
+                    http_max_concurrency: source.http_max_concurrency,
                 };
                 let handler_info = RouteHandler::Wasm(wasm_route_handler);
 
@@ -288,13 +263,8 @@ fn concat_no_duplicate_slash(prefix: &str, suffix: &str) -> String {
 }
 
 impl RoutingTable {
-    pub fn build(source: &LoadedHandlerConfiguration, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
-        let user_entries = match source {
-            LoadedHandlerConfiguration::ModuleMapFile(module_map_entries) =>
-                Self::build_from_modules_toml(module_map_entries, &global_context),
-            LoadedHandlerConfiguration::Bindle(bindle_entries) =>
-                Self::build_from_bindle_entries(bindle_entries, &global_context),
-        }?;
+    pub fn build(source: &LoadedHandlerConfiguration2, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
+        let user_entries = Self::build_from_handler_config_entries(&source.entries, &global_context)?;
         let full_user_entries = augment_dynamic_routes(user_entries, &global_context)?;
 
         let built_in_entries = Self::inbuilt_patterns();
@@ -306,18 +276,10 @@ impl RoutingTable {
         })
     }
 
-    fn build_from_modules_toml(module_map_entries: &[Loaded<ModuleMapConfigurationEntry>], global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
-        // TODO: look for `_routes` function
-        module_map_entries
+    fn build_from_handler_config_entries(entries: &[LoadedHandlerConfigurationEntry], global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
+        entries
             .iter()
-            .map(|e| RoutingTableEntry::build_from_modules_toml(e, global_context))
-            .collect()
-    }
-
-    fn build_from_bindle_entries(bindle_entries: &[(WagiHandlerInfo, Bits)], global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
-        bindle_entries
-            .iter()
-            .filter_map(|e| RoutingTableEntry::build_from_bindle_entry(e, global_context))
+            .filter_map(|e| RoutingTableEntry::build_from_handler_config_entry(e, global_context))
             .collect()
     }
 

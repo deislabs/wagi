@@ -67,6 +67,68 @@ pub enum LoadedHandlerConfiguration {
     Bindle(Vec<(WagiHandlerInfo, crate::emplacer::Bits)>)
 }
 
+pub struct  LoadedHandlerConfiguration2 {
+    pub entries: Vec<LoadedHandlerConfigurationEntry>,
+}
+
+pub struct LoadedHandlerConfigurationEntry {
+    pub name: String,
+    pub route: String,
+    pub module_bytes: std::sync::Arc<Vec<u8>>,  // might be able to demote to Vec<u8>
+    pub entrypoint: Option<String>,
+    pub allowed_hosts: Option<Vec<String>>,
+    pub http_max_concurrency: Option<u32>,
+    pub volume_mounts: HashMap<String, String>,
+}
+
+impl LoadedHandlerConfiguration2 {
+    pub fn from(grunky: LoadedHandlerConfiguration) -> Self {
+        match grunky {
+            LoadedHandlerConfiguration::ModuleMapFile(lmmces) =>
+                Self::from_module_map_entries(lmmces),
+            LoadedHandlerConfiguration::Bindle(whibs) =>
+                Self::from_bindle_handlers(whibs),
+        }
+    }
+
+    fn from_module_map_entries(lmmces: Vec<Loaded<ModuleMapConfigurationEntry>>) -> Self {
+        let entries = lmmces.into_iter().map(LoadedHandlerConfigurationEntry::from_loaded_module_map_entry).collect();
+        Self { entries }
+    }
+
+    fn from_bindle_handlers(whibs: Vec<(WagiHandlerInfo, crate::emplacer::Bits)>) -> Self {
+        let entries = whibs.into_iter().map(LoadedHandlerConfigurationEntry::from_loaded_bindle_handler).collect();
+        Self { entries }
+    }
+}
+
+impl LoadedHandlerConfigurationEntry {
+    fn from_loaded_module_map_entry(lmmce: Loaded<ModuleMapConfigurationEntry>) -> Self {
+        Self {
+            name: lmmce.metadata.module,
+            route: lmmce.metadata.route,
+            module_bytes: lmmce.content,
+            entrypoint: lmmce.metadata.entrypoint,
+            allowed_hosts: lmmce.metadata.allowed_hosts,
+            http_max_concurrency: lmmce.metadata.http_max_concurrency,
+            volume_mounts: lmmce.metadata.volumes.unwrap_or_default(),
+        }
+    }
+
+    fn from_loaded_bindle_handler(whib: (WagiHandlerInfo, crate::emplacer::Bits)) -> Self {
+        let (whi, bits) = whib;
+        Self {
+            name: whi.parcel.label.name,
+            route: whi.route,
+            module_bytes: bits.wasm_module,
+            entrypoint: whi.entrypoint,
+            allowed_hosts: whi.allowed_hosts,
+            http_max_concurrency: None,
+            volume_mounts: bits.volume_mounts,
+        }
+    }
+}
+
 pub enum PreHandlerConfiguration {
     ModuleMapFile(PathBuf),
     Bindle(Emplacer, Invoice),
@@ -84,15 +146,17 @@ impl WagiConfiguration {
         }
     }
 
-    pub async fn load_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+    pub async fn load_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<LoadedHandlerConfiguration2> {
         let handler_configuration_metadata = self.read_handler_configuration(pre_handler_config).await?;
 
-        match handler_configuration_metadata {
+        let grunky = match handler_configuration_metadata {
             HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
                 handlers_for_module_map(&module_map_configuration, self).await,
             HandlerConfiguration::Bindle(emplacer, invoice) =>
                 handlers_for_bindle(&invoice, &emplacer).await,
-        }
+        }?;
+
+        Ok(LoadedHandlerConfiguration2::from(grunky))
     }
 
     pub fn request_global_context(&self) -> RequestGlobalContext {
