@@ -4,7 +4,7 @@ use anyhow::Context;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, PreHandlerConfiguration, WagiConfiguration}};
+use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}, handler_loader::PreHandlerConfiguration};
 
 pub struct Emplacer {
     cache_path: PathBuf,

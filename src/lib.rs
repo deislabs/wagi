@@ -1,9 +1,10 @@
 pub(crate) mod bindle_util;
 pub mod dispatcher;
 pub(crate) mod dynamic_route;
-pub mod emplacer;
-pub mod handler_compiler;
+pub(crate) mod emplacer;
+pub(crate) mod handler_compiler;
 pub(crate) mod handler_config;
+pub mod handler_loader;
 pub(crate) mod handlers;
 mod http_util;
 pub (crate) mod module_loader;
@@ -23,7 +24,7 @@ mod upstream;
 mod test {
     use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-    use crate::{dispatcher::RoutingTable, wagi_app, handler_compiler::compile_all};
+    use crate::{dispatcher::RoutingTable, wagi_app};
 
     fn test_data_dir() -> PathBuf {
         let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -96,14 +97,21 @@ mod test {
         let configuration = wagi_app::parse_configuration_from(matches)
             .expect("Fake command line was not valid");
 
-        let emplacer = crate::emplacer::Emplacer::new(&configuration).await
-            .expect("Failed to create emplacer");
-        let pre_handler_config = emplacer.emplace_all().await
+        // let emplacer = crate::emplacer::Emplacer::new(&configuration).await
+        //     .expect("Failed to create emplacer");
+        // let pre_handler_config = emplacer.emplace_all().await
+        //     .expect("Failed to emplace bindle data");
+        // let uncompiled_handlers = configuration.load_handler_configuration(pre_handler_config).await
+        //     .expect("Failed to load handlers");
+        // let handlers = compile_all(uncompiled_handlers, configuration.wasm_compilation_settings())
+        //     .expect("Failed to compile Wasm modules");
+        let emplaced_handlers = crate::handler_loader::emplace(&configuration /* configuration.handlers, configuration.placement_settings() */).await
             .expect("Failed to emplace bindle data");
-        let uncompiled_handlers = configuration.load_handler_configuration(pre_handler_config).await
+        let loaded_handlers = crate::handler_loader::load(emplaced_handlers, &configuration /* .loader_settings() */).await
             .expect("Failed to load handlers");
-        let handlers = compile_all(uncompiled_handlers, configuration.wasm_compilation_settings())
+        let handlers = crate::handler_loader::compile(loaded_handlers, configuration.wasm_compilation_settings())
             .expect("Failed to compile Wasm modules");
+
         crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
             .expect("Failed to build routing table")
     }
@@ -131,13 +139,19 @@ mod test {
         let configuration = wagi_app::parse_configuration_from(matches)
             .expect("Fake command line was not valid");
 
-        let emplacer = crate::emplacer::Emplacer::new(&configuration).await
-            .expect("Failed to create emplacer");
-        let pre_handler_config = emplacer.emplace_all().await
+        // let emplacer = crate::emplacer::Emplacer::new(&configuration).await
+        //     .expect("Failed to create emplacer");
+        // let pre_handler_config = emplacer.emplace_all().await
+        //     .expect("Failed to emplace bindle data");
+        // let uncompiled_handlers = configuration.load_handler_configuration(pre_handler_config).await
+        //     .expect("Failed to load handlers");
+        // let handlers = compile_all(uncompiled_handlers, configuration.wasm_compilation_settings())
+        //     .expect("Failed to compile Wasm modules");
+        let emplaced_handlers = crate::handler_loader::emplace(&configuration /* configuration.handlers, configuration.placement_settings() */).await
             .expect("Failed to emplace bindle data");
-        let uncompiled_handlers = configuration.load_handler_configuration(pre_handler_config).await
+        let loaded_handlers = crate::handler_loader::load(emplaced_handlers, &configuration /* .loader_settings() */).await
             .expect("Failed to load handlers");
-        let handlers = compile_all(uncompiled_handlers, configuration.wasm_compilation_settings())
+        let handlers = crate::handler_loader::compile(loaded_handlers, configuration.wasm_compilation_settings())
             .expect("Failed to compile Wasm modules");
         crate::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())
             .expect("Failed to build routing table")

@@ -1,4 +1,4 @@
-use wagi::{wagi_app, wagi_server::WagiServer, handler_compiler::compile_all};
+use wagi::{wagi_app, wagi_server::WagiServer};
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
@@ -6,11 +6,10 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     let configuration = wagi_app::parse_command_line()?;
 
-    let emplacer = wagi::emplacer::Emplacer::new(&configuration).await?;
-    let pre_handler_config = emplacer.emplace_all().await?;
-
-    let uncompiled_handlers = configuration.load_handler_configuration(pre_handler_config).await?;
-    let handlers = compile_all(uncompiled_handlers, configuration.wasm_compilation_settings())?;
+    // TODO: this can all go into lib.rs as "build_routing_table"
+    let handlers = wagi::handler_loader::load_handlers(&configuration).await?;
+    // Possibly this should go into a 'routing table builder' so we cleanly separate
+    // prep-time and serve-time responsibilities.
     let routing_table = wagi::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())?;
 
     let server = WagiServer::new(&configuration, routing_table).await?;

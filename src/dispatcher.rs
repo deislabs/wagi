@@ -12,7 +12,7 @@ use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::wagi_config::{WasmHandlerConfigurationEntry, WasmHandlerConfiguration};
+use crate::handler_loader::{WasmHandlerConfigurationEntry, WasmHandlerConfiguration};
 use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present, WasmLinkOptions};
 
 #[derive(Clone, Debug)]

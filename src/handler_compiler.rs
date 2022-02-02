@@ -1,6 +1,6 @@
 use std::path::{PathBuf};
 
-use crate::wagi_config::{LoadedHandlerConfiguration, WasmHandlerConfiguration};
+use crate::handler_loader::{LoadedHandlerConfiguration, WasmHandlerConfiguration};
 
 pub struct WasmCompilationSettings {
     pub cache_config_path: PathBuf,
