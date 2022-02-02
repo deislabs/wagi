@@ -16,7 +16,7 @@ use crate::http_util::{not_found};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wagi_config::{LoadedHandlerConfiguration, LoadedHandlerConfigurationEntry};
-use crate::wasm_module::CompiledWasmModule;
+use crate::wasm_module::WasmModuleSource;
 use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
@@ -104,10 +104,10 @@ impl RoutingTableEntry {
         Engine::new(&config)
     }
 
-    fn compile_module(data: Arc<Vec<u8>>, cache_config_path: &Path) -> anyhow::Result<CompiledWasmModule> {
+    fn compile_module(data: Arc<Vec<u8>>, cache_config_path: &Path) -> anyhow::Result<WasmModuleSource> {
         let engine = RoutingTableEntry::new_engine(cache_config_path)?;
         let module = wasmtime::Module::new(&engine, &**data)?;
-        Ok(CompiledWasmModule::Object(module, engine))
+        Ok(WasmModuleSource::Compiled(module, engine))
     }
 
     fn build_from_handler_config_entry(source: &LoadedHandlerConfigurationEntry, global_context: &RequestGlobalContext,) -> Option<anyhow::Result<RoutingTableEntry>> {

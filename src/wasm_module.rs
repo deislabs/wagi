@@ -6,14 +6,23 @@ use wasmtime::*;
 // In future this might be pre-instantiated or something like that, so we will
 // just abstract it to be safe.
 #[derive(Clone)]
-pub enum CompiledWasmModule {
-    Object(Module, Engine)
+pub enum WasmModuleSource {
+    Compiled(Module, Engine)
 }
 
-impl Debug for CompiledWasmModule {
+impl Debug for WasmModuleSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Object(m, _) => f.write_fmt(format_args!("Object(Module={:?})", m.name())),
+            Self::Compiled(m, _) => f.write_fmt(format_args!("Compiled(Module={:?})", m.name())),
+        }
+    }
+}
+
+impl WasmModuleSource {
+    pub fn get_compiled_module(&self) -> anyhow::Result<(Module, Engine)> {
+        match self {
+            Self::Compiled(m, e) =>
+                Ok((m.clone(), e.clone()))
         }
     }
 }
