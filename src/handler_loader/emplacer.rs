@@ -1,10 +1,24 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 
 use anyhow::Context;
+use bindle::Invoice;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}, handler_loader::PreHandlerConfiguration};
+use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}};
+
+pub enum PreHandlerConfiguration {
+    ModuleMapFile(PathBuf),
+    Bindle(Emplacer, Invoice),
+}
+
+pub async fn emplace(configuration: &WagiConfiguration) -> anyhow::Result<PreHandlerConfiguration> {
+    let emplacer = Emplacer::new(&configuration).await
+        .with_context(|| "Failed to create emplacer")?;
+    let pre_handler_config = emplacer.emplace_all().await
+        .with_context(|| "Failed to emplace bindle data")?;
+    Ok(pre_handler_config)
+}
 
 pub struct Emplacer {
     cache_path: PathBuf,
@@ -17,7 +31,7 @@ pub struct Bits {
 }
 
 impl Emplacer {
-    pub async fn new(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
+    async fn new(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
         Self::new_from_settings(
             &configuration.asset_cache_dir,
             &configuration.handlers
@@ -62,12 +76,13 @@ impl Emplacer {
         })
     }
 
-    // TODO: do not like having bindle specifics here
-    pub async fn read_invoice(&self, invoice_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
-        let toml_text = tokio::fs::read(self.invoice_path(invoice_id)).await?;
-        let invoice = toml::from_slice(&toml_text)?;
-        Ok(invoice)
-    }
+    // TODO: appears to be dead code?
+    // // TODO: do not like having bindle specifics here
+    // pub async fn read_invoice(&self, invoice_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
+    //     let toml_text = tokio::fs::read(self.invoice_path(invoice_id)).await?;
+    //     let invoice = toml::from_slice(&toml_text)?;
+    //     Ok(invoice)
+    // }
 
     async fn emplace_standalone_bindle(self, bindle_base_dir: &Path, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
         let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await
