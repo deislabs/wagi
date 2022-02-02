@@ -1,6 +1,4 @@
 use std::net::SocketAddr;
-use std::path::Path;
-use std::sync::Arc;
 
 use hyper::{
     http::request::Parts,
@@ -8,15 +6,13 @@ use hyper::{
 };
 use sha2::{Digest, Sha256};
 use tracing::{instrument};
-use wasmtime::{Engine, Config};
 
 use crate::dynamic_route::{DynamicRoutes, interpret_routes};
 use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::wagi_config::{LoadedHandlerConfiguration, LoadedHandlerConfigurationEntry};
-use crate::wasm_module::WasmModuleSource;
+use crate::wagi_config::{WasmHandlerConfigurationEntry, WasmHandlerConfiguration};
 use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
@@ -89,48 +85,22 @@ impl RoutingTableEntry {
         self.route_pattern.is_match(uri_fragment)
     }
 
-    /// Create a new Wasm Engine and configure it.
-    fn new_engine(cache_config_path: &Path) -> anyhow::Result<Engine> {
-        let mut config = Config::default();
-
-        // Enable multi memory and module linking support.
-        config.wasm_multi_memory(true);
-        config.wasm_module_linking(true);
-
-        if let Ok(p) = std::fs::canonicalize(cache_config_path) {
-            config.cache_config_load(p)?;
-        };
-
-        Engine::new(&config)
-    }
-
-    fn compile_module(data: Arc<Vec<u8>>, cache_config_path: &Path) -> anyhow::Result<WasmModuleSource> {
-        let engine = RoutingTableEntry::new_engine(cache_config_path)?;
-        let module = wasmtime::Module::new(&engine, &**data)?;
-        Ok(WasmModuleSource::Compiled(module, engine))
-    }
-
-    fn build_from_handler_config_entry(source: &LoadedHandlerConfigurationEntry, global_context: &RequestGlobalContext,) -> Option<anyhow::Result<RoutingTableEntry>> {
+    fn build_from_handler_config_entry(source: &WasmHandlerConfigurationEntry) -> Option<anyhow::Result<RoutingTableEntry>> {
         let route_pattern = RoutePattern::parse(&source.route);
-        match RoutingTableEntry::compile_module(source.module_bytes.clone(), &global_context.cache_config_path) {
-            Err(e) => Some(Err(e)), // Not clear what we are supposed to return here.
-            Ok(wasm_module) => {
-                let wasm_route_handler = WasmRouteHandler {
-                    wasm_module_source: wasm_module,
-                    wasm_module_name: source.name.clone(),
-                    entrypoint: source.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
-                    volumes: source.volume_mounts.clone(),
-                    allowed_hosts: source.allowed_hosts.clone(),
-                    http_max_concurrency: source.http_max_concurrency,
-                };
-                let handler_info = RouteHandler::Wasm(wasm_route_handler);
+        let wasm_route_handler = WasmRouteHandler {
+            wasm_module_source: source.module.clone(),
+            wasm_module_name: source.name.clone(),
+            entrypoint: source.entrypoint.clone().unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_owned()),
+            volumes: source.volume_mounts.clone(),
+            allowed_hosts: source.allowed_hosts.clone(),
+            http_max_concurrency: source.http_max_concurrency,
+        };
+        let handler_info = RouteHandler::Wasm(wasm_route_handler);
 
-                Some(Ok(Self {
-                    route_pattern,
-                    handler_info,
-                }))
-            }
-        }
+        Some(Ok(Self {
+            route_pattern,
+            handler_info,
+        }))
     }
 
     fn inbuilt(path: &str, handler: RouteHandler) -> Self {
@@ -263,8 +233,8 @@ fn concat_no_duplicate_slash(prefix: &str, suffix: &str) -> String {
 }
 
 impl RoutingTable {
-    pub fn build(source: &LoadedHandlerConfiguration, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
-        let user_entries = Self::build_from_handler_config_entries(&source.entries, &global_context)?;
+    pub fn build(source: &WasmHandlerConfiguration, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
+        let user_entries = Self::build_from_handler_config_entries(&source.entries)?;
         let full_user_entries = augment_dynamic_routes(user_entries, &global_context)?;
 
         let built_in_entries = Self::inbuilt_patterns();
@@ -276,10 +246,10 @@ impl RoutingTable {
         })
     }
 
-    fn build_from_handler_config_entries(entries: &[LoadedHandlerConfigurationEntry], global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    fn build_from_handler_config_entries(entries: &[WasmHandlerConfigurationEntry]) -> anyhow::Result<Vec<RoutingTableEntry>> {
         entries
             .iter()
-            .filter_map(|e| RoutingTableEntry::build_from_handler_config_entry(e, global_context))
+            .filter_map(|e| RoutingTableEntry::build_from_handler_config_entry(e))
             .collect()
     }
 

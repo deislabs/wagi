@@ -4,7 +4,8 @@ use anyhow::Context;
 use bindle::Invoice;
 use serde::Deserialize;
 
-use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, emplacer::{Emplacer}, module_loader::{Loaded}, request::RequestGlobalContext};
+use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, emplacer::{Emplacer}, module_loader::{Loaded}, request::RequestGlobalContext, handler_compiler::WasmCompilationSettings};
+use crate::handler_config::*;
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {
@@ -62,26 +63,18 @@ pub enum HandlerConfiguration {
     Bindle(Emplacer, Invoice),
 }
 
-pub struct LoadedHandlerConfiguration {
-    pub entries: Vec<LoadedHandlerConfigurationEntry>,
-}
+pub type LoadedHandlerConfiguration = LoadedHandlerConfigurationImpl<std::sync::Arc<Vec<u8>>>;
+pub type WasmHandlerConfiguration = LoadedHandlerConfigurationImpl<crate::wasm_module::WasmModuleSource>;
 
-pub struct LoadedHandlerConfigurationEntry {
-    pub name: String,
-    pub route: String,
-    pub module_bytes: std::sync::Arc<Vec<u8>>,  // might be able to demote to Vec<u8>
-    pub entrypoint: Option<String>,
-    pub allowed_hosts: Option<Vec<String>>,
-    pub http_max_concurrency: Option<u32>,
-    pub volume_mounts: HashMap<String, String>,
-}
+pub type LoadedHandlerConfigurationEntry = LoadedHandlerConfigurationEntryImpl<std::sync::Arc<Vec<u8>>>;
+pub type WasmHandlerConfigurationEntry = LoadedHandlerConfigurationEntryImpl<crate::wasm_module::WasmModuleSource>;
 
 impl LoadedHandlerConfigurationEntry {
     fn from_loaded_module_map_entry(lmmce: Loaded<ModuleMapConfigurationEntry>) -> Self {
         Self {
             name: lmmce.metadata.module,
             route: lmmce.metadata.route,
-            module_bytes: lmmce.content,
+            module: lmmce.content,
             entrypoint: lmmce.metadata.entrypoint,
             allowed_hosts: lmmce.metadata.allowed_hosts,
             http_max_concurrency: lmmce.metadata.http_max_concurrency,
@@ -94,7 +87,7 @@ impl LoadedHandlerConfigurationEntry {
         Self {
             name: whi.parcel.label.name,
             route: whi.route,
-            module_bytes: bits.wasm_module,
+            module: bits.wasm_module,
             entrypoint: whi.entrypoint,
             allowed_hosts: whi.allowed_hosts,
             http_max_concurrency: None,
@@ -133,12 +126,16 @@ impl WagiConfiguration {
 
     pub fn request_global_context(&self) -> RequestGlobalContext {
         RequestGlobalContext {
-            cache_config_path: self.wasm_cache_config_file.clone(),
-            module_cache_dir: self.asset_cache_dir.clone(),
             base_log_dir: self.log_dir.clone(),
             default_host: self.http_configuration.default_hostname.to_owned(),
             use_tls: self.http_configuration.tls.is_some(),
             global_env_vars: self.env_vars.clone(),
+        }
+    }
+
+    pub fn wasm_compilation_settings(&self) -> WasmCompilationSettings {
+        WasmCompilationSettings {
+            cache_config_path: self.wasm_cache_config_file.clone(),
         }
     }
 }

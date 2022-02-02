@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::{Arc, RwLock}};
+use std::{fmt::Debug, sync::{Arc, RwLock}, path::Path};
 
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;
@@ -19,6 +19,27 @@ impl Debug for WasmModuleSource {
 }
 
 impl WasmModuleSource {
+    /// Create a new Wasm Engine and configure it.
+    fn new_engine(cache_config_path: &Path) -> anyhow::Result<Engine> {
+        let mut config = Config::default();
+
+        // Enable multi memory and module linking support.
+        config.wasm_multi_memory(true);
+        config.wasm_module_linking(true);
+
+        if let Ok(p) = std::fs::canonicalize(cache_config_path) {
+            config.cache_config_load(p)?;
+        };
+
+        Engine::new(&config)
+    }
+
+    pub fn from_module_bytes(data: Arc<Vec<u8>>, cache_config_path: &Path) -> anyhow::Result<WasmModuleSource> {
+        let engine = Self::new_engine(cache_config_path)?;
+        let module = wasmtime::Module::new(&engine, &**data)?;
+        Ok(WasmModuleSource::Compiled(module, engine))
+    }
+
     pub fn get_compiled_module(&self) -> anyhow::Result<(Module, Engine)> {
         match self {
             Self::Compiled(m, e) =>

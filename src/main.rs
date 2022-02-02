@@ -1,4 +1,4 @@
-use wagi::{wagi_app, wagi_server::WagiServer};
+use wagi::{wagi_app, wagi_server::WagiServer, handler_compiler::compile_all};
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
@@ -9,7 +9,8 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let emplacer = wagi::emplacer::Emplacer::new(&configuration).await?;
     let pre_handler_config = emplacer.emplace_all().await?;
 
-    let handlers = configuration.load_handler_configuration(pre_handler_config).await?;
+    let uncompiled_handlers = configuration.load_handler_configuration(pre_handler_config).await?;
+    let handlers = compile_all(uncompiled_handlers, configuration.wasm_compilation_settings())?;
     let routing_table = wagi::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())?;
 
     let server = WagiServer::new(&configuration, routing_table).await?;
