@@ -1,6 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, path::{PathBuf}};
 
-use crate::{request::RequestGlobalContext, handler_compiler::WasmCompilationSettings};
+use crate::{request::RequestGlobalContext, handler_loader::WasmCompilationSettings};
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {

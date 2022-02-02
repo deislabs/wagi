@@ -5,10 +5,16 @@ use serde::Deserialize;
 
 use crate::{wagi_config::WagiConfiguration, bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, module_loader::Loaded};
 
-use super::{emplacer::{PreHandlerConfiguration, Emplacer}, LoadedHandlerConfigurationImpl, LoadedHandlerConfigurationEntryImpl, HandlerInfo};
+use super::{emplacer::{PreHandlerConfiguration, Emplacer}, HandlerInfo};
 
-pub type LoadedHandlerConfiguration = LoadedHandlerConfigurationImpl<std::sync::Arc<Vec<u8>>>;
-pub type LoadedHandlerConfigurationEntry = LoadedHandlerConfigurationEntryImpl<std::sync::Arc<Vec<u8>>>;
+pub struct LoadedHandlerConfiguration {
+    pub entries: Vec<LoadedHandlerConfigurationEntry>,
+}
+
+pub struct LoadedHandlerConfigurationEntry {
+    pub info: HandlerInfo,
+    pub module: std::sync::Arc<Vec<u8>>,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ModuleMapConfiguration {
