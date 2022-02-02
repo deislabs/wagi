@@ -15,7 +15,7 @@ use crate::handlers::{RouteHandler, WasmRouteHandler};
 use crate::http_util::{not_found};
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::wagi_config::{LoadedHandlerConfiguration2, LoadedHandlerConfigurationEntry};
+use crate::wagi_config::{LoadedHandlerConfiguration, LoadedHandlerConfigurationEntry};
 use crate::wasm_module::CompiledWasmModule;
 use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present, WasmLinkOptions};
 
@@ -263,7 +263,7 @@ fn concat_no_duplicate_slash(prefix: &str, suffix: &str) -> String {
 }
 
 impl RoutingTable {
-    pub fn build(source: &LoadedHandlerConfiguration2, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
+    pub fn build(source: &LoadedHandlerConfiguration, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
         let user_entries = Self::build_from_handler_config_entries(&source.entries, &global_context)?;
         let full_user_entries = augment_dynamic_routes(user_entries, &global_context)?;
 

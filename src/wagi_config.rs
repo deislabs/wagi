@@ -62,12 +62,7 @@ pub enum HandlerConfiguration {
     Bindle(Emplacer, Invoice),
 }
 
-pub enum LoadedHandlerConfiguration {
-    ModuleMapFile(Vec<Loaded<ModuleMapConfigurationEntry>>),
-    Bindle(Vec<(WagiHandlerInfo, crate::emplacer::Bits)>)
-}
-
-pub struct  LoadedHandlerConfiguration2 {
+pub struct LoadedHandlerConfiguration {
     pub entries: Vec<LoadedHandlerConfigurationEntry>,
 }
 
@@ -79,27 +74,6 @@ pub struct LoadedHandlerConfigurationEntry {
     pub allowed_hosts: Option<Vec<String>>,
     pub http_max_concurrency: Option<u32>,
     pub volume_mounts: HashMap<String, String>,
-}
-
-impl LoadedHandlerConfiguration2 {
-    pub fn from(grunky: LoadedHandlerConfiguration) -> Self {
-        match grunky {
-            LoadedHandlerConfiguration::ModuleMapFile(lmmces) =>
-                Self::from_module_map_entries(lmmces),
-            LoadedHandlerConfiguration::Bindle(whibs) =>
-                Self::from_bindle_handlers(whibs),
-        }
-    }
-
-    fn from_module_map_entries(lmmces: Vec<Loaded<ModuleMapConfigurationEntry>>) -> Self {
-        let entries = lmmces.into_iter().map(LoadedHandlerConfigurationEntry::from_loaded_module_map_entry).collect();
-        Self { entries }
-    }
-
-    fn from_bindle_handlers(whibs: Vec<(WagiHandlerInfo, crate::emplacer::Bits)>) -> Self {
-        let entries = whibs.into_iter().map(LoadedHandlerConfigurationEntry::from_loaded_bindle_handler).collect();
-        Self { entries }
-    }
 }
 
 impl LoadedHandlerConfigurationEntry {
@@ -146,17 +120,15 @@ impl WagiConfiguration {
         }
     }
 
-    pub async fn load_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<LoadedHandlerConfiguration2> {
+    pub async fn load_handler_configuration(&self, pre_handler_config: PreHandlerConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
         let handler_configuration_metadata = self.read_handler_configuration(pre_handler_config).await?;
 
-        let grunky = match handler_configuration_metadata {
+        match handler_configuration_metadata {
             HandlerConfiguration::ModuleMapFile(module_map_configuration) =>
                 handlers_for_module_map(&module_map_configuration, self).await,
             HandlerConfiguration::Bindle(emplacer, invoice) =>
                 handlers_for_bindle(&invoice, &emplacer).await,
-        }?;
-
-        Ok(LoadedHandlerConfiguration2::from(grunky))
+        }
     }
 
     pub fn request_global_context(&self) -> RequestGlobalContext {
@@ -199,7 +171,13 @@ async fn handlers_for_module_map(module_map: &ModuleMapConfiguration, configurat
 
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
     
-    loadeds.map(LoadedHandlerConfiguration::ModuleMapFile)
+    let entries =
+        loadeds?
+        .into_iter()
+        .map(LoadedHandlerConfigurationEntry::from_loaded_module_map_entry)
+        .collect();
+
+    Ok(LoadedHandlerConfiguration { entries })
 }
 
 async fn handlers_for_bindle(invoice: &bindle::Invoice, emplacer: &Emplacer) -> anyhow::Result<LoadedHandlerConfiguration> {
@@ -210,9 +188,14 @@ async fn handlers_for_bindle(invoice: &bindle::Invoice, emplacer: &Emplacer) -> 
     let loaders = wagi_handlers.iter().map(|h| emplacer.get_bits_for(h));
     let loadeds: anyhow::Result<Vec<_>> = futures::future::join_all(loaders).await.into_iter().collect();
 
-    let bindle_entries = wagi_handlers.into_iter().zip(loadeds?.into_iter()).collect();
+    let entries =
+        wagi_handlers
+        .into_iter()
+        .zip(loadeds?.into_iter())
+        .map(LoadedHandlerConfigurationEntry::from_loaded_bindle_handler)
+        .collect();
 
-    Ok(LoadedHandlerConfiguration::Bindle(bindle_entries))
+    Ok(LoadedHandlerConfiguration { entries })
 }
 
 async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
