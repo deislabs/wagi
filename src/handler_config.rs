@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::collections::HashMap;
 
 pub struct LoadedHandlerConfigurationImpl<M> {
@@ -28,11 +29,12 @@ impl<M> LoadedHandlerConfigurationImpl<M> {
 
 impl<M> LoadedHandlerConfigurationEntryImpl<M> {
     pub fn convert_module<O>(self, compile: impl Fn(M) -> anyhow::Result<O>) -> anyhow::Result<LoadedHandlerConfigurationEntryImpl<O>> {
-        // TODO: if this fails, include the name in the error
+        let compiled_module = compile(self.module)
+            .with_context(|| format!("Error compiling Wasm module {}", &self.name))?;
         Ok(LoadedHandlerConfigurationEntryImpl {
             name: self.name,
             route: self.route,
-            module: compile(self.module)?,
+            module: compiled_module,
             entrypoint: self.entrypoint,
             allowed_hosts: self.allowed_hosts,
             http_max_concurrency: self.http_max_concurrency,
