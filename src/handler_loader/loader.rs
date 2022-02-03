@@ -3,9 +3,16 @@ use std::{collections::HashMap, path::Path};
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::{wagi_config::WagiConfiguration, bindle_util::{InvoiceUnderstander, WagiHandlerInfo}};
+use crate::{
+    bindle_util::{InvoiceUnderstander, WagiHandlerInfo},
+    wagi_config::WagiConfiguration,
+};
 
-use super::{emplacer::{EmplacedHandlerConfiguration, Emplacer}, HandlerInfo, module_loader::{self, Loaded}};
+use super::{
+    emplacer::{EmplacedHandlerConfiguration, Emplacer},
+    module_loader::{self, Loaded},
+    HandlerInfo,
+};
 
 pub struct LoadedHandlerConfiguration {
     pub entries: Vec<LoadedHandlerConfigurationEntry>,
@@ -36,7 +43,10 @@ pub struct ModuleMapConfigurationEntry {
     pub http_max_concurrency: Option<u32>,
 }
 
-pub async fn load(emplaced_handlers: EmplacedHandlerConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+pub async fn load(
+    emplaced_handlers: EmplacedHandlerConfiguration,
+    configuration: &WagiConfiguration,
+) -> anyhow::Result<LoadedHandlerConfiguration> {
     load_handler_configuration(emplaced_handlers, configuration).await
 }
 

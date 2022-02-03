@@ -4,10 +4,10 @@ use anyhow::Context;
 
 use crate::{wagi_config::WagiConfiguration, wasm_module::WasmModuleSource};
 
+mod compiler;
 mod emplacer;
 mod loader;
 mod module_loader;
-mod compiler;
 
 pub use compiler::WasmCompilationSettings;
 

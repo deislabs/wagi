@@ -1,6 +1,6 @@
-use std::{collections::HashMap, net::SocketAddr, path::{PathBuf}};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-use crate::{request::RequestGlobalContext, handler_loader::WasmCompilationSettings};
+use crate::{handler_loader::WasmCompilationSettings, request::RequestGlobalContext};
 
 #[derive(Clone, Debug)]
 pub struct WagiConfiguration {
@@ -33,7 +33,6 @@ pub struct TlsConfiguration {
 }
 
 impl WagiConfiguration {
-
     pub fn request_global_context(&self) -> RequestGlobalContext {
         RequestGlobalContext {
             base_log_dir: self.log_dir.clone(),

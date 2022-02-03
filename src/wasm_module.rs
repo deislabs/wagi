@@ -7,7 +7,7 @@ use wasmtime::*;
 // just abstract it to be safe.
 #[derive(Clone)]
 pub enum WasmModuleSource {
-    Compiled(Module, Engine)
+    Compiled(Module, Engine),
 }
 
 impl Debug for WasmModuleSource {
@@ -34,7 +34,10 @@ impl WasmModuleSource {
         Engine::new(&config)
     }
 
-    pub fn from_module_bytes(data: Arc<Vec<u8>>, cache_config_path: &Path) -> anyhow::Result<WasmModuleSource> {
+    pub fn from_module_bytes(
+        data: Arc<Vec<u8>>,
+        cache_config_path: &Path,
+    ) -> anyhow::Result<WasmModuleSource> {
         let engine = Self::new_engine(cache_config_path)?;
         let module = wasmtime::Module::new(&engine, &**data)?;
         Ok(WasmModuleSource::Compiled(module, engine))
@@ -42,8 +45,7 @@ impl WasmModuleSource {
 
     pub fn get_compiled_module(&self) -> anyhow::Result<(Module, Engine)> {
         match self {
-            Self::Compiled(m, e) =>
-                Ok((m.clone(), e.clone()))
+            Self::Compiled(m, e) => Ok((m.clone(), e.clone())),
         }
     }
 }

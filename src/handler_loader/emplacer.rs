@@ -5,17 +5,25 @@ use bindle::Invoice;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, WagiConfiguration}};
+use crate::{
+    bindle_util::{InvoiceUnderstander, WagiHandlerInfo},
+    wagi_config::{HandlerConfigurationSource, WagiConfiguration},
+};
 
 pub enum EmplacedHandlerConfiguration {
     ModuleMapFile(PathBuf),
     Bindle(Emplacer, Invoice),
 }
 
-pub async fn emplace(configuration: &WagiConfiguration) -> anyhow::Result<EmplacedHandlerConfiguration> {
-    let emplacer = Emplacer::new(&configuration).await
+pub async fn emplace(
+    configuration: &WagiConfiguration,
+) -> anyhow::Result<EmplacedHandlerConfiguration> {
+    let emplacer = Emplacer::new(&configuration)
+        .await
         .with_context(|| "Failed to create emplacer")?;
-    let emplaced_config = emplacer.emplace_all().await
+    let emplaced_config = emplacer
+        .emplace_all()
+        .await
         .with_context(|| "Failed to emplace bindle data")?;
     Ok(emplaced_config)
 }
