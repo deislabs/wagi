@@ -9,8 +9,9 @@ use docker_credential::DockerCredential;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::handler_loader::ModuleMapConfigurationEntry;
 use crate::wagi_config::WagiConfiguration;
+
+use super::loader::ModuleMapConfigurationEntry;
 
 pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
     let module_ref = module_map_entry.module.clone();

@@ -4,7 +4,6 @@ pub(crate) mod dynamic_route;
 pub mod handler_loader;
 pub(crate) mod handlers;
 mod http_util;
-pub (crate) mod module_loader;
 mod request;
 mod tls;
 pub mod version;

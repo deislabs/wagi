@@ -3,9 +3,9 @@ use std::{collections::HashMap, path::Path};
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::{wagi_config::WagiConfiguration, bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, module_loader::Loaded};
+use crate::{wagi_config::WagiConfiguration, bindle_util::{InvoiceUnderstander, WagiHandlerInfo}};
 
-use super::{emplacer::{EmplacedHandlerConfiguration, Emplacer}, HandlerInfo};
+use super::{emplacer::{EmplacedHandlerConfiguration, Emplacer}, HandlerInfo, module_loader::{self, Loaded}};
 
 pub struct LoadedHandlerConfiguration {
     pub entries: Vec<LoadedHandlerConfigurationEntry>,
@@ -107,7 +107,7 @@ async fn handlers_for_bindle(invoice: &bindle::Invoice, emplacer: &Emplacer) -> 
 }
 
 async fn handler_for_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Loaded<ModuleMapConfigurationEntry>> {
-    crate::module_loader::load_from_module_map_entry(module_map_entry, configuration)
+    module_loader::load_from_module_map_entry(module_map_entry, configuration)
         .await
         .map(|v| Loaded::new(module_map_entry, v))
 }

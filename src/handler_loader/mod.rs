@@ -6,9 +6,9 @@ use crate::{wagi_config::WagiConfiguration, wasm_module::WasmModuleSource};
 
 mod emplacer;
 mod loader;
+mod module_loader;
 mod compiler;
 
-pub use loader::ModuleMapConfigurationEntry;
 pub use compiler::WasmCompilationSettings;
 
 pub async fn load_handlers(configuration: &WagiConfiguration) -> anyhow::Result<WasmHandlerConfiguration> {
