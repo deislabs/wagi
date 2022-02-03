@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{wagi_config::WagiConfiguration, bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, module_loader::Loaded};
 
-use super::{emplacer::{PreHandlerConfiguration, Emplacer}, HandlerInfo};
+use super::{emplacer::{EmplacedHandlerConfiguration, Emplacer}, HandlerInfo};
 
 pub struct LoadedHandlerConfiguration {
     pub entries: Vec<LoadedHandlerConfigurationEntry>,
@@ -17,7 +17,7 @@ pub struct LoadedHandlerConfigurationEntry {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct ModuleMapConfiguration {
+struct ModuleMapConfiguration {
     #[serde(rename = "module")]
     pub entries: Vec<ModuleMapConfigurationEntry>,
 }
@@ -36,17 +36,17 @@ pub struct ModuleMapConfigurationEntry {
     pub http_max_concurrency: Option<u32>,
 }
 
-pub async fn load(emplaced_handlers: PreHandlerConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+pub async fn load(emplaced_handlers: EmplacedHandlerConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
     load_handler_configuration(emplaced_handlers, configuration).await
 }
 
-pub async fn load_handler_configuration(pre_handler_config: PreHandlerConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
+pub async fn load_handler_configuration(pre_handler_config: EmplacedHandlerConfiguration, configuration: &WagiConfiguration) -> anyhow::Result<LoadedHandlerConfiguration> {
     match pre_handler_config {
-        PreHandlerConfiguration::ModuleMapFile(path) => {
+        EmplacedHandlerConfiguration::ModuleMapFile(path) => {
             let module_map_configuration = read_module_map_configuration(&path).await?;
             handlers_for_module_map(&module_map_configuration, configuration).await
         },
-        PreHandlerConfiguration::Bindle(emplacer, invoice) =>
+        EmplacedHandlerConfiguration::Bindle(emplacer, invoice) =>
             handlers_for_bindle(&invoice, &emplacer).await,
     }
 }

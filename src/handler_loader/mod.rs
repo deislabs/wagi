@@ -8,7 +8,6 @@ mod emplacer;
 mod loader;
 mod compiler;
 
-// pub use loader::LoadedHandlerConfiguration;
 pub use loader::ModuleMapConfigurationEntry;
 pub use compiler::WasmCompilationSettings;
 
