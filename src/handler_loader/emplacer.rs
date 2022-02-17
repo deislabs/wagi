@@ -1,10 +1,32 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 
 use anyhow::Context;
+use bindle::Invoice;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::{bindle_util::{InvoiceUnderstander, WagiHandlerInfo}, wagi_config::{HandlerConfigurationSource, PreHandlerConfiguration, WagiConfiguration}};
+use crate::{
+    bindle_util::{InvoiceUnderstander, WagiHandlerInfo},
+    wagi_config::{HandlerConfigurationSource, WagiConfiguration},
+};
+
+pub enum EmplacedHandlerConfiguration {
+    ModuleMapFile(PathBuf),
+    Bindle(Emplacer, Invoice),
+}
+
+pub async fn emplace(
+    configuration: &WagiConfiguration,
+) -> anyhow::Result<EmplacedHandlerConfiguration> {
+    let emplacer = Emplacer::new(&configuration)
+        .await
+        .with_context(|| "Failed to create emplacer")?;
+    let emplaced_config = emplacer
+        .emplace_all()
+        .await
+        .with_context(|| "Failed to emplace bindle data")?;
+    Ok(emplaced_config)
+}
 
 pub struct Emplacer {
     cache_path: PathBuf,
@@ -17,7 +39,7 @@ pub struct Bits {
 }
 
 impl Emplacer {
-    pub async fn new(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
+    async fn new(configuration: &WagiConfiguration) -> anyhow::Result<Self> {
         Self::new_from_settings(
             &configuration.asset_cache_dir,
             &configuration.handlers
@@ -34,10 +56,10 @@ impl Emplacer {
         })
     }
 
-    pub async fn emplace_all(self) -> anyhow::Result<PreHandlerConfiguration> {
+    pub async fn emplace_all(self) -> anyhow::Result<EmplacedHandlerConfiguration> {
         match self.source.clone() {
             HandlerConfigurationSource::ModuleConfigFile(path) =>
-                Ok(PreHandlerConfiguration::ModuleMapFile(path.clone())),
+                Ok(EmplacedHandlerConfiguration::ModuleMapFile(path.clone())),
             HandlerConfigurationSource::StandaloneBindle(bindle_base_dir, id) =>
                 self.emplace_standalone_bindle(&bindle_base_dir, &id).await,
             HandlerConfigurationSource::RemoteBindle(bindle_base_url, id) =>
@@ -62,28 +84,21 @@ impl Emplacer {
         })
     }
 
-    // TODO: do not like having bindle specifics here
-    pub async fn read_invoice(&self, invoice_id: &bindle::Id) -> anyhow::Result<bindle::Invoice> {
-        let toml_text = tokio::fs::read(self.invoice_path(invoice_id)).await?;
-        let invoice = toml::from_slice(&toml_text)?;
-        Ok(invoice)
-    }
-
-    async fn emplace_standalone_bindle(self, bindle_base_dir: &Path, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
+    async fn emplace_standalone_bindle(self, bindle_base_dir: &Path, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {
         let reader = bindle::standalone::StandaloneRead::new(bindle_base_dir, id).await
             .with_context(|| format!("Error constructing bindle reader for {} in {}", id, bindle_base_dir.display()))?;
 
         self.emplace_bindle(&reader, id).await
     }
 
-    async fn emplace_remote_bindle(self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
+    async fn emplace_remote_bindle(self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {
         let token = bindle::client::tokens::NoToken::default();
         let client = bindle::client::Client::new(bindle_base_url.as_str(), token)?;
 
         self.emplace_bindle(&client, id).await
     }
 
-    async fn emplace_bindle(self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<PreHandlerConfiguration> {
+    async fn emplace_bindle(self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {
         let invoice_path = self.invoice_path(id);
         if !invoice_path.is_file() {
             let invoice_text = reader.get_invoice_bytes(id).await?;
@@ -105,7 +120,7 @@ impl Emplacer {
 
         match all_module_placements.into_iter().find_map(|e| e.err()) {
             Some(e) => Err(e),
-            None => Ok(PreHandlerConfiguration::Bindle(self, invoice_raw))
+            None => Ok(EmplacedHandlerConfiguration::Bindle(self, invoice_raw))
         }
     }
 

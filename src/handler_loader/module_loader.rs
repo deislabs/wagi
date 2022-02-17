@@ -10,7 +10,8 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::wagi_config::WagiConfiguration;
-use crate::{wagi_config::{ModuleMapConfigurationEntry}};
+
+use super::loader::ModuleMapConfigurationEntry;
 
 pub async fn load_from_module_map_entry(module_map_entry: &ModuleMapConfigurationEntry, configuration: &WagiConfiguration) -> anyhow::Result<Vec<u8>> {
     let module_ref = module_map_entry.module.clone();

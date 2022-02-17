@@ -16,7 +16,7 @@ use crate::dispatcher::RoutePattern;
 use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::wasm_module::CompiledWasmModule;
+use crate::wasm_module::WasmModuleSource;
 use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
 
 #[derive(Clone, Debug)]
@@ -27,7 +27,7 @@ pub enum RouteHandler {
 
 #[derive(Clone, Debug)]
 pub struct WasmRouteHandler {
-    pub wasm_module_source: CompiledWasmModule,
+    pub wasm_module_source: WasmModuleSource,
     pub wasm_module_name: String,
     pub entrypoint: String,
     pub volumes: HashMap<String, String>,

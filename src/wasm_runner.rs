@@ -7,7 +7,7 @@ use wasmtime_wasi::*;
 use tracing::debug;
 
 use crate::request::RequestGlobalContext;
-use crate::wasm_module::CompiledWasmModule;
+use crate::wasm_module::WasmModuleSource;
 
 const STDERR_FILE: &str = "module.stderr";
 
@@ -89,11 +89,11 @@ pub fn new_store(
 
 pub fn prepare_wasm_instance(
     ctx: WasiCtx,
-    wasm_module: &CompiledWasmModule,
+    wasm_module: &WasmModuleSource,
     link_options: WasmLinkOptions,
 ) -> Result<(Store<WasiCtx>, Instance), Error> {
     debug!("Cloning module object");
-    let (module, engine) = match wasm_module { CompiledWasmModule::Object(m, e) => (m.clone(), e.clone()) };
+    let (module, engine) = wasm_module.get_compiled_module()?;
     let mut store = new_store(ctx, &engine)?;
 
     debug!("Configuring linker");
