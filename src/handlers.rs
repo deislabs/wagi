@@ -187,6 +187,7 @@ pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<B
             }
         });
     if !sufficient_response {
+        tracing::debug!("{:?}", res.body());
         return Ok(internal_error(
             // Technically, we let `status` be sufficient, but this is more lenient
             // than the specification.
