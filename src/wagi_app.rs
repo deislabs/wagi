@@ -28,6 +28,9 @@ const BINDLE_URL: &str = "BINDLE_URL";
 const ARG_BINDLE_ID: &str = "bindle";
 const ARG_BINDLE_URL: &str = "BINDLE_URL";
 const ARG_BINDLE_STANDALONE_DIR: &str = "bindle_path";
+const ARG_BINDLE_INSECURE: &str = "bindle_insecure";
+const ARG_BINDLE_HTTP_USER: &str = "BINDLE_HTTP_USER";
+const ARG_BINDLE_HTTP_PASSWORD: &str = "BINDLE_HTTP_PASSWORD";
 
 // Arguments for serving from local Wasm files specified in a modules.toml
 const ARG_MODULES_CONFIG: &str = "config";
@@ -96,6 +99,32 @@ pub fn wagi_app_definition() -> App<'static, 'static> {
     .group(
         ArgGroup::with_name(GROUP_BINDLE_SOURCE)
             .args(&[ARG_BINDLE_STANDALONE_DIR, ARG_BINDLE_URL])
+    )
+    .arg(
+        Arg::with_name(ARG_BINDLE_HTTP_USER)
+            .long("bindle-http-user")
+            .value_name("BINDLE_HTTP_USER")
+            .env("BINDLE_HTTP_USER")
+            .help("The username for authentication via basic http auth with the Bindle server.")
+            .takes_value(true)
+            .requires(ARG_BINDLE_HTTP_PASSWORD)
+    )
+    .arg(
+        Arg::with_name(ARG_BINDLE_HTTP_PASSWORD)
+            .long("bindle-http-password")
+            .value_name("BINDLE_HTTP_PASSWORD")
+            .env("BINDLE_HTTP_PASSWORD")
+            .help("The password for authentication via basic http auth with the Bindle server.")
+            .takes_value(true)
+            .requires(ARG_BINDLE_HTTP_USER)
+    )
+    .arg(
+        Arg::with_name(ARG_BINDLE_INSECURE)
+            .short("k")
+            .long("bindle-insecure")
+            .help("if set, ignore bindle server certificate errors")
+            .required(false)
+            .takes_value(false),
     )
     .arg(
         Arg::with_name(ARG_WASM_CACHE_CONFIG_FILE)
@@ -258,10 +287,12 @@ fn parse_handler_configuration_source(
         matches.value_of(ARG_BINDLE_ID).ignore_if_empty(),
         matches.value_of(ARG_BINDLE_STANDALONE_DIR).ignore_if_empty(),
         matches.value_of(ARG_BINDLE_URL).ignore_if_empty(),
+        matches.value_of(ARG_BINDLE_HTTP_USER).ignore_if_empty(),
+        matches.value_of(ARG_BINDLE_HTTP_PASSWORD).ignore_if_empty(),
         matches.value_of(ARG_MODULES_CONFIG).ignore_if_empty(),
     ) {
         // Case: got a module file. Can't have bindle id; ignore bindle location.
-        (None, _, _, Some(modules_config)) => {
+        (None, _, _, _, _, Some(modules_config)) => {
             let modules_config_path = std::path::PathBuf::from(modules_config);
             if modules_config_path.is_file() {
                 Ok(HandlerConfigurationSource::ModuleConfigFile(
@@ -275,7 +306,7 @@ fn parse_handler_configuration_source(
             }
         }
         // Case: got a bindle id and directory. Can't have a server URL or module file.
-        (Some(bindle_id), Some(bindle_dir), None, None) => {
+        (Some(bindle_id), Some(bindle_dir), None, _, _, None) => {
             let bindle_dir_path = std::path::PathBuf::from(bindle_dir);
             if bindle_dir_path.is_dir() {
                 Ok(HandlerConfigurationSource::StandaloneBindle(
@@ -289,12 +320,38 @@ fn parse_handler_configuration_source(
                 ))
             }
         }
-        // Case: got a bindle id and server URL. Can't have a bindir dir or module file.
-        (Some(bindle_id), None, Some(bindle_url), None) => {
+        // Cases: got a bindle id and server URL. Can't have a bindir dir or module file.
+        // No basic http auth creds for bindle server supplied
+        (Some(bindle_id), None, Some(bindle_url), None, None, None) => {
+            let insecure = matches.is_present(ARG_BINDLE_INSECURE);
+            let auth = crate::wagi_config::BindleAuthentication { 
+                kind: crate::wagi_config::BindleAuthenticationStrategy::NoAuth,
+                insecure: insecure
+            };
             match url::Url::parse(bindle_url) {
                 Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
                     url,
                     bindle::Id::try_from(bindle_id)?,
+                    auth,
+                )),
+                Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
+            }
+        }
+        // Basic http auth creds for bindle server supplied
+        (Some(bindle_id), None, Some(bindle_url), Some(bindle_http_user), Some(bindle_http_password), None) => {
+            let insecure = matches.is_present(ARG_BINDLE_INSECURE);
+            let auth = crate::wagi_config::BindleAuthentication {
+                kind: crate::wagi_config::BindleAuthenticationStrategy::BasicHTTPAuth(
+                    bindle_http_user.to_string(),
+                    bindle_http_password.to_string(),
+                ),
+                insecure: insecure
+            };
+            match url::Url::parse(bindle_url) {
+                Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
+                    url,
+                    bindle::Id::try_from(bindle_id)?,
+                    auth,
                 )),
                 Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
             }
@@ -303,20 +360,28 @@ fn parse_handler_configuration_source(
         // confident, and assume that means they won't. But we have been
         // programming faaaaaaaaaar too long for that.
         // Case SHOULDN'T HAPPEN: got NEITHER module config file NOR bindle id
-        (None, _, _, None) => Err(anyhow::anyhow!(
+        (None, _, _, _, _, None) => Err(anyhow::anyhow!(
             "You must specify module config file or bindle ID"
         )),
         // Case SHOULDN'T HAPPEN: got a module config file AND bindle id
-        (Some(_), _, _, Some(_)) => Err(anyhow::anyhow!(
+        (Some(_), _, _, _, _, Some(_)) => Err(anyhow::anyhow!(
             "You cannot specify both module config file and bindle ID"
         )),
         // Case SHOULDN'T HAPPEN: got a bindle id and NEITHER directory NOR URL
-        (Some(_), None, None, _) => Err(anyhow::anyhow!(
+        (Some(_), None, None, _, _, _) => Err(anyhow::anyhow!(
             "A bindle ID requires either a server URL or standalone directory"
         )),
         // Case SHOULDN'T HAPPEN: got a bindle id and BOTH directory AND URL
-        (Some(_), Some(_), Some(_), _) => Err(anyhow::anyhow!(
+        (Some(_), Some(_), Some(_), _, _, _) => Err(anyhow::anyhow!(
             "You cannot specify both a bindle server URL and a standalone directory"
+        )),
+        // Case SHOULDN'T HAPPEN: got a bindle id and URL, plus http username but no password
+        (Some(_), _, Some(_), Some(_), None, None) => Err(anyhow::anyhow!(
+            "You must specify a BINDLE_HTTP_PASSWORD when BINDLE_HTTP_USER is supplied"
+        )),
+        // Case SHOULDN'T HAPPEN: got a bindle id and URL, plus http password but no username
+        (Some(_), _, Some(_), None, Some(_), None) => Err(anyhow::anyhow!(
+            "You must specify a BINDLE_HTTP_USER when BINDLE_HTTP_PASSWORD is supplied"
         )),
     }
 }

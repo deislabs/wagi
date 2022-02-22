@@ -16,7 +16,19 @@ pub struct WagiConfiguration {
 pub enum HandlerConfigurationSource {
     ModuleConfigFile(PathBuf),
     StandaloneBindle(PathBuf, bindle::Id),
-    RemoteBindle(url::Url, bindle::Id),
+    RemoteBindle(url::Url, bindle::Id, BindleAuthentication),
+}
+
+#[derive(Clone, Debug)]
+pub enum BindleAuthenticationStrategy {
+    NoAuth,
+    BasicHTTPAuth(String, String)
+}
+
+#[derive(Clone, Debug)]
+pub struct BindleAuthentication {
+    pub kind: BindleAuthenticationStrategy,
+    pub insecure: bool
 }
 
 #[derive(Clone, Debug)]
