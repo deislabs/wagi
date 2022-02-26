@@ -41,6 +41,7 @@ pub struct ModuleMapConfigurationEntry {
     pub volumes: Option<HashMap<String, String>>,
     pub allowed_hosts: Option<Vec<String>>,
     pub http_max_concurrency: Option<u32>,
+    pub argv: Option<String>,
 }
 
 pub async fn load(
@@ -132,6 +133,7 @@ impl LoadedHandlerConfigurationEntry {
             allowed_hosts: lmmce.metadata.allowed_hosts,
             http_max_concurrency: lmmce.metadata.http_max_concurrency,
             volume_mounts: lmmce.metadata.volumes.unwrap_or_default(),
+            argv: lmmce.metadata.argv,
         };
         Self {
             info,
@@ -148,6 +150,7 @@ impl LoadedHandlerConfigurationEntry {
             allowed_hosts: whi.allowed_hosts,
             http_max_concurrency: None,
             volume_mounts: bits.volume_mounts,
+            argv: whi.argv,
         };
         Self {
             info,

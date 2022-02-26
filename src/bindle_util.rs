@@ -54,6 +54,7 @@ impl InvoiceUnderstander {
                             route: route.to_owned(),
                             entrypoint: wagi_features.get("entrypoint").map(|s| s.to_owned()),
                             allowed_hosts: wagi_features.get("allowed_hosts").map(|h| parse_csv(h)),
+                            argv: wagi_features.get("argv").map(|s| s.to_owned()),
                             required_parcels: parcels_required_for(parcel, &self.group_dependency_map),
                         };
                         Some(InterestingParcel::WagiHandler(handler_info))
@@ -87,6 +88,7 @@ pub struct WagiHandlerInfo {
     pub entrypoint: Option<String>,
     pub allowed_hosts: Option<Vec<String>>,
     pub required_parcels: Vec<Parcel>,
+    pub argv: Option<String>,
 }
 
 impl WagiHandlerInfo {

@@ -100,6 +100,7 @@ impl RoutingTableEntry {
             volumes: source.info.volume_mounts.clone(),
             allowed_hosts: source.info.allowed_hosts.clone(),
             http_max_concurrency: source.info.http_max_concurrency,
+            argv: source.info.argv.clone(),
         };
         let handler_info = RouteHandler::Wasm(wasm_route_handler);
 

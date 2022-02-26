@@ -28,6 +28,7 @@ pub struct HandlerInfo {
     pub allowed_hosts: Option<Vec<String>>,
     pub http_max_concurrency: Option<u32>,
     pub volume_mounts: HashMap<String, String>,
+    pub argv: Option<String>
 }
 
 pub struct WasmHandlerConfiguration {
