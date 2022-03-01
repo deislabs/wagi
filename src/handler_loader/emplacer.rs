@@ -3,7 +3,6 @@ use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 use anyhow::Context;
 use bindle::Invoice;
 use sha2::{Digest, Sha256};
-use url::Url;
 
 use crate::{
     bindle_util::{InvoiceUnderstander, WagiHandlerInfo},
@@ -62,8 +61,8 @@ impl Emplacer {
                 Ok(EmplacedHandlerConfiguration::ModuleMapFile(path.clone())),
             HandlerConfigurationSource::StandaloneBindle(bindle_base_dir, id) =>
                 self.emplace_standalone_bindle(&bindle_base_dir, &id).await,
-            HandlerConfigurationSource::RemoteBindle(bindle_base_url, id, auth) =>
-                self.emplace_remote_bindle(&bindle_base_url, &id, auth).await,
+            HandlerConfigurationSource::RemoteBindle(id, bindle_connection_info) =>
+                self.emplace_remote_bindle(&id, bindle_connection_info).await,
         }.with_context(|| "Error caching assets from bindle")
     }
 
@@ -91,28 +90,8 @@ impl Emplacer {
         self.emplace_bindle(&reader, id).await
     }
 
-    async fn emplace_remote_bindle(self, bindle_base_url: &Url, id: &bindle::Id, auth: crate::wagi_config::BindleAuthentication) -> anyhow::Result<EmplacedHandlerConfiguration> {
-        // TODO: assign match to a token (TokenManager) type and then only constructing the client
-        // and calling emplace_bindle once. Currently, there doesn't appear to be a way to do that
-        // (see non-public PickYourAuth enum in bindle)
-        match auth.kind {
-            crate::wagi_config::BindleAuthenticationStrategy::NoAuth
-                => {
-                    let client = bindle::client::ClientBuilder::default()
-                        .danger_accept_invalid_certs(auth.insecure)
-                        .build(bindle_base_url.as_str(), bindle::client::tokens::NoToken::default())?;
-
-                    self.emplace_bindle(&client, id).await
-                },
-            crate::wagi_config::BindleAuthenticationStrategy::BasicHTTPAuth(user, password)
-                => {
-                    let client = bindle::client::ClientBuilder::default()
-                        .danger_accept_invalid_certs(auth.insecure)
-                        .build(bindle_base_url.as_str(), bindle::client::tokens::HttpBasic::new(&user, &password))?;
-
-                    self.emplace_bindle(&client, id).await
-                },
-          }
+    async fn emplace_remote_bindle(self, id: &bindle::Id, bindle_connection_info: crate::bindle_util::BindleConnectionInfo) -> anyhow::Result<EmplacedHandlerConfiguration> {
+        self.emplace_bindle(&bindle_connection_info.client()?, id).await
     }
 
     async fn emplace_bindle(self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {

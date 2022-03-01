@@ -1,8 +1,12 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-use crate::{handler_loader::WasmCompilationSettings, request::RequestGlobalContext};
+use crate::{
+    bindle_util::BindleConnectionInfo,
+    handler_loader::WasmCompilationSettings,
+    request::RequestGlobalContext,
+};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WagiConfiguration {
     pub handlers: HandlerConfigurationSource,
     pub env_vars: HashMap<String, String>,
@@ -12,23 +16,11 @@ pub struct WagiConfiguration {
     pub log_dir: PathBuf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum HandlerConfigurationSource {
     ModuleConfigFile(PathBuf),
     StandaloneBindle(PathBuf, bindle::Id),
-    RemoteBindle(url::Url, bindle::Id, BindleAuthentication),
-}
-
-#[derive(Clone, Debug)]
-pub enum BindleAuthenticationStrategy {
-    NoAuth,
-    BasicHTTPAuth(String, String)
-}
-
-#[derive(Clone, Debug)]
-pub struct BindleAuthentication {
-    pub kind: BindleAuthenticationStrategy,
-    pub insecure: bool
+    RemoteBindle(bindle::Id, BindleConnectionInfo),
 }
 
 #[derive(Clone, Debug)]
