@@ -1,8 +1,15 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
-use crate::{handler_loader::WasmCompilationSettings, request::RequestGlobalContext};
+use crate::{
+    bindle_util::BindleConnectionInfo,
+    handler_loader::WasmCompilationSettings,
+    request::RequestGlobalContext,
+};
 
-#[derive(Clone, Debug)]
+// TODO: figure out how to re-apply the Debug trait here (and on HandlerConfigurationSource)
+// At time of writing, it was removed on account of the bindle::client::tokens::token_manager
+// not implementing this trait (see crate::bindle_util::BindleConnectionInfo)
+#[derive(Clone)]
 pub struct WagiConfiguration {
     pub handlers: HandlerConfigurationSource,
     pub env_vars: HashMap<String, String>,
@@ -12,11 +19,11 @@ pub struct WagiConfiguration {
     pub log_dir: PathBuf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum HandlerConfigurationSource {
     ModuleConfigFile(PathBuf),
     StandaloneBindle(PathBuf, bindle::Id),
-    RemoteBindle(url::Url, bindle::Id),
+    RemoteBindle(BindleConnectionInfo, bindle::Id),
 }
 
 #[derive(Clone, Debug)]

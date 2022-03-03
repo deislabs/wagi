@@ -3,7 +3,6 @@ use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 use anyhow::Context;
 use bindle::Invoice;
 use sha2::{Digest, Sha256};
-use url::Url;
 
 use crate::{
     bindle_util::{InvoiceUnderstander, WagiHandlerInfo},
@@ -62,8 +61,8 @@ impl Emplacer {
                 Ok(EmplacedHandlerConfiguration::ModuleMapFile(path.clone())),
             HandlerConfigurationSource::StandaloneBindle(bindle_base_dir, id) =>
                 self.emplace_standalone_bindle(&bindle_base_dir, &id).await,
-            HandlerConfigurationSource::RemoteBindle(bindle_base_url, id) =>
-                self.emplace_remote_bindle(&bindle_base_url, &id).await,
+            HandlerConfigurationSource::RemoteBindle(bindle_connection_info, id) =>
+                self.emplace_remote_bindle(bindle_connection_info, &id).await,
         }.with_context(|| "Error caching assets from bindle")
     }
 
@@ -91,11 +90,8 @@ impl Emplacer {
         self.emplace_bindle(&reader, id).await
     }
 
-    async fn emplace_remote_bindle(self, bindle_base_url: &Url, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {
-        let token = bindle::client::tokens::NoToken::default();
-        let client = bindle::client::Client::new(bindle_base_url.as_str(), token)?;
-
-        self.emplace_bindle(&client, id).await
+    async fn emplace_remote_bindle(self, bindle_connection_info: crate::bindle_util::BindleConnectionInfo, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {
+        self.emplace_bindle(&bindle_connection_info.client()?, id).await
     }
 
     async fn emplace_bindle(self, reader: &impl BindleReader, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {

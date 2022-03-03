@@ -3172,6 +3172,7 @@ dependencies = [
  "hyper",
  "indexmap",
  "oci-distribution",
+ "reqwest",
  "serde",
  "sha2 0.9.5",
  "tempfile",
