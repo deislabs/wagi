@@ -33,6 +33,7 @@ pub struct WasmRouteHandler {
     pub volumes: HashMap<String, String>,
     pub allowed_hosts: Option<Vec<String>>,
     pub http_max_concurrency: Option<u32>,
+    pub argv: Option<String>,
 }
 
 impl WasmRouteHandler {
@@ -71,12 +72,7 @@ impl WasmRouteHandler {
     }
 
     fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
-        let uri_path = req.uri.path();
-        let mut args = vec![uri_path.to_string()];
-        req.uri
-            .query()
-            .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
-            .take();
+        let args = self.build_argv(req);
         let headers: Vec<(String, String)> = headers
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -101,6 +97,39 @@ impl WasmRouteHandler {
 
         let ctx = builder.build();
         Ok(ctx)
+    }
+
+    /// Build the argv array that will be passed to the module.
+    /// 
+    /// If an `argv` override is set in the handler, then this will override the CGI defaults.
+    /// 
+    /// In the arg override: ${SCRIPT_NAME} will be replaced with the script name, and ${ARGS}
+    /// will be replaced by the arg-formatted query parameters. E.g. 'foo=bar&baz=lurman' will
+    /// become 'foo=bar baz=lurman'
+    fn build_argv(&self, req: &Parts) -> Vec<String> {
+        match &self.argv {
+            None => {
+                let uri_path = req.uri.path();
+                let mut args = vec![uri_path.to_string()];
+                req.uri
+                    .query()
+                    .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
+                    .take();
+                args
+            },
+            Some(template) => {
+                let script_name = req.uri.path();
+                let uri = req.uri.query().unwrap_or("");
+                let params = uri.replace('&', " ");
+                let arg_string =  template
+                    .replace("${SCRIPT_NAME}", script_name)
+                    .replace("${ARGS}", params.as_str());
+                arg_string
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+        }
     }
 
     fn prepare_wasm_instance(&self,  ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
