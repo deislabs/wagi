@@ -61,8 +61,8 @@ impl Emplacer {
                 Ok(EmplacedHandlerConfiguration::ModuleMapFile(path.clone())),
             HandlerConfigurationSource::StandaloneBindle(bindle_base_dir, id) =>
                 self.emplace_standalone_bindle(&bindle_base_dir, &id).await,
-            HandlerConfigurationSource::RemoteBindle(id, bindle_connection_info) =>
-                self.emplace_remote_bindle(&id, bindle_connection_info).await,
+            HandlerConfigurationSource::RemoteBindle(bindle_connection_info, id) =>
+                self.emplace_remote_bindle(bindle_connection_info, &id).await,
         }.with_context(|| "Error caching assets from bindle")
     }
 
@@ -90,7 +90,7 @@ impl Emplacer {
         self.emplace_bindle(&reader, id).await
     }
 
-    async fn emplace_remote_bindle(self, id: &bindle::Id, bindle_connection_info: crate::bindle_util::BindleConnectionInfo) -> anyhow::Result<EmplacedHandlerConfiguration> {
+    async fn emplace_remote_bindle(self, bindle_connection_info: crate::bindle_util::BindleConnectionInfo, id: &bindle::Id) -> anyhow::Result<EmplacedHandlerConfiguration> {
         self.emplace_bindle(&bindle_connection_info.client()?, id).await
     }
 

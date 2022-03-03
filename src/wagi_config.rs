@@ -6,6 +6,9 @@ use crate::{
     request::RequestGlobalContext,
 };
 
+// TODO: figure out how to re-apply the Debug trait here (and on HandlerConfigurationSource)
+// At time of writing, it was removed on account of the bindle::client::tokens::token_manager
+// not implementing this trait (see crate::bindle_util::BindleConnectionInfo)
 #[derive(Clone)]
 pub struct WagiConfiguration {
     pub handlers: HandlerConfigurationSource,
@@ -20,7 +23,7 @@ pub struct WagiConfiguration {
 pub enum HandlerConfigurationSource {
     ModuleConfigFile(PathBuf),
     StandaloneBindle(PathBuf, bindle::Id),
-    RemoteBindle(bindle::Id, BindleConnectionInfo),
+    RemoteBindle(BindleConnectionInfo, bindle::Id),
 }
 
 #[derive(Clone, Debug)]

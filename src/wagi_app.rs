@@ -337,8 +337,8 @@ fn parse_handler_configuration_source(
         (Some(bindle_id), None, Some(bindle_url), None) => {
             match url::Url::parse(bindle_url) {
                 Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
-                    bindle::Id::try_from(bindle_id)?,
                     parse_bindle_connection_info(url, &matches)?,
+                    bindle::Id::try_from(bindle_id)?,
                 )),
                 Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
             }
