@@ -8,8 +8,8 @@ and download the desired release. Usually, the most recent release is the one yo
 You can generate and compare the SHA with `shasum`:
 
 ```console
-$ shasum wagi-v0.6.2-linux-amd64.tar.gz
-ad4114b2ed9e510a8c24348d5ea544da55c685f5  wagi-v0.6.2-linux-amd64.tar.gz
+$ shasum wagi-v0.7.0-linux-amd64.tar.gz
+ad4114b2ed9e510a8c24348d5ea544da55c685f5  wagi-v0.7.0-linux-amd64.tar.gz
 ```
 
 You can then compare that SHA with the one present in the release notes.
@@ -40,7 +40,7 @@ To build a static binary, run the following command:
 
 ```console
 $ make build
-   Compiling wagi v0.6.2 (/Users/technosophos/Code/Rust/wagi)
+   Compiling wagi v0.7.0 (/Users/technosophos/Code/Rust/wagi)
     Finished release [optimized] target(s) in 18.47s
 ```
 
