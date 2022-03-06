@@ -10,16 +10,12 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let handlers = wagi::handler_loader::load_handlers(&configuration).await?;
     // Possibly this should go into a 'routing table builder' so we cleanly separate
     // prep-time and serve-time responsibilities.
-    let routing_table =
-        wagi::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())?;
+    let routing_table = wagi::dispatcher::RoutingTable::build(&handlers, configuration.request_global_context())?;
 
     let server = WagiServer::new(&configuration, routing_table).await?;
 
     drop(startup_span);
 
-    println!(
-        "Ready: serving on http://{}",
-        configuration.http_configuration.listen_on
-    );
+    println!("Ready: serving on http://{}", configuration.http_configuration.listen_on);
     server.serve().await
 }
