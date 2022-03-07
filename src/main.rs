@@ -16,6 +16,6 @@ pub async fn main() -> Result<(), anyhow::Error> {
 
     drop(startup_span);
 
-    println!("Ready: serving on {}", configuration.http_configuration.listen_on);
+    println!("Ready: serving on http://{}", configuration.http_configuration.listen_on);
     server.serve().await
 }
