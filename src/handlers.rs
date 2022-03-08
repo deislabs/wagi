@@ -156,7 +156,10 @@ pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<B
     let mut buffer: Vec<u8> = Vec::new();
     let mut out_headers: Vec<u8> = Vec::new();
     out.iter().for_each(|i| {
-        if scan_headers && *i == 10 && last == 10 {
+        // Ignore CR in headers
+        if *i == 13 {
+            return;
+        } else if scan_headers && *i == 10 && last == 10 {
             out_headers.append(&mut buffer);
             buffer = Vec::new();
             scan_headers = false;
