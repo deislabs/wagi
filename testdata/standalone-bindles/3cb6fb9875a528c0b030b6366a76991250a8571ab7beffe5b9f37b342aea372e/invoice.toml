@@ -1,0 +1,23 @@
+bindleVersion = '1.0.0'
+
+[bindle]
+name = 'http-test'
+version = '0.2.0'
+authors = ['itowlson']
+
+[[parcel]]
+[parcel.label]
+sha256 = '6eeea5e303121ead2f31dcaa3182b5fd5d194d62a6bf1d58e26b98d318c67af0'
+mediaType = 'application/wasm'
+name = 'http-test.wasm'
+size = 1997174
+[parcel.label.feature.wagi]
+file = 'false'
+route = '/'
+allowed_hosts = "https://www.fermyon.com"
+
+[parcel.conditions]
+requires = ['target/wasm32-wasi/release/http-test.wasm-files']
+
+[[group]]
+name = 'target/wasm32-wasi/release/http-test.wasm-files'

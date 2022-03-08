@@ -1,16 +1,17 @@
 fn main() {
-  let url = "https://api.brigade.sh/healthz";
+  let url = "https://www.fermyon.com/healthz";
 
   match get_body(url) {
     Ok((status_code, _)) => {
       println!("Content-Type: text/plain\n");
       if status_code == 200 {
-          println!("api.brigade.sh is HEALTHY");
+          println!("{} is HEALTHY", url);
       } else {
-          println!("api.brigade.sh is UNHEALTHY");
+          println!("{} is UNHEALTHY", url);
       }
     },
     Err(e) => {
+      eprintln!("Error in http-test: {}", e);
       println!("Status: 500");
       println!("Content-Type: text/plain\n");
       println!("Failed to make request: {}", e);
