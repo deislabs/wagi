@@ -71,7 +71,7 @@ mod test {
     }
 
     const DYNAMIC_ROUTES_SA_ID: &str = "dynamic-routes/0.1.0";
-    const HTTP_TEST_ID: &str = "http-test/0.1.0";
+    const HTTP_TEST_ID: &str = "http-test/0.2.0";
     const PRINT_ENV_SA_ID: &str = "print-env/0.1.0";
     const TOAST_ON_DEMAND_SA_ID: &str = "itowlson/toast-on-demand/0.1.0-ivan-20210924170616069";
     const TEST1_MODULE_MAP_FILE: &str = "test1.toml";
@@ -696,7 +696,7 @@ mod test {
         let (status, response_text) = futures::executor::block_on(jh).unwrap();
 
         assert_eq!(hyper::StatusCode::OK, status);
-        assert!(response_text.contains("api.brigade.sh is HEALTHY") ||
-            response_text.contains("api.brigade.sh is UNHEALTHY"));
+        assert!(response_text.contains("is HEALTHY") ||
+            response_text.contains("is UNHEALTHY"));
     }
 }
