@@ -78,6 +78,7 @@ mod test {
     #[cfg(target_os = "windows")]
     const TEST2_MODULE_MAP_FILE: &str = "test2.toml";
     const TEST3_MODULE_MAP_FILE: &str = "test3.toml";
+    const WAT_MODULE_MAP_FILE: &str = "wat.toml";
     const TEST_HEALTHZ_MODULE_MAP_FILE: &str = "test_healthz_override.toml";
     const TEST_DYNAMIC_ROUTES_MODULE_MAP_FILE: &str = "test_dynamic_routes.toml";
 
@@ -339,6 +340,14 @@ mod test {
             let response = get_plain_text_response_from_module_map(TEST3_MODULE_MAP_FILE, None, route).await;
             assert_eq!("Entrypoint 2\n", response);
         }
+    }
+
+    #[tokio::test]
+    pub async fn can_serve_wat() {
+        let route = "/";
+
+        let response = get_plain_text_response_from_module_map(WAT_MODULE_MAP_FILE, None, route).await;
+        assert_eq!("Oh hi world\r\n", response);
     }
 
     fn parse_ev_line(line: &str) -> Option<(String, String)> {

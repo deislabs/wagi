@@ -1,0 +1,3 @@
+[[module]]
+route = "/"
+module = "file:///${PROJECT_ROOT}/testdata/module-maps/crlf.wat"
