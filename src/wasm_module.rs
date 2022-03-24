@@ -1,4 +1,8 @@
-use std::{fmt::Debug, sync::{Arc, RwLock}, path::Path};
+use std::{
+    fmt::Debug,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasmtime::*;

@@ -4,11 +4,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use hyper::HeaderMap;
-use hyper::{
-    header::HOST,
-    http::request::Parts,
-    Body, Response, StatusCode,
-};
+use hyper::{header::HOST, http::request::Parts, Body, Response, StatusCode};
 
 use crate::dispatcher::RoutePattern;
 use crate::version::*;
@@ -299,7 +295,7 @@ mod test {
     #[test]
     fn test_headers() {
         let route = RoutePattern::parse("/path/...");
-            // "file:///no/such/path.wasm".to_owned(),
+        // "file:///no/such/path.wasm".to_owned(),
         let (req, _) = Request::builder()
             .uri("https://example.com:3000/path/test%3brun?foo=bar")
             .header("X-Test-Header", "hello")

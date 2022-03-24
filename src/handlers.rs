@@ -1,13 +1,13 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use wasi_cap_std_sync::Dir;
 use hyper::{
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
     Body, Response, StatusCode,
 };
-use tracing::{debug};
+use tracing::debug;
+use wasi_cap_std_sync::Dir;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasmtime::*;
 use wasmtime_wasi::*;
@@ -17,7 +17,9 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
+use crate::wasm_runner::{
+    prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions,
+};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -71,7 +73,12 @@ impl WasmRouteHandler {
         compose_response(redirects.stdout_mutex)
     }
 
-    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
+    fn build_wasi_context_for_request(
+        &self,
+        req: &Parts,
+        headers: HashMap<String, String>,
+        redirects: crate::wasm_module::IOStreamRedirects,
+    ) -> Result<WasiCtx, Error> {
         let args = self.build_argv(req);
         let headers: Vec<(String, String)> = headers
             .iter()
@@ -100,9 +107,9 @@ impl WasmRouteHandler {
     }
 
     /// Build the argv array that will be passed to the module.
-    /// 
+    ///
     /// If an `argv` override is set in the handler, then this will override the CGI defaults.
-    /// 
+    ///
     /// In the arg override: ${SCRIPT_NAME} will be replaced with the script name, and ${ARGS}
     /// will be replaced by the arg-formatted query parameters. E.g. 'foo=bar&baz=lurman' will
     /// become 'foo=bar baz=lurman'
@@ -116,12 +123,12 @@ impl WasmRouteHandler {
                     .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
                     .take();
                 args
-            },
+            }
             Some(template) => {
                 let script_name = req.uri.path();
                 let uri = req.uri.query().unwrap_or("");
                 let params = uri.replace('&', " ");
-                let arg_string =  template
+                let arg_string = template
                     .replace("${SCRIPT_NAME}", script_name)
                     .replace("${ARGS}", params.as_str());
                 arg_string
@@ -132,7 +139,7 @@ impl WasmRouteHandler {
         }
     }
 
-    fn prepare_wasm_instance(&self,  ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
+    fn prepare_wasm_instance(&self, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
         debug!("Preparing Wasm instance.");
         let link_options = WasmLinkOptions::default()
             .with_http(self.allowed_hosts.clone(), self.http_max_concurrency);
