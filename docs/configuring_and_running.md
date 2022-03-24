@@ -57,7 +57,8 @@ In a nutshell, these are the fields that `modules.toml` supports.
   - `route` (REQUIRED): The path that is appended to the server URL to create a full URL (e.g. `/foo` becomes `https://example.com/foo`)
   - `module` (REQUIRED): A module reference. See Module References below.
   - `repository`: RESERVED for future use
-  - `entrypoint` (default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
+  - `entrypoint` (Optional, default: `_start`): The name of the function within the module. This will directly execute that function. Most WASM/WASI implementations create a `_start` function by default. An example of a module that declares 3 entrypoints can be found [here](https://github.com/technosophos/hello-wagi).
+  - `argv`: (Optional, default: "${SCRIPT_NAME} ${ARGS}"). This determines what the `argv` array looks like for the invoked program. The CGI 1.1 spec says that the `argv` array should contain the script name followed by the parameters. However, some Wasm modules require specifically formatted `argv`. This allows a way to override the CGI 1.1 defaults. Example: `argv = "ruby index.rb ${SCRIPT_NAME} ${ARGS}"`. This could expand to `ruby index.rb /example param1=val1 param2=val2`
   
 Here is a brief example of a `modules.toml` file that declares two routes:
 
@@ -262,6 +263,7 @@ The following features are available for Wagi under `feature.wagi.FEATURE`:
 | route | The relative path from the server route. e.g. "/foo" is mapped to http://example.com/foo |
 | allowed_hosts | A comma-separated list of hosts that the HTTP client is allowed to access |
 | file | If this is "true", this parcel will be treated as a file for consumption by a Wagi module |
+| argv | If this is set, use this as a template for building the `argv` array. Two values are substituted: `${SCRIPT_NAME}` is replaced with the CGI `$SCRIPT_NAME` and `${ARGS}` is replaced with the query parameters formatted for CGI. |
 
 ### Simple Bindle Example
 

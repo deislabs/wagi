@@ -1,19 +1,19 @@
 use std::net::SocketAddr;
 
-use hyper::{
-    http::request::Parts,
-    Body, Request, Response, StatusCode,
-};
+use hyper::{http::request::Parts, Body, Request, Response, StatusCode};
 use sha2::{Digest, Sha256};
-use tracing::{instrument};
+use tracing::instrument;
 
-use crate::dynamic_route::{DynamicRoutes, interpret_routes};
+use crate::dynamic_route::{interpret_routes, DynamicRoutes};
 use crate::handlers::{RouteHandler, WasmRouteHandler};
-use crate::http_util::{not_found};
+use crate::http_util::not_found;
 use crate::request::{RequestContext, RequestGlobalContext};
 
-use crate::handler_loader::{WasmHandlerConfigurationEntry, WasmHandlerConfiguration};
-use crate::wasm_runner::{RunWasmResult, prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present, WasmLinkOptions};
+use crate::handler_loader::{WasmHandlerConfiguration, WasmHandlerConfigurationEntry};
+use crate::wasm_runner::{
+    prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance_if_present,
+    RunWasmResult, WasmLinkOptions,
+};
 
 #[derive(Clone, Debug)]
 pub struct RoutingTable {
@@ -51,15 +51,13 @@ impl RoutingTable {
 
         match self.route_for(&uri_path) {
             Ok(rte) => {
-                let request_context = RequestContext {
-                    client_addr,
-                };
-                let response = rte.handle_request(&parts, data, &request_context, &self.global_context);
+                let request_context = RequestContext { client_addr };
+                let response =
+                    rte.handle_request(&parts, data, &request_context, &self.global_context);
                 Ok(response)
-            },
+            }
             Err(_) => Ok(not_found()),
         }
-
     }
 
     #[instrument(level = "trace", skip(self))]
@@ -100,6 +98,7 @@ impl RoutingTableEntry {
             volumes: source.info.volume_mounts.clone(),
             allowed_hosts: source.info.allowed_hosts.clone(),
             http_max_concurrency: source.info.http_max_concurrency,
+            argv: source.info.argv.clone(),
         };
         let handler_info = RouteHandler::Wasm(wasm_route_handler);
 
@@ -138,7 +137,14 @@ impl RoutingTableEntry {
         match &self.handler_info {
             RouteHandler::HealthCheck => Response::new(Body::from("OK")),
             RouteHandler::Wasm(w) => {
-                let response = w.handle_request(&self.route_pattern, req, body, request_context, global_context, self.unique_key());
+                let response = w.handle_request(
+                    &self.route_pattern,
+                    req,
+                    body,
+                    request_context,
+                    global_context,
+                    self.unique_key(),
+                );
                 match response {
                     Ok(res) => res,
                     Err(e) => {
@@ -149,7 +155,6 @@ impl RoutingTableEntry {
                         srv_err
                     }
                 }
-        
             }
         }
     }
@@ -159,7 +164,7 @@ impl RoutePattern {
     pub fn parse(path_text: &str) -> Self {
         match path_text.strip_suffix("/...") {
             Some(prefix) => Self::Prefix(prefix.to_owned()),
-            None => Self::Exact(path_text.to_owned())
+            None => Self::Exact(path_text.to_owned()),
         }
     }
 
@@ -170,19 +175,22 @@ impl RoutePattern {
     pub fn is_match(&self, uri_fragment: &str) -> bool {
         match self {
             Self::Exact(path) => path == uri_fragment,
-            Self::Prefix(prefix) => prefix == uri_fragment || uri_fragment.starts_with(&format!("{}/", prefix)),
+            Self::Prefix(prefix) => {
+                prefix == uri_fragment || uri_fragment.starts_with(&format!("{}/", prefix))
+            }
         }
     }
 
     pub fn script_name(&self) -> String {
         match self {
             Self::Exact(path) => path.clone(),
-            Self::Prefix(prefix) =>
+            Self::Prefix(prefix) => {
                 if prefix.starts_with('/') {
                     prefix.to_owned()
                 } else {
                     format!("/{}", prefix)
                 }
+            }
         }
     }
 
@@ -239,20 +247,28 @@ fn concat_no_duplicate_slash(prefix: &str, suffix: &str) -> String {
 }
 
 impl RoutingTable {
-    pub fn build(source: &WasmHandlerConfiguration, global_context: RequestGlobalContext) -> anyhow::Result<RoutingTable> {
+    pub fn build(
+        source: &WasmHandlerConfiguration,
+        global_context: RequestGlobalContext,
+    ) -> anyhow::Result<RoutingTable> {
         let user_entries = Self::build_from_handler_config_entries(&source.entries)?;
         let full_user_entries = augment_dynamic_routes(user_entries, &global_context)?;
 
         let built_in_entries = Self::inbuilt_patterns();
 
-        let entries = built_in_entries.into_iter().chain(full_user_entries).collect();
+        let entries = built_in_entries
+            .into_iter()
+            .chain(full_user_entries)
+            .collect();
         Ok(Self {
             entries,
             global_context,
         })
     }
 
-    fn build_from_handler_config_entries(entries: &[WasmHandlerConfigurationEntry]) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    fn build_from_handler_config_entries(
+        entries: &[WasmHandlerConfigurationEntry],
+    ) -> anyhow::Result<Vec<RoutingTableEntry>> {
         entries
             .iter()
             .filter_map(|e| RoutingTableEntry::build_from_handler_config_entry(e))
@@ -260,31 +276,52 @@ impl RoutingTable {
     }
 
     fn inbuilt_patterns() -> Vec<RoutingTableEntry> {
-        vec![
-            RoutingTableEntry::inbuilt("/healthz", RouteHandler::HealthCheck),
-        ]
+        vec![RoutingTableEntry::inbuilt(
+            "/healthz",
+            RouteHandler::HealthCheck,
+        )]
     }
 }
 
-fn augment_dynamic_routes(base_entries: Vec<RoutingTableEntry>, global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
-    let results: anyhow::Result<Vec<_>> = base_entries.into_iter().map(|e| augment_one_with_dynamic_routes(e, global_context)).collect();
+fn augment_dynamic_routes(
+    base_entries: Vec<RoutingTableEntry>,
+    global_context: &RequestGlobalContext,
+) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    let results: anyhow::Result<Vec<_>> = base_entries
+        .into_iter()
+        .map(|e| augment_one_with_dynamic_routes(e, global_context))
+        .collect();
     let augmented = results?.into_iter().flatten().collect();
     Ok(augmented)
 }
 
-fn augment_one_with_dynamic_routes(routing_table_entry: RoutingTableEntry, global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
+fn augment_one_with_dynamic_routes(
+    routing_table_entry: RoutingTableEntry,
+    global_context: &RequestGlobalContext,
+) -> anyhow::Result<Vec<RoutingTableEntry>> {
     match &routing_table_entry.handler_info {
-        RouteHandler::Wasm(w) => augment_one_wasm_with_dynamic_routes(&routing_table_entry, w, global_context),
+        RouteHandler::Wasm(w) => {
+            augment_one_wasm_with_dynamic_routes(&routing_table_entry, w, global_context)
+        }
         RouteHandler::HealthCheck => Ok(vec![routing_table_entry]),
     }
 }
 
-fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, global_context: &RequestGlobalContext) -> anyhow::Result<Vec<RoutingTableEntry>> {
-    let redirects = prepare_stdio_streams(vec![] /* TODO: eww */, global_context, routing_table_entry.unique_key())?;
+fn augment_one_wasm_with_dynamic_routes(
+    routing_table_entry: &RoutingTableEntry,
+    wasm_route_handler: &WasmRouteHandler,
+    global_context: &RequestGlobalContext,
+) -> anyhow::Result<Vec<RoutingTableEntry>> {
+    let redirects = prepare_stdio_streams(
+        vec![], /* TODO: eww */
+        global_context,
+        routing_table_entry.unique_key(),
+    )?;
 
     let ctx = build_wasi_context_for_dynamic_route_query(redirects.streams);
     let link_options = WasmLinkOptions::none();
-    let (store, instance) = prepare_wasm_instance(ctx, &wasm_route_handler.wasm_module_source, link_options)?;
+    let (store, instance) =
+        prepare_wasm_instance(ctx, &wasm_route_handler.wasm_module_source, link_options)?;
 
     match run_prepared_wasm_instance_if_present(instance, store, "_routes") {
         RunWasmResult::WasmError(e) => Err(e),
@@ -293,8 +330,9 @@ fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry,
             let out = redirects.stdout_mutex.read().unwrap();
             let dynamic_routes_text = std::str::from_utf8(&*out)?;
             let dynamic_routes = interpret_routes(dynamic_routes_text)?;
-        
-            let mut dynamic_route_entries = append_all_dynamic_routes(routing_table_entry, wasm_route_handler, dynamic_routes);
+
+            let mut dynamic_route_entries =
+                append_all_dynamic_routes(routing_table_entry, wasm_route_handler, dynamic_routes);
             dynamic_route_entries.reverse();
             dynamic_route_entries.push(routing_table_entry.clone());
             Ok(dynamic_route_entries)
@@ -302,23 +340,37 @@ fn augment_one_wasm_with_dynamic_routes(routing_table_entry: &RoutingTableEntry,
     }
 }
 
-fn append_all_dynamic_routes(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, dynamic_routes: DynamicRoutes) -> Vec<RoutingTableEntry> {
+fn append_all_dynamic_routes(
+    routing_table_entry: &RoutingTableEntry,
+    wasm_route_handler: &WasmRouteHandler,
+    dynamic_routes: DynamicRoutes,
+) -> Vec<RoutingTableEntry> {
     dynamic_routes
-        .subpath_entrypoints.iter()
+        .subpath_entrypoints
+        .iter()
         .map(|dr| append_one_dynamic_route(routing_table_entry, wasm_route_handler, &dr.0, &dr.1))
         .collect()
 }
 
-fn append_one_dynamic_route(routing_table_entry: &RoutingTableEntry, wasm_route_handler: &WasmRouteHandler, dynamic_route_pattern: &RoutePattern, entrypoint: &str) -> RoutingTableEntry {
+fn append_one_dynamic_route(
+    routing_table_entry: &RoutingTableEntry,
+    wasm_route_handler: &WasmRouteHandler,
+    dynamic_route_pattern: &RoutePattern,
+    entrypoint: &str,
+) -> RoutingTableEntry {
     let mut subpath_handler = wasm_route_handler.clone();
     subpath_handler.entrypoint = entrypoint.to_owned();
     RoutingTableEntry {
-        route_pattern: routing_table_entry.route_pattern.append(dynamic_route_pattern),
+        route_pattern: routing_table_entry
+            .route_pattern
+            .append(dynamic_route_pattern),
         handler_info: RouteHandler::Wasm(subpath_handler),
     }
 }
 
-fn build_wasi_context_for_dynamic_route_query(redirects: crate::wasm_module::IOStreamRedirects) -> wasi_common::WasiCtx {
+fn build_wasi_context_for_dynamic_route_query(
+    redirects: crate::wasm_module::IOStreamRedirects,
+) -> wasi_common::WasiCtx {
     let builder = wasi_cap_std_sync::WasiCtxBuilder::new()
         .stderr(Box::new(redirects.stderr))
         .stdout(Box::new(redirects.stdout));

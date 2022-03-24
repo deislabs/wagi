@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
 use crate::dispatcher::RoutingTable;
-use crate::{tls, wagi_config::TlsConfiguration};
 use crate::wagi_config::WagiConfiguration;
+use crate::{tls, wagi_config::TlsConfiguration};
 
 use hyper::{
     server::conn::AddrStream,
@@ -19,7 +19,10 @@ pub struct WagiServer {
 }
 
 impl WagiServer {
-    pub async fn new(configuration: &WagiConfiguration, routing_table: RoutingTable) -> anyhow::Result<Self> {
+    pub async fn new(
+        configuration: &WagiConfiguration,
+        routing_table: RoutingTable,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             routing_table,
             tls: configuration.http_configuration.tls.clone(),
@@ -65,10 +68,13 @@ impl WagiServer {
                         }))
                     })
                 });
-                Server::builder(tls::TlsHyperAcceptor::new(&self.address, &tls.cert_path, &tls.key_path).await?)
-                    .serve(mk_svc)
-                    .await?;
-            },
+                Server::builder(
+                    tls::TlsHyperAcceptor::new(&self.address, &tls.cert_path, &tls.key_path)
+                        .await?,
+                )
+                .serve(mk_svc)
+                .await?;
+            }
             None => {
                 let mk_svc = make_service_fn(move |conn: &AddrStream| {
                     let addr = conn.remote_addr();
@@ -81,9 +87,9 @@ impl WagiServer {
                     }
                 });
                 Server::bind(&self.address).serve(mk_svc).await?;
-            },
+            }
         }
-    
+
         Ok(())
     }
 }

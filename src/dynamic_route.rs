@@ -3,7 +3,7 @@ use crate::dispatcher::RoutePattern;
 pub struct DynamicRoutes {
     // Using a Vec rather than a HashMap because order matters
     // (and direct lookup doesn't because some routes may be prefixes)
-    pub subpath_entrypoints: Vec<(RoutePattern, String)>,  // TODO: private
+    pub subpath_entrypoints: Vec<(RoutePattern, String)>, // TODO: private
 }
 
 pub fn interpret_routes(route_text: impl Into<String>) -> anyhow::Result<DynamicRoutes> {
@@ -17,7 +17,9 @@ pub fn interpret_routes(route_text: impl Into<String>) -> anyhow::Result<Dynamic
         .filter(|s| !s.is_empty())
         .map(parse_dynamic_route)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(DynamicRoutes { subpath_entrypoints: routes })
+    Ok(DynamicRoutes {
+        subpath_entrypoints: routes,
+    })
 }
 
 fn parse_dynamic_route(line: &str) -> anyhow::Result<(RoutePattern, String)> {
@@ -27,7 +29,10 @@ fn parse_dynamic_route(line: &str) -> anyhow::Result<(RoutePattern, String)> {
         return Err(anyhow::anyhow!("Dynamic routes contained empty line"));
     }
     if parts.len() != 2 {
-        return Err(anyhow::anyhow!("Dynamic routes contained invalid line {}", line));
+        return Err(anyhow::anyhow!(
+            "Dynamic routes contained invalid line {}",
+            line
+        ));
     }
 
     let path_text = parts.get(0).unwrap_or(&"/");
@@ -87,7 +92,10 @@ mod test {
 
         assert_eq!(RoutePattern::Prefix("/hello".to_owned()), entrypoints[0].0);
         assert_eq!("hello", entrypoints[0].1);
-        assert_eq!(RoutePattern::Prefix("/goodbye".to_owned()), entrypoints[1].0);
+        assert_eq!(
+            RoutePattern::Prefix("/goodbye".to_owned()),
+            entrypoints[1].0
+        );
         assert_eq!("au_revoir", entrypoints[1].1);
     }
 }

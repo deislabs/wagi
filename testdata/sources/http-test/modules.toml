@@ -1,0 +1,9 @@
+# This is for us during test development.
+# Fixtures use their own module config.
+
+[[module]]
+route = "/"
+# THIS MAKES IT NOT A REAL MODULES.TOML! The test infra replaces the ${...}
+# with the right string.
+module ="target/wasm32-wasi/release/http-test.wasm"
+allowed_hosts = ["https://www.fermyon.com"]

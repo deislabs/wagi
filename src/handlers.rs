@@ -1,13 +1,13 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use wasi_cap_std_sync::Dir;
 use hyper::{
     http::header::{HeaderName, HeaderValue},
     http::request::Parts,
     Body, Response, StatusCode,
 };
-use tracing::{debug};
+use tracing::debug;
+use wasi_cap_std_sync::Dir;
 use wasi_cap_std_sync::WasiCtxBuilder;
 use wasmtime::*;
 use wasmtime_wasi::*;
@@ -17,7 +17,9 @@ use crate::http_util::{internal_error, parse_cgi_headers};
 use crate::request::{RequestContext, RequestGlobalContext};
 
 use crate::wasm_module::WasmModuleSource;
-use crate::wasm_runner::{prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions};
+use crate::wasm_runner::{
+    prepare_stdio_streams, prepare_wasm_instance, run_prepared_wasm_instance, WasmLinkOptions,
+};
 
 #[derive(Clone, Debug)]
 pub enum RouteHandler {
@@ -33,6 +35,7 @@ pub struct WasmRouteHandler {
     pub volumes: HashMap<String, String>,
     pub allowed_hosts: Option<Vec<String>>,
     pub http_max_concurrency: Option<u32>,
+    pub argv: Option<String>,
 }
 
 impl WasmRouteHandler {
@@ -70,13 +73,13 @@ impl WasmRouteHandler {
         compose_response(redirects.stdout_mutex)
     }
 
-    fn build_wasi_context_for_request(&self, req: &Parts, headers: HashMap<String, String>, redirects: crate::wasm_module::IOStreamRedirects) -> Result<WasiCtx, Error> {
-        let uri_path = req.uri.path();
-        let mut args = vec![uri_path.to_string()];
-        req.uri
-            .query()
-            .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
-            .take();
+    fn build_wasi_context_for_request(
+        &self,
+        req: &Parts,
+        headers: HashMap<String, String>,
+        redirects: crate::wasm_module::IOStreamRedirects,
+    ) -> Result<WasiCtx, Error> {
+        let args = self.build_argv(req);
         let headers: Vec<(String, String)> = headers
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -103,7 +106,40 @@ impl WasmRouteHandler {
         Ok(ctx)
     }
 
-    fn prepare_wasm_instance(&self,  ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
+    /// Build the argv array that will be passed to the module.
+    ///
+    /// If an `argv` override is set in the handler, then this will override the CGI defaults.
+    ///
+    /// In the arg override: ${SCRIPT_NAME} will be replaced with the script name, and ${ARGS}
+    /// will be replaced by the arg-formatted query parameters. E.g. 'foo=bar&baz=lurman' will
+    /// become 'foo=bar baz=lurman'
+    fn build_argv(&self, req: &Parts) -> Vec<String> {
+        match &self.argv {
+            None => {
+                let uri_path = req.uri.path();
+                let mut args = vec![uri_path.to_string()];
+                req.uri
+                    .query()
+                    .map(|q| q.split('&').for_each(|item| args.push(item.to_string())))
+                    .take();
+                args
+            }
+            Some(template) => {
+                let script_name = req.uri.path();
+                let uri = req.uri.query().unwrap_or("");
+                let params = uri.replace('&', " ");
+                let arg_string = template
+                    .replace("${SCRIPT_NAME}", script_name)
+                    .replace("${ARGS}", params.as_str());
+                arg_string
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+        }
+    }
+
+    fn prepare_wasm_instance(&self, ctx: WasiCtx) -> Result<(Store<WasiCtx>, Instance), Error> {
         debug!("Preparing Wasm instance.");
         let link_options = WasmLinkOptions::default()
             .with_http(self.allowed_hosts.clone(), self.http_max_concurrency);
@@ -127,7 +163,10 @@ pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<B
     let mut buffer: Vec<u8> = Vec::new();
     let mut out_headers: Vec<u8> = Vec::new();
     out.iter().for_each(|i| {
-        if scan_headers && *i == 10 && last == 10 {
+        // Ignore CR in headers
+        if scan_headers && *i == 13 {
+            return;
+        } else if scan_headers && *i == 10 && last == 10 {
             out_headers.append(&mut buffer);
             buffer = Vec::new();
             scan_headers = false;
@@ -187,6 +226,7 @@ pub fn compose_response(stdout_mutex: Arc<RwLock<Vec<u8>>>) -> Result<Response<B
             }
         });
     if !sufficient_response {
+        tracing::debug!("{:?}", res.body());
         return Ok(internal_error(
             // Technically, we let `status` be sufficient, but this is more lenient
             // than the specification.

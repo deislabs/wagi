@@ -25,8 +25,8 @@ impl WasmLinkOptions {
     pub fn with_http(
         self,
         allowed_hosts: Option<Vec<String>>,
-        max_concurrency: Option<u32>)
-    -> Self {
+        max_concurrency: Option<u32>,
+    ) -> Self {
         let mut result = self.clone();
         result.http_allowed_hosts = allowed_hosts;
         result.http_max_concurrency = max_concurrency;
@@ -68,7 +68,6 @@ pub fn prepare_stdio_streams(
     );
     let stderr = wasi_cap_std_sync::file::File::from_cap_std(stderr);
 
-
     Ok(crate::wasm_module::IORedirectionInfo {
         streams: crate::wasm_module::IOStreamRedirects {
             stdin,
@@ -79,11 +78,7 @@ pub fn prepare_stdio_streams(
     })
 }
 
-
-pub fn new_store(
-    ctx: WasiCtx,
-    engine: &Engine
-) -> Result<Store<WasiCtx>, anyhow::Error> {
+pub fn new_store(ctx: WasiCtx, engine: &Engine) -> Result<Store<WasiCtx>, anyhow::Error> {
     Ok(Store::new(engine, ctx))
 }
 
