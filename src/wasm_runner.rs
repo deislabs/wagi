@@ -116,7 +116,8 @@ pub fn run_prepared_wasm_instance(
         anyhow::anyhow!("No such function '{}' in {}", entrypoint, wasm_module_name)
     })?;
     tracing::trace!("Calling Wasm entry point");
-    start.call(&mut store, &[], &mut vec![])?;
+    start.call(&mut store, &[], &mut vec![])
+        .or_else(ignore_successful_proc_exit_trap)?;
     tracing::trace!("Module execution complete");
     Ok(())
 }
@@ -132,6 +133,16 @@ pub fn run_prepared_wasm_instance_if_present(
             Err(e) => RunWasmResult::WasmError(e),
         },
         None => RunWasmResult::EntrypointNotFound,
+    }
+}
+
+fn ignore_successful_proc_exit_trap(guest_err: anyhow::Error) -> anyhow::Result<()> {
+    match guest_err.root_cause().downcast_ref::<wasmtime::Trap>() {
+        Some(trap) => match trap.i32_exit_status() {
+            Some(0) => Ok(()),
+            _ => Err(guest_err),
+        },
+        None => Err(guest_err),
     }
 }
 
