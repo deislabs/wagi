@@ -11,11 +11,17 @@ use hyper::{
 use hyper::{Body, Response, Server};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
+use tokio::signal::unix::SignalKind;
 
 pub struct WagiServer {
     routing_table: RoutingTable,
     tls: Option<TlsConfiguration>,
     address: SocketAddr,
+}
+
+async fn shutdown_signal() {
+    // Wait for the SIGTERM signal
+    tokio::signal::unix::signal(SignalKind::terminate()).unwrap().recv().await;
 }
 
 impl WagiServer {
@@ -65,9 +71,10 @@ impl WagiServer {
                         }))
                     })
                 });
-                Server::builder(tls::TlsHyperAcceptor::new(&self.address, &tls.cert_path, &tls.key_path).await?)
-                    .serve(mk_svc)
-                    .await?;
+                let server = Server::builder(tls::TlsHyperAcceptor::new(&self.address, &tls.cert_path, &tls.key_path).await?)
+                    .serve(mk_svc);
+                let graceful = server.with_graceful_shutdown(shutdown_signal());
+                graceful.await?;
             },
             None => {
                 let mk_svc = make_service_fn(move |conn: &AddrStream| {
@@ -80,7 +87,9 @@ impl WagiServer {
                         }))
                     }
                 });
-                Server::bind(&self.address).serve(mk_svc).await?;
+                let server = Server::bind(&self.address).serve(mk_svc);
+                let graceful = server.with_graceful_shutdown(shutdown_signal());
+                graceful.await?;
             },
         }
     
