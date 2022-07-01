@@ -36,10 +36,11 @@ impl WasmModuleSource {
 
     pub fn from_module_bytes(
         data: Arc<Vec<u8>>,
+        module_name: &str,
         cache_config_path: &Path,
     ) -> anyhow::Result<WasmModuleSource> {
         let engine = Self::new_engine(cache_config_path)?;
-        let module = wasmtime::Module::new(&engine, &**data)?;
+        let module = wasmtime::Module::new_with_name(&engine, &**data, module_name)?;
         Ok(WasmModuleSource::Compiled(module, engine))
     }
 
