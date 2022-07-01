@@ -1,8 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
 
 use crate::{
-    bindle_util::BindleConnectionInfo,
-    handler_loader::WasmCompilationSettings,
+    bindle_util::BindleConnectionInfo, handler_loader::WasmCompilationSettings,
     request::RequestGlobalContext,
 };
 

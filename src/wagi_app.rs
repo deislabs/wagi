@@ -1,13 +1,13 @@
-use clap::{App, Arg, ArgMatches, ArgGroup};
-use core::convert::TryFrom;
-use std::collections::HashMap;
-use std::net::SocketAddr;
 use crate::{
     bindle_util::BindleConnectionInfo,
     wagi_config::{
         HandlerConfigurationSource, HttpConfiguration, TlsConfiguration, WagiConfiguration,
     },
 };
+use clap::{App, Arg, ArgGroup, ArgMatches};
+use core::convert::TryFrom;
+use std::collections::HashMap;
+use std::net::SocketAddr;
 
 const ABOUT: &str = r#"
 Run an HTTP WAGI server
@@ -285,8 +285,12 @@ fn parse_bindle_connection_info(
     Ok(BindleConnectionInfo::new(
         url,
         matches.is_present(ARG_BINDLE_INSECURE),
-        matches.value_of(ARG_BINDLE_HTTP_USER).map(|s| s.to_string()),
-        matches.value_of(ARG_BINDLE_HTTP_PASSWORD).map(|s| s.to_string()),
+        matches
+            .value_of(ARG_BINDLE_HTTP_USER)
+            .map(|s| s.to_string()),
+        matches
+            .value_of(ARG_BINDLE_HTTP_PASSWORD)
+            .map(|s| s.to_string()),
     ))
 }
 
@@ -300,7 +304,9 @@ fn parse_handler_configuration_source(
     //   have a Bindle server URL OR standalone directory, but not both
     match (
         matches.value_of(ARG_BINDLE_ID).ignore_if_empty(),
-        matches.value_of(ARG_BINDLE_STANDALONE_DIR).ignore_if_empty(),
+        matches
+            .value_of(ARG_BINDLE_STANDALONE_DIR)
+            .ignore_if_empty(),
         matches.value_of(ARG_BINDLE_URL).ignore_if_empty(),
         matches.value_of(ARG_MODULES_CONFIG).ignore_if_empty(),
     ) {
@@ -334,15 +340,13 @@ fn parse_handler_configuration_source(
             }
         }
         // Case: got a bindle id and server URL. Can't have a bindir dir or module file.
-        (Some(bindle_id), None, Some(bindle_url), None) => {
-            match url::Url::parse(bindle_url) {
-                Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
-                    parse_bindle_connection_info(url, &matches)?,
-                    bindle::Id::try_from(bindle_id)?,
-                )),
-                Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
-            }
-        }
+        (Some(bindle_id), None, Some(bindle_url), None) => match url::Url::parse(bindle_url) {
+            Ok(url) => Ok(HandlerConfigurationSource::RemoteBindle(
+                parse_bindle_connection_info(url, &matches)?,
+                bindle::Id::try_from(bindle_id)?,
+            )),
+            Err(e) => Err(anyhow::anyhow!("Invalid Bindle server URL: {}", e)),
+        },
         // These cases shouldn't be able to happen. We could be optimistic and
         // confident, and assume that means they won't. But we have been
         // programming faaaaaaaaaar too long for that.
